@@ -140,6 +140,20 @@ impl ExecutionPolicy {
     }
 }
 
+/// charge_bill.status 列的账单状态（issued/settled/voided）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BillStatus(pub String);
+
+impl BillStatus {
+    pub const ISSUED: &'static str = "issued";
+    pub const SETTLED: &'static str = "settled";
+    pub const VOIDED: &'static str = "voided";
+
+    pub fn known(&self) -> bool {
+        matches!(self.0.as_str(), Self::ISSUED | Self::SETTLED | Self::VOIDED)
+    }
+}
+
 // ---------- 人工复核共用规则（旧版 review.go） ----------
 
 /// 复核重放与首次记录不一致（旧版 ErrReviewConflict）。

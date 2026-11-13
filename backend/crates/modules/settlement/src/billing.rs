@@ -73,29 +73,72 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         defer_job(pool, charge_order_id, JobStatus::MANUAL_REVIEW, "订单缺少结束计量").await?;
         return Ok(false);
     };
-    let meter: EndMeter =
+    let mut meter: EndMeter =
         serde_json::from_str(&meter_json).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-
-    // domain 结算（批 1 差分验证的入口）：计量校验失败转人工。
-    let rule = snapshot.rule.clone();
-    let actual = ActualMeter {
-        review_required: false,
-        started_at: meter.segments.first().map(|s| s.started_at),
-        ended_at: Some(meter.ended_at),
-        charged_wh: meter.charged_wh,
-        charged_seconds: meter.charged_seconds,
-        segments: meter.segments.clone(),
-    };
-    let paid = Some(snapshot.offer.clone());
-    let settlement = match settle_session(&rule.spec, &actual, paid.as_ref(), None) {
-        Ok(s) => s,
-        Err(BillingError::MeterReview) | Err(BillingError::InvalidPricing) => {
-            defer_job(pool, charge_order_id, JobStatus::MANUAL_REVIEW, "实际计量或计费快照需核实").await?;
-            return Ok(false);
+    // 融合已批准的计量修正（旧版 readBillingSource）：原始计量未变时替换分段；
+    // 已变（新回执等）则视为无效，交由下方结算校验转人工。
+    let approved: Option<(String, String)> = sqlx::query_as(
+        "SELECT CAST(`original_json` AS CHAR), CAST(`corrected_json` AS CHAR) \
+         FROM `charge_meter_review` \
+         WHERE `charge_order_id` = ? AND `status` = 'approved' ORDER BY `id` DESC LIMIT 1",
+    )
+    .bind(charge_order_id as i64)
+    .fetch_optional(pool)
+    .await?;
+    if let Some((original_json, corrected_json)) = approved {
+        let original: serde_json::Value = serde_json::from_str(&original_json)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let corrected: serde_json::Value = serde_json::from_str(&corrected_json)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let current = serde_json::json!({ "meter": meter });
+        if current == original {
+            if let Ok(corrected_meter) =
+                serde_json::from_value::<EndMeter>(corrected["meter"].clone())
+            {
+                meter = corrected_meter;
+            }
         }
-        Err(e) => {
-            defer_job(pool, charge_order_id, JobStatus::PENDING, &format!("计费暂不可用: {e}")).await?;
-            return Ok(false);
+    }
+
+    // 人工最终金额优先（仪表审核后的兜底出口；旧版 FinalFee 语义）：
+    // 登记后金额直接入账，仍受预付封顶与回执幂等保护。
+    let manual: Option<(i64, i64, String)> = sqlx::query_as(
+        "SELECT `electric_cents`, `service_cents`, CAST(`request_id` AS CHAR) \
+         FROM `charge_manual_settlement` WHERE `charge_order_id` = ?",
+    )
+    .bind(charge_order_id as i64)
+    .fetch_optional(pool)
+    .await?;
+    let settlement = if let Some((electric, service, _request)) = manual {
+        chargepilot_domain::charging_settle::Settlement {
+            electric_cents: electric,
+            service_cents: service,
+            total_cents: electric + service,
+            estimated: true,
+            ..Default::default()
+        }
+    } else {
+        // domain 结算（批 1 差分验证的入口）：计量校验失败转人工。
+        let rule = snapshot.rule.clone();
+        let actual = ActualMeter {
+            review_required: false,
+            started_at: meter.segments.first().map(|s| s.started_at),
+            ended_at: Some(meter.ended_at),
+            charged_wh: meter.charged_wh,
+            charged_seconds: meter.charged_seconds,
+            segments: meter.segments.clone(),
+        };
+        let paid = Some(snapshot.offer.clone());
+        match settle_session(&rule.spec, &actual, paid.as_ref(), None) {
+            Ok(s) => s,
+            Err(BillingError::MeterReview) | Err(BillingError::InvalidPricing) => {
+                defer_job(pool, charge_order_id, JobStatus::MANUAL_REVIEW, "实际计量或计费快照需核实").await?;
+                return Ok(false);
+            }
+            Err(e) => {
+                defer_job(pool, charge_order_id, JobStatus::PENDING, &format!("计费暂不可用: {e}")).await?;
+                return Ok(false);
+            }
         }
     };
 

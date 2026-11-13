@@ -330,7 +330,7 @@ async fn billing_batch_and_refund_executor() {
     assert_eq!(total_b, 100, "金额模式实费 400 分超出预付应封顶在预付");
     assert_eq!(
         shortfall_b, 0,
-        "回执缺口恒 0（旧版语义）；实费缺口由账单签发按 total-prepaid 推导"
+        "回执缺口恒 0（旧版语义）：入账总额封顶后不超预付，账单缺口同样恒 0"
     );
     assert_eq!(
         (electric_b, service_b),

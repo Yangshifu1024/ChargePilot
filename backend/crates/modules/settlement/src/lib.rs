@@ -4,6 +4,9 @@
 //! 差分验证）；退款执行器在 simulation 通道直接成功，真实渠道随批 6 接入。
 //! 锁序：计费为 订单→支付单→退款在途；执行器为 退款记录→支付单→（钱包）。
 
+pub mod bill;
 pub mod billing;
+pub mod meter_review;
 pub mod recorder;
+pub mod refund_admin;
 pub mod refund_executor;
