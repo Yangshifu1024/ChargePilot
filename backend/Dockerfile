@@ -3,10 +3,11 @@
 # 镜像拉取一律走 gh-proxy.org/docker/ 前缀（用户约定 2026-11-14）。
 
 # ---------- 前端：admin-web(SPA) 与 miniprogram(H5) ----------
-FROM gh-proxy.org/docker/node:24-alpine AS frontend
+# 用 glibc 的 slim 镜像：Taro 原生 binding 锁文件只含 *-gnu 平台包，musl(alpine) 无条目。
+FROM gh-proxy.org/docker/node:24-slim AS frontend
 WORKDIR /fe
 COPY frontend/admin-web/package.json frontend/admin-web/package-lock.json ./admin-web/
-COPY frontend/miniprogram/package.json frontend/miniprogram/package-lock.json ./miniprogram/
+COPY frontend/miniprogram/package.json frontend/miniprogram/package-lock.json frontend/miniprogram/.npmrc ./miniprogram/
 RUN cd admin-web && npm ci --no-audit --no-fund \
  && cd ../miniprogram && npm ci --no-audit --no-fund
 COPY frontend/admin-web ./admin-web
@@ -24,7 +25,7 @@ COPY backend .
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS backend-build
-COPY backend/recipe.json recipe.json
+COPY --from=planner /build/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY backend .
 RUN cargo build --release -p chargepilot-app

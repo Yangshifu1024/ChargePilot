@@ -17,6 +17,9 @@ pub const BUFFER_CAPACITY: usize = 4096;
 pub const FLUSH_BATCH: usize = 500;
 /// 批量触发周期。
 pub const FLUSH_INTERVAL: Duration = Duration::from_millis(200);
+/// 单次冲刷的样本上限（明细 6 绑定/条，4000 条远低于 65535 prepared 参数上限；
+/// 超出部分由循环下一轮继续冲，不丢样）。
+pub const FLUSH_CHUNK: usize = 4000;
 
 /// 单条遥测样本（telemetry 行；ts 为采集时刻）。
 #[derive(Debug, Clone, PartialEq)]
@@ -152,6 +155,7 @@ fn build_buckets(samples: &[Sample], step_secs: i64, table: &str) -> HashMap<Buc
 }
 
 /// 批量落库：多值 INSERT 明细 + 两级聚合 UPSERT（增量合并既有桶）。
+/// 聚合同样多值化（高负载下逐桶一条 SQL 达不到 200ms 节拍，见 ADR 005 容量预算）。
 pub async fn flush(pool: &MySqlPool, samples: &[Sample]) -> anyhow::Result<()> {
     if samples.is_empty() {
         return Ok(());
@@ -182,7 +186,7 @@ pub async fn flush(pool: &MySqlPool, samples: &[Sample]) -> anyhow::Result<()> {
     builder.push(" ON DUPLICATE KEY UPDATE `value_num` = VALUES(`value_num`)");
     builder.build().execute(&mut *tx).await?;
 
-    // 聚合：同批同桶先在内存合并，再按增量公式并入既有行。
+    // 聚合：同批同桶先在内存合并，再按增量公式并入既有行（多值 UPSERT，行别名取新行值）。
     for (step_secs, table, bucket_col, month_col) in [
         (
             900i64,
@@ -198,58 +202,92 @@ pub async fn flush(pool: &MySqlPool, samples: &[Sample]) -> anyhow::Result<()> {
         ),
     ] {
         let buckets = build_buckets(samples, step_secs, table);
-        for ((device_id, port_no, metric, start, _), agg) in buckets {
+        // prepared 参数上限 65535：9 绑定/桶，按 2000 桶分片留足余量。
+        let mut entries: Vec<(BucketKey, AggValue)> = buckets.into_iter().collect();
+        for chunk in entries.chunks_mut(2000) {
             use chrono::Datelike as _;
-            let month = start
-                .date_naive()
-                .with_day(1)
-                .unwrap_or_else(|| start.date_naive());
-            sqlx::query(&format!(
+            let mut builder = sqlx::query_builder::QueryBuilder::<sqlx::MySql>::default();
+            builder.push(&format!(
                 "INSERT INTO `{table}` (`device_id`, `port_no`, `metric`, `{bucket_col}`, \
-                 `{month_col}`, `avg_value`, `min_value`, `max_value`, `count`) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON DUPLICATE KEY UPDATE \
-                 `avg_value` = (`avg_value` * `count` + VALUES(`avg_value`) * VALUES(`count`)) \
-                   / (`count` + VALUES(`count`)), \
-                 `min_value` = LEAST(`min_value`, VALUES(`min_value`)), \
-                 `max_value` = GREATEST(`max_value`, VALUES(`max_value`)), \
-                 `count` = `count` + VALUES(`count`)",
-            ))
-            .bind(&device_id)
-            .bind(port_no.map(i64::from))
-            .bind(metric)
-            .bind(start)
-            .bind(month)
-            .bind(agg.avg())
-            .bind(agg.min)
-            .bind(agg.max)
-            .bind(agg.count as i64)
-            .execute(&mut *tx)
-            .await?;
+                 `{month_col}`, `avg_value`, `min_value`, `max_value`, `count`) VALUES "
+            ));
+            for (i, ((device_id, port_no, metric, start, _), agg)) in chunk.iter().enumerate() {
+                if i > 0 {
+                    builder.push(", ");
+                }
+                builder
+                    .push("(")
+                    .push_bind(device_id)
+                    .push(", ")
+                    .push_bind((*port_no).map(i64::from))
+                    .push(", ")
+                    .push_bind(*metric)
+                    .push(", ")
+                    .push_bind(*start)
+                    .push(", ");
+                let month = start
+                    .date_naive()
+                    .with_day(1)
+                    .unwrap_or_else(|| start.date_naive());
+                builder
+                    .push_bind(month)
+                    .push(", ")
+                    .push_bind(agg.avg())
+                    .push(", ")
+                    .push_bind(agg.min)
+                    .push(", ")
+                    .push_bind(agg.max)
+                    .push(", ")
+                    .push_bind(agg.count as i64)
+                    .push(")");
+            }
+            // 行别名取本批新行值；旧行必须显式表名限定（不带限定在新旧两侧行
+            // 语境下会被 MySQL 判为 ambiguous，真库集成测试 1052 已验证）。
+            builder.push(&format!(
+                " AS new ON DUPLICATE KEY UPDATE \
+                 `avg_value` = (`{table}`.`avg_value` * `{table}`.`count` \
+                   + new.`avg_value` * new.`count`) \
+                   / (`{table}`.`count` + new.`count`), \
+                 `min_value` = LEAST(`{table}`.`min_value`, new.`min_value`), \
+                 `max_value` = GREATEST(`{table}`.`max_value`, new.`max_value`), \
+                 `count` = `{table}`.`count` + new.`count`"
+            ));
+            builder.build().execute(&mut *tx).await?;
         }
     }
     tx.commit().await?;
     Ok(())
 }
 
-/// 批量循环：每 200ms 或积满 500 条触发一次 flush；shutdown 后冲刷残余并退出。
+/// 批量循环：空闲时每 200ms 兜底冲刷；高负载（缓冲仍有半容量积压）连续冲刷
+/// 不等待，追赶生产速率（单轮上限 [`FLUSH_CHUNK`]，超出由下一轮继续）；
+/// shutdown 后冲刷残余并退出。
 pub async fn run_flush_loop(
     pool: MySqlPool,
     buffer: std::sync::Arc<TelemetryBuffer>,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
     loop {
-        let mut interval = tokio::time::interval(FLUSH_INTERVAL);
-        interval.tick().await;
         let samples = buffer.drain();
         metrics::gauge!("telemetry_flush_batch_last").set(samples.len() as f64);
         metrics::gauge!("telemetry_buffer_dropped_total").set(buffer.dropped() as f64);
         if !samples.is_empty() {
-            if let Err(e) = flush(&pool, &samples).await {
-                tracing::warn!(count = samples.len(), error = %e, "遥测批量落库失败");
+            // 单轮分片冲刷：单批样本过大时明细 SQL 参数超限，按 FLUSH_CHUNK 切。
+            for chunk in samples.chunks(FLUSH_CHUNK) {
+                if let Err(e) = flush(&pool, chunk).await {
+                    tracing::warn!(count = chunk.len(), error = %e, "遥测批量落库失败");
+                }
             }
         }
         metrics::gauge!("telemetry_buffer_depth").set(buffer.depth() as f64);
+        // 空闲时等待节拍或停机信号；积压过半则立即进入下一轮追赶。
+        if buffer.depth() < BUFFER_CAPACITY / 2 {
+            let mut rx = shutdown.clone();
+            tokio::select! {
+                _ = tokio::time::sleep(FLUSH_INTERVAL) => {}
+                _ = rx.changed() => {}
+            }
+        }
         if *shutdown.borrow() {
             // 停机冲刷：退出前把残余写入。
             let rest = buffer.drain();
