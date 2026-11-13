@@ -11,21 +11,21 @@ pub async fn claim_batch(pool: &MySqlPool, limit: u32) -> anyhow::Result<Vec<Enq
          WHERE `status` IN ('pending','failed') AND `scheduled_at` <= NOW(3) \
          ORDER BY `id` LIMIT ?",
     )
-    .bind(limit)
+    .bind(i64::from(limit))
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
         .map(
             |(id, event_id, source, kind, payload, retry_count): (
-                i64,
+                u64,
                 String,
                 String,
                 String,
                 serde_json::Value,
-                i64,
+                u64,
             )| EnqueuedEvent {
-                id: id as u64,
+                id,
                 event_id,
                 source: source.parse().unwrap_or(crate::EventSource::User),
                 kind,

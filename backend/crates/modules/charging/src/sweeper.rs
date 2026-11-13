@@ -15,7 +15,7 @@ pub struct StartTimeoutSweeper {
 /// 返回处理单数。命令 sent 超期视为设备无应答。
 pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Result<usize> {
     let due: Vec<(u64, String, String)> = sqlx::query_as(
-        "SELECT c.`id`, c.`order_no`, cmd.`command_id` \
+        "SELECT c.`id`, c.`order_no`, CAST(cmd.`command_id` AS CHAR) \
          FROM `charge_command` cmd \
          JOIN `charge_order` c ON c.`id` = cmd.`charge_order_id` \
          WHERE cmd.`status` IN ('pending', 'sent') \

@@ -215,8 +215,9 @@ async fn create_paid_order(
     // 规则快照（最小可用；真实链路由 checkout 冻结）。
     let snapshot = json!({
         "rule": {"rule_id": rule_id, "station_id": 0, "version": 1,
-                 "spec": {"mode": "server_energy", "electric": [
-                     {"electric_cents": 50, "service_cents": 30, "end_minute": 1440}]}},
+                 "spec": {"mode": "server_energy",
+                     "electric": {"basis": "energy", "periods": [
+                         {"electric_cents": 50, "service_cents": 30, "end_minute": 1440}]}}},
         "estimate": {"estimated_kwh": "0.000", "estimated_minutes": 600,
                      "electric_cents": 0, "service_cents": 0, "total_cents": 100,
                      "charge_mode": 4, "charge_quantity": 600},

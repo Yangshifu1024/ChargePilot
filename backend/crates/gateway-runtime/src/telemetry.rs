@@ -242,11 +242,14 @@ pub async fn run_flush_loop(
         let mut interval = tokio::time::interval(FLUSH_INTERVAL);
         interval.tick().await;
         let samples = buffer.drain();
+        metrics::gauge!("telemetry_flush_batch_last").set(samples.len() as f64);
+        metrics::gauge!("telemetry_buffer_dropped_total").set(buffer.dropped() as f64);
         if !samples.is_empty() {
             if let Err(e) = flush(&pool, &samples).await {
                 tracing::warn!(count = samples.len(), error = %e, "遥测批量落库失败");
             }
         }
+        metrics::gauge!("telemetry_buffer_depth").set(buffer.depth() as f64);
         if *shutdown.borrow() {
             // 停机冲刷：退出前把残余写入。
             let rest = buffer.drain();

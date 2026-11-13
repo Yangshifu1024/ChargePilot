@@ -16,6 +16,8 @@ fn register_gauges() {
     metrics::describe_gauge!("device_charging", "当前充电中设备数");
     metrics::describe_counter!("device_frames_total", "设备帧接收总数");
     metrics::describe_gauge!("telemetry_buffer_depth", "遥测批量缓冲深度");
+    metrics::describe_gauge!("telemetry_buffer_dropped_total", "遥测缓冲满丢样累计");
+    metrics::describe_gauge!("telemetry_flush_batch_last", "最近一次冲刷样本数");
     metrics::describe_counter!("telemetry_buffer_dropped_total", "遥测明细因缓冲满被丢弃数");
     metrics::describe_histogram!(
         "event_dispatch_latency_seconds",
@@ -28,6 +30,8 @@ fn register_gauges() {
     metrics::gauge!("device_connections").set(0.0);
     metrics::gauge!("device_charging").set(0.0);
     metrics::gauge!("telemetry_buffer_depth").set(0.0);
+    metrics::gauge!("telemetry_buffer_dropped_total").set(0.0);
+    metrics::gauge!("telemetry_flush_batch_last").set(0.0);
 }
 
 /// 便捷计数（供其他 crate 使用，避免到处写 metrics:: 宏路径）。

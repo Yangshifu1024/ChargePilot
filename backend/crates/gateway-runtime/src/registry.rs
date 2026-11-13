@@ -34,7 +34,7 @@ impl chargepilot_protocol::SessionRouter for SessionRegistry {
         session: Arc<dyn DeviceSession>,
         on_replaced: Arc<dyn Fn() + Send + Sync>,
     ) -> BoxFut<bool> {
-        let replaced = {
+        let kicked = {
             let mut map = self.inner.lock().expect("会话表锁");
             match map.insert(
                 device_id.to_string(),
@@ -43,17 +43,25 @@ impl chargepilot_protocol::SessionRouter for SessionRegistry {
                     on_replaced: on_replaced.clone(),
                 },
             ) {
+                // 原子替换：先更新表再通知旧连接，旧连接 detach 时已不匹配。
                 Some(old) if !Arc::ptr_eq(&old.session, &session) => {
-                    // 原子替换：先更新表再通知旧连接，旧连接 detach 时已不匹配。
                     (old.on_replaced)();
-                    drop(map);
-                    let _ = old.session.close();
-                    true
+                    Some(old.session)
                 }
-                _ => false,
+                _ => None,
             }
         };
-        Box::pin(async move { replaced })
+        Box::pin(async move {
+            // 旧会话关闭在放锁后 await：close 只触发通知不阻塞，
+            // 互踢语义（读半退出 + replaced 标记）由会话自身完成。
+            match kicked {
+                Some(old) => {
+                    old.close().await;
+                    true
+                }
+                None => false,
+            }
+        })
     }
 
     fn get(&self, device_id: &str) -> BoxFut<Option<Arc<dyn DeviceSession>>> {

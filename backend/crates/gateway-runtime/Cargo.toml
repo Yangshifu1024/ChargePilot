@@ -16,6 +16,7 @@ chargepilot-events = { path = "../events" }
 chargepilot-mod-charging = { path = "../modules/charging" }
 chargepilot-domain = { path = "../domain" }
 chargepilot-platform = { path = "../platform" }
+metrics.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
