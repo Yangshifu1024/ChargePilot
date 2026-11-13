@@ -2,3 +2,9 @@
 name = "chargepilot-protocol-dc589"
 version.workspace = true
 edition.workspace = true
+
+[dependencies]
+chargepilot-protocol = { path = "../protocol" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }

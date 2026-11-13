@@ -669,10 +669,20 @@ dependencies = [
 [[package]]
 name = "chargepilot-protocol"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+]
 
 [[package]]
 name = "chargepilot-protocol-dc589"
 version = "0.1.0"
+dependencies = [
+ "chargepilot-protocol",
+ "chrono",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "chargepilot-storage"
