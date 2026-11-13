@@ -5,5 +5,11 @@
 //! → 命令队列（有界 mpsc + 失败退避）。业务码值零协议字面量。
 
 pub mod registry;
+pub mod sink;
+pub mod snapshot;
+pub mod telemetry;
 
 pub use registry::SessionRegistry;
+pub use sink::GatewaySink;
+pub use snapshot::{DeviceSnapshot, SnapshotStore};
+pub use telemetry::TelemetryBuffer;
