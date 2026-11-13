@@ -34,20 +34,27 @@ impl SegmentAllocator {
     }
 
     /// 从 DB 读取当前水位并预取首个号段（启动时调用，校验水位行存在）。
+    /// CAS 失败（并发写者已推进水位）时重读重试，保证不与任何实例号段重叠。
     pub async fn warm_up(&self) -> anyhow::Result<()> {
-        let watermark: u64 =
-            sqlx::query_scalar("SELECT `last_millisecond` FROM `snowflake_state` WHERE `id` = ?")
-                .bind(WATERMARK_ROW_ID)
-                .fetch_optional(&self.pool)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("snowflake_state 水位行缺失"))?;
-        let new_max = watermark + self.segment_size as u64;
-        self.cas_watermark(watermark, new_max).await?;
-        *self.seg.lock().unwrap() = Some(Segment {
-            next: watermark + 1,
-            max: new_max,
-        });
-        Ok(())
+        loop {
+            let watermark: u64 = sqlx::query_scalar(
+                "SELECT `last_millisecond` FROM `snowflake_state` WHERE `id` = ?",
+            )
+            .bind(WATERMARK_ROW_ID)
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("snowflake_state 水位行缺失"))?;
+            let new_max = watermark + self.segment_size as u64;
+            let rows = self.cas_watermark(watermark, new_max).await?;
+            if rows == 0 {
+                continue; // 被并发写者抢先：重读重试
+            }
+            *self.seg.lock().unwrap() = Some(Segment {
+                next: watermark + 1,
+                max: new_max,
+            });
+            return Ok(());
+        }
     }
 
     /// 进程内发号：纯内存操作；号段耗尽时异步补号段（阻塞等待，不静默重用）。

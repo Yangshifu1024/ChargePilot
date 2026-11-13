@@ -2,6 +2,9 @@
 //! 阶段 02 交付：后台登录（密码+MFA）、会话轮换、实时权限、审计与 bootstrap。
 //! 账号/角色管理 CRUD、公告、仪表盘随第二批落地。
 
+pub mod announcement;
+pub mod dashboard;
+pub mod management;
 pub mod repo;
 pub mod service;
 pub mod session;
@@ -71,11 +74,39 @@ pub enum OpsError {
     #[error("登录尝试过于频繁，请稍后再试")]
     LoginRate,
     /// 权限不足（403/1003）。
-    #[error("无权执行该操作")]
+    #[error("没有操作权限")]
     Permission,
     /// 存储不可用（503/5003）。
     #[error("storage failure: {0}")]
     Storage(#[from] anyhow::Error),
+    /// 业务输入错误（400/1005，文案透出）。
+    #[error("{0}")]
+    Input(String),
+    /// 业务冲突（409/2009，文案透出）。
+    #[error("{0}")]
+    Conflict(String),
+    /// 资源不存在（404/1004，文案透出）。
+    #[error("{0}")]
+    NotFound(String),
+}
+
+impl OpsError {
+    pub fn bad_input(msg: impl Into<String>) -> Self {
+        OpsError::Input(msg.into())
+    }
+
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        OpsError::Conflict(msg.into())
+    }
+
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        OpsError::NotFound(msg.into())
+    }
+
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        let _ = msg;
+        OpsError::Permission
+    }
 }
 
 impl From<sqlx::Error> for OpsError {

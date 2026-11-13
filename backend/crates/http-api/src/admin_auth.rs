@@ -47,10 +47,13 @@ pub fn ops_error(err: OpsError, request_id: &str) -> Response {
                 .insert("retry-after", axum::http::HeaderValue::from_static("60"));
             resp
         }
-        OpsError::Permission => respond(403, 1003, "无权执行该操作", request_id),
+        OpsError::Permission => respond(403, 1003, "没有操作权限", request_id),
+        OpsError::Input(msg) => respond(400, 1005, msg, request_id),
+        OpsError::Conflict(msg) => respond(409, 2009, msg, request_id),
+        OpsError::NotFound(msg) => respond(404, 1004, msg, request_id),
         OpsError::Storage(_) => {
             tracing::warn!(cause = %err, "后台登录存储失败");
-            respond(503, 5003, "登录服务暂不可用", request_id)
+            respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", request_id)
         }
     }
 }

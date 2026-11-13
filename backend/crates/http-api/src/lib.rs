@@ -2,8 +2,11 @@
 //! 依赖方向：本层只调各域模块服务，不写业务 SQL、不持有业务表。
 
 pub mod admin_auth;
+pub mod admin_guard;
+pub mod admin_management;
 pub mod deps;
 pub mod user_auth;
+pub mod user_ops;
 
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
@@ -16,6 +19,8 @@ pub fn build_router(
 ) -> axum::Router {
     axum::Router::new()
         .merge(admin_auth::router())
+        .merge(admin_management::router())
+        .merge(user_ops::router())
         .merge(user_auth::router())
         .route("/health/live", axum::routing::get(|| async { "ok" }))
         .route("/health/ready", axum::routing::get(readiness))

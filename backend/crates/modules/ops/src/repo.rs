@@ -158,16 +158,20 @@ pub async fn verify_mfa(
     Ok(())
 }
 
-/// mfa_last_step 防重放：当前步不得小于等于已消费步；通过则推进。
+/// mfa_last_step 防重放：码所属步不得小于等于已消费步；通过则推进到该步。
 /// 返回 true 表示该步已被消费。
-async fn matched_step(pool: &MySqlPool, account: &AdminAccount, step: i64) -> anyhow::Result<bool> {
+async fn matched_step(
+    pool: &MySqlPool,
+    account: &AdminAccount,
+    code_step: i64,
+) -> anyhow::Result<bool> {
     let result = sqlx::query(
         "UPDATE `admin_user` SET `mfa_last_step` = ? \
          WHERE `id` = ? AND (`mfa_last_step` IS NULL OR `mfa_last_step` < ?)",
     )
-    .bind(step)
+    .bind(code_step)
     .bind(account.id)
-    .bind(step)
+    .bind(code_step)
     .execute(pool)
     .await
     .map_err(OpsError::from)?;
@@ -289,4 +293,175 @@ pub async fn ensure_bootstrap(
     write_auth_audit(pool, &account, "bootstrap", "").await?;
     tracing::info!(username, "后台引导账号已创建");
     Ok(())
+}
+
+/// 通用审计写入（业务事务内调用）：before/after 为完整快照 JSON，nil 传 Value::Null。
+pub async fn append_audit_tx(
+    tx: &mut sqlx::MySqlConnection,
+    actor: &Profile,
+    module: &str,
+    action: &str,
+    target_type: &str,
+    target_id: &str,
+    before: &serde_json::Value,
+    after: &serde_json::Value,
+    client_ip: &str,
+    request_id: &str,
+) -> anyhow::Result<()> {
+    let now = chrono::Utc::now();
+    let month = now.date_naive().with_day(1).expect("月首日必然存在");
+    sqlx::query(
+        "INSERT INTO `audit_log` (`actor_id`, `actor_name`, `module`, `action`, `target_type`, `target_id`, \
+         `before_json`, `after_json`, `client_ip`, `request_id`, `created_month`) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(actor.id)
+    .bind(&actor.username)
+    .bind(module)
+    .bind(action)
+    .bind(target_type)
+    .bind(target_id)
+    .bind(before)
+    .bind(after)
+    .bind(client_ip)
+    .bind(request_id.chars().take(64).collect::<String>())
+    .bind(month)
+    .execute(&mut *tx)
+    .await?;
+    Ok(())
+}
+
+/// customer_admin 角色行集合锁（管理写路径串行化点，必须最先获取）。
+pub async fn lock_customer_admin_role_tx(
+    tx: &mut sqlx::MySqlConnection,
+) -> anyhow::Result<Option<u64>> {
+    let id: Option<u64> = sqlx::query_scalar(
+        "SELECT `id` FROM `role` WHERE `active_code` = 'customer_admin' LIMIT 1 FOR UPDATE",
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    Ok(id)
+}
+
+/// 锁定操作者并实时核对其权限（写路径的锁内复核，旧版 lockedManagementActor 语义）。
+pub async fn lock_actor_tx(
+    tx: &mut sqlx::MySqlConnection,
+    actor_id: u64,
+) -> anyhow::Result<Profile> {
+    let account = sqlx::query_as::<_, (u64, u64)>(
+        "SELECT `id`, `auth_version` FROM `admin_user` WHERE `id` = ? AND `status` = 'active' AND `deleted_at` IS NULL FOR UPDATE",
+    )
+    .bind(actor_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(OpsError::Credentials)?;
+    let profile = load_profile_tx(tx, account.0).await?;
+    if profile.auth_version != account.1 {
+        return Err(OpsError::Credentials.into());
+    }
+    Ok(profile)
+}
+
+/// 事务内 Profile 组合（权限 FOR SHARE 读，与锁内核对一致）。
+pub async fn load_profile_tx(
+    tx: &mut sqlx::MySqlConnection,
+    account_id: u64,
+) -> anyhow::Result<Profile> {
+    let row = sqlx::query_as::<_, ProfileRow>(
+        "SELECT u.`id`, u.`username`, u.`display_name`, u.`role_id`, u.`mfa_enabled`, u.`auth_version`, \
+                COALESCE(r.`code`, '') AS `role_code`, COALESCE(r.`name`, '') AS `role_name` \
+         FROM `admin_user` u LEFT JOIN `role` r ON r.`id` = u.`role_id` AND r.`deleted_at` IS NULL \
+         WHERE u.`id` = ? AND u.`deleted_at` IS NULL LIMIT 1",
+    )
+    .bind(account_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(OpsError::Credentials)?;
+    let permissions = match row.role_id {
+        Some(rid) if rid > 0 => {
+            let codes: Vec<String> = sqlx::query_scalar(
+                "SELECT p.`code` FROM `role_permission` rp JOIN `permission` p ON p.`id` = rp.`permission_id` \
+                 WHERE rp.`role_id` = ? ORDER BY p.`code`",
+            )
+            .bind(rid)
+            .fetch_all(&mut *tx)
+            .await?;
+            without_retired(codes)
+        }
+        _ => Vec::new(),
+    };
+    Ok(Profile {
+        auth_version: row.auth_version,
+        id: row.id,
+        username: row.username,
+        display_name: row.display_name.unwrap_or_default(),
+        role: row.role_code,
+        role_name: row.role_name,
+        role_id: row.role_id.unwrap_or(0),
+        mfa_enabled: row.mfa_enabled,
+        permissions,
+    })
+}
+
+/// 退役权限码（旧版语义：展示与授权一律剔除）。
+pub fn without_retired(codes: Vec<String>) -> Vec<String> {
+    const RETIRED: &[&str] = &[
+        "customer_service.",
+        "ota.",
+        "alert.rule.",
+        "alert.subscription.",
+        "settings.ota.update",
+        "membership.create",
+        "alert.risk_config.update",
+        "pricing.template.create",
+    ];
+    codes
+        .into_iter()
+        .filter(|c| !RETIRED.iter().any(|r| c.starts_with(r) || c == *r))
+        .collect()
+}
+
+/// 锁定目标账号（FOR UPDATE 快照）。
+pub async fn lock_admin_tx(
+    tx: &mut sqlx::MySqlConnection,
+    admin_id: u64,
+) -> anyhow::Result<Option<AdminAccount>> {
+    let row = sqlx::query_as::<_, AdminRow>(
+        "SELECT `id`, `username`, `display_name`, `password_hash`, `role_id`, `mfa_enabled`, \
+                `mfa_secret`, `mfa_last_step`, `status`, `failed_login_count`, `locked_until`, `auth_version` \
+         FROM `admin_user` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
+    )
+    .bind(admin_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    Ok(row.map(Into::into))
+}
+
+/// 当前有效的 customer_admin 数量（排除指定账号，当前读 FOR UPDATE）。
+pub async fn count_other_active_customer_admins_tx(
+    tx: &mut sqlx::MySqlConnection,
+    exclude_id: u64,
+) -> anyhow::Result<i64> {
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM `admin_user` u JOIN `role` r ON r.`id` = u.`role_id` AND r.`active_code` = 'customer_admin' \
+         WHERE u.`deleted_at` IS NULL AND u.`status` = 'active' AND u.`id` <> ? FOR UPDATE",
+    )
+    .bind(exclude_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    Ok(n)
+}
+
+/// 事务内按角色查权限码（锁内核对用）。
+pub async fn permission_codes_by_id_tx(
+    tx: &mut sqlx::MySqlConnection,
+    role_id: u64,
+) -> anyhow::Result<Vec<String>> {
+    let codes: Vec<String> = sqlx::query_scalar(
+        "SELECT p.`code` FROM `role_permission` rp JOIN `permission` p ON p.`id` = rp.`permission_id`          WHERE rp.`role_id` = ? ORDER BY p.`code`",
+    )
+    .bind(role_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    Ok(without_retired(codes))
 }
