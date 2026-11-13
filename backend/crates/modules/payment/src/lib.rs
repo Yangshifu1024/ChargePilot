@@ -16,6 +16,9 @@ pub mod recharge_bridge;
 pub mod scan;
 pub mod simulation;
 pub mod sources;
+pub mod wechat;
+#[cfg(test)]
+mod wechat_test;
 
 pub use channel::{PayMode, PayProvider, PrepayParams, PrepayRequest};
 pub use checkout::{CheckoutError, CheckoutInput, CheckoutOffers, CheckoutResult, CheckoutService};

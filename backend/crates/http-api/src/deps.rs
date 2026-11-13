@@ -58,14 +58,29 @@ pub struct PaymentServices {
 
 impl PaymentServices {
     /// 按环境变量 PAYMENT_MODE 装配（disabled / simulation / wechat_direct）。
-    /// wechat_direct 的直连渠道随批 6 接入，当前按 disabled 处理。
+    /// wechat_direct 要求微信凭据与 HTTP 执行器齐备（真实商户联调属上线前清单）。
     pub fn from_env(db: sqlx::MySqlPool, allocator: Arc<SegmentAllocator>) -> anyhow::Result<Self> {
         let mode = std::env::var("PAYMENT_MODE").unwrap_or_else(|_| "simulation".into());
         let provider: Arc<dyn chargepilot_mod_payment::PayProvider> = match mode.as_str() {
             "simulation" => Arc::new(chargepilot_mod_payment::channel::SimulationProvider),
-            "wechat_direct" | "disabled" => {
-                Arc::new(chargepilot_mod_payment::channel::DisabledProvider)
+            "wechat_direct" => {
+                let config = chargepilot_mod_payment::wechat::WechatConfig::from_env()?;
+                let appid = std::env::var("WECHAT_APPID").unwrap_or_default();
+                if appid.is_empty() {
+                    anyhow::bail!("wechat_direct 需要 WECHAT_APPID");
+                }
+                let notify_url = std::env::var("WECHAT_NOTIFY_URL").unwrap_or_default();
+                if notify_url.is_empty() {
+                    anyhow::bail!("wechat_direct 需要 WECHAT_NOTIFY_URL");
+                }
+                Arc::new(chargepilot_mod_payment::wechat::WechatDirectProvider {
+                    config,
+                    appid,
+                    http: Arc::new(chargepilot_mod_payment::wechat::WechatHttpExecutor),
+                    notify_url,
+                })
             }
+            "disabled" => Arc::new(chargepilot_mod_payment::channel::DisabledProvider),
             other => anyhow::bail!("PAYMENT_MODE 取值非法: {other}"),
         };
         let scanner: Arc<dyn chargepilot_mod_payment::PortScanner> =
