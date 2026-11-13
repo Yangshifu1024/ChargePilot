@@ -15,6 +15,9 @@ pub struct Claims {
     pub kind: String,
     /// 用户或管理员 ID
     pub sub: u64,
+    /// 关联会话 ID（user 令牌用于实时会话校验；admin 可为空串）
+    #[serde(default)]
+    pub sid: String,
     /// 过期时间（Unix 秒）
     pub exp: u64,
     /// 签发时间
@@ -26,10 +29,16 @@ pub const ADMIN_TTL_SECS: u64 = 8 * 60 * 60;
 
 /// 签发访问令牌。
 pub fn sign(secret: &str, kind: Kind, sub: u64) -> anyhow::Result<String> {
+    sign_with_sid(secret, kind, sub, String::new())
+}
+
+/// 签发携带会话 ID 的访问令牌（user 令牌的实时会话校验依赖 sid）。
+pub fn sign_with_sid(secret: &str, kind: Kind, sub: u64, sid: String) -> anyhow::Result<String> {
     let now = chrono::Utc::now().timestamp() as u64;
     let claims = Claims {
         kind: kind_str(kind).into(),
         sub,
+        sid,
         exp: now + ttl(kind),
         iat: now,
     };

@@ -16,6 +16,7 @@ DDL 事实源：[backend/migrations/0001_init.sql](../../backend/migrations/0001
 | **加列** | `charge_command`、`charge_stop_command` | 各加 `next_retry_at datetime(3) NULL` 与 `KEY idx_retry (status, next_retry_at)`：命令下发失败/无确认的进程内退避重扫（P7，替代 sync_delivery_retry） |
 | **并入** | 旧 `0002_invoice_active_unique.sql` | `invoice_request` 建表内直接带 `UNIQUE KEY uk_invoice_active (biz_type, biz_id)`（基线直接改 CREATE 的旧版约定） |
 | **保留** | 其余 80 张表 | 列定义逐字节沿用旧版 DDL（含 telemetry 等表月分区、`card_event_delivery` 等表的 `utf8mb4_0900_ai_ci` 混排规则）；三库间本无跨库 JOIN/事务，合并无语义影响 |
+| **语义变更（不改 DDL）** | `snowflake_state.last_millisecond` | 旧版存雪花毫秒时间戳；新版号段分配器（[ADR 003](../adr/003-segment-id.md)）将其用作「已分配上界水位」，CAS 推进。列 COMMENT 的历史语义待下次 DDL 修订时更新（阶段 01 已实现并经真库测试） |
 
 保留表中的既有种子数据完整迁移：`snowflake_state` 水位行（1,0,0）、`permission` 全量权限行、角色与系统默认配置。
 

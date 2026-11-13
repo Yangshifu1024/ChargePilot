@@ -34,7 +34,7 @@ license = "MIT"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
 axum = { version = "0.8", features = ["json"] }
 # 数据库（手写 SQL，不开编译期校验宏）
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "mysql", "chrono", "migrate", "json"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "mysql", "chrono", "migrate", "json", "derive"] }
 # Redis（会话/MFA/频次/锁）
 redis = { version = "0.31", features = ["tokio-comp"] }
 deadpool-redis = "0.21"

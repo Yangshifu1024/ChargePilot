@@ -4,6 +4,7 @@
 
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
+use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(name = "chargepilot", about = "充电桩运营平台单体服务（Rust）")]
@@ -44,8 +45,8 @@ async fn migrate() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 阶段 01 装配：连接池 + 事件投递循环 + 健康/指标 HTTP + 优雅停机。
-/// 业务路由（阶段 02 起）与设备 TCP（阶段 06）在此文件扩展。
+/// 装配：连接池 + 号段 + 事件投递循环 + 业务路由 HTTP + 优雅停机。
+/// 设备 TCP（阶段 06）在此文件扩展。
 async fn serve() -> anyhow::Result<()> {
     let cfg = chargepilot_platform::config::Config::from_env()?;
     let prometheus = chargepilot_platform::metrics::install()?;
@@ -60,28 +61,20 @@ async fn serve() -> anyhow::Result<()> {
     let token = tasks.token();
 
     // 事件投递循环（处理器登记表随各业务域落地；kind 无处理器时退避不崩溃）
-    let registry = std::sync::Arc::new(chargepilot_events::runtime::Registry::new());
+    let registry = Arc::new(chargepilot_events::runtime::Registry::new());
     tasks.spawn("event-dispatcher", {
         chargepilot_events::runtime::spawn_dispatch_loop(db.clone(), registry, token.clone())
     });
 
-    // HTTP：/health/live /health/ready /metrics（业务路由阶段 02 起）
-    let readiness = Readiness {
+    // 业务路由装配
+    let deps = Arc::new(chargepilot_http_api::deps::ApiDeps {
         db: db.clone(),
-        redis: redis_pool.clone(),
-    };
-    let app = axum::Router::new()
-        .route("/health/live", axum::routing::get(|| async { "ok" }))
-        .route("/health/ready", axum::routing::get(readiness_check))
-        .route(
-            "/metrics",
-            axum::routing::get(move || {
-                let handle = prometheus.clone();
-                async move { handle.render() }
-            }),
-        )
-        .with_state(readiness)
-        .fallback(not_found);
+        redis_url: Arc::new(cfg.redis_url.clone()),
+        jwt_secret: Arc::new(cfg.jwt_secret.clone()),
+        allocator: Arc::new(allocator),
+        exchanger: Arc::new(chargepilot_http_api::deps::exchanger_from_env()?),
+    });
+    let app = chargepilot_http_api::build_router(deps, prometheus);
     let listener = tokio::net::TcpListener::bind(&cfg.http_addr).await?;
     tracing::info!(addr = %cfg.http_addr, "HTTP 服务启动");
 
@@ -112,31 +105,6 @@ async fn serve() -> anyhow::Result<()> {
     db.close().await;
     tracing::info!("进程退出完成");
     Ok(())
-}
-
-#[derive(Clone)]
-struct Readiness {
-    db: sqlx::MySqlPool,
-    redis: chargepilot_platform::redisx::Pool,
-}
-
-async fn readiness_check(
-    axum::extract::State(state): axum::extract::State<Readiness>,
-) -> &'static str {
-    let db_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
-    let redis_ok = match state.redis.get().await {
-        Ok(mut conn) => redis::cmd("PING")
-            .query_async::<()>(&mut conn)
-            .await
-            .is_ok(),
-        Err(_) => false,
-    };
-    if db_ok && redis_ok { "ok" } else { "degraded" }
-}
-
-async fn not_found(headers: axum::http::HeaderMap) -> axum::response::Response {
-    let rid = chargepilot_platform::httpx::request_id_from(&headers);
-    chargepilot_platform::httpx::not_found_route(&rid)
 }
 
 async fn wait_stop_signal() {
