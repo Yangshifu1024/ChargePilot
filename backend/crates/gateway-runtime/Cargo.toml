@@ -15,10 +15,14 @@ sha2 = { workspace = true }
 chargepilot-events = { path = "../events" }
 chargepilot-mod-charging = { path = "../modules/charging" }
 chargepilot-domain = { path = "../domain" }
+chargepilot-platform = { path = "../platform" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 chargepilot-storage = { path = "../storage" }
+chargepilot-mod-order = { path = "../modules/order" }
+chargepilot-protocol-dc589 = { path = "../protocol-dc589" }
+chargepilot-mod-payment = { path = "../modules/payment" }
 rand = { workspace = true }
 chrono = { workspace = true }
 serde_json = { workspace = true }

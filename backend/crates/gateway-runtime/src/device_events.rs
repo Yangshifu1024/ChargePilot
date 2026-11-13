@@ -48,7 +48,7 @@ impl DeviceEventDispatcher {
             .and_then(|v| v.as_u64())
             .unwrap_or(1) as u8;
         let row: Option<(String, u64, String, String, u8)> = sqlx::query_as(
-            "SELECT `command_id`, `charge_order_id`, `order_no`, `device_id`, `port_no` \
+            "SELECT CAST(`command_id` AS CHAR), `charge_order_id`, `order_no`, `device_id`, `port_no` \
              FROM `charge_command` WHERE `device_id` = ? AND `port_no` = ? AND `status` = 'sent' \
              ORDER BY `created_at` DESC LIMIT 1",
         )

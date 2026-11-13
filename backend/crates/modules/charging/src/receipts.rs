@@ -80,15 +80,15 @@ pub async fn apply_start_receipt(
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
 
-    // 锁订单并核对设备与端口。
-    let order_no_row: Option<(u64, String, String, u8)> = sqlx::query_as(
-        "SELECT `id`, `order_no`, `device_id`, `port_no` FROM `charge_order` \
+    // 锁订单并核对设备与端口（user_id 供成功分支写端口占用）。
+    let order_no_row: Option<(u64, String, u64, String, u8)> = sqlx::query_as(
+        "SELECT `id`, `order_no`, `user_id`, `device_id`, `port_no` FROM `charge_order` \
          WHERE `id` = ? FOR UPDATE",
     )
     .bind(input.charge_order_id as i64)
     .fetch_optional(&mut *c)
     .await?;
-    let Some((id, order_no, device_id, port_no)) = order_no_row else {
+    let Some((id, order_no, view_user_id, device_id, port_no)) = order_no_row else {
         return Err(ReceiptError::Conflict);
     };
     if id != input.charge_order_id
@@ -151,6 +151,17 @@ pub async fn apply_start_receipt(
     if input.success {
         // paid → charging + 启动时间；命令 acked。
         chargepilot_mod_order::mark_charging_tx(&mut *c, id, &order_no, occurred_at).await?;
+        // 端口占用（旧版成功分支写 activePortCharge，结束回执按订单释放；
+        // 同端口重复占用由唯一键仲裁，重复启动回执在上方幂等分支已拦下）。
+        chargepilot_mod_order::occupy_port_tx(
+            &mut *c,
+            &input.device_id,
+            input.port_no,
+            input.charge_order_id,
+            view_user_id,
+            occurred_at,
+        )
+        .await?;
         // 刷卡首购操作确认（非刷卡订单无行，天然幂等）。
         chargepilot_mod_card::confirm_start_operation_tx(&mut *c, id).await?;
         sqlx::query("UPDATE `charge_command` SET `status` = 'acked', `result_code` = 0, `ack_at` = ?, `result_reported` = 1 WHERE `charge_order_id` = ?")

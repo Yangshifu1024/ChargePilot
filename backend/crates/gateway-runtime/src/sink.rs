@@ -256,6 +256,7 @@ async fn persist_event(pool: &MySqlPool, event: &Event) -> anyhow::Result<()> {
     let key = GatewaySink::event_key(event);
     let payload = serde_json::json!({
         "event_id": event.event_id,
+        "device_id": event.device_id,
         "type": event.kind.map(|k| format!("{k:?}")).unwrap_or_default(),
         "port": event.port,
         "result_code": event.result_code,

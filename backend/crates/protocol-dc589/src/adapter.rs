@@ -187,24 +187,18 @@ impl DeviceSession for DcSession {
         Box::pin(async move {
             // 同一 future 内直接调用写帧助手（借用克隆的 Arc 字段）。
             let write = async |frame: &Frame| write_frame_to(&writer, &audit, frame).await;
-            // 全零会话号仅允许卡拒绝/余额应答（设备主动查询的无会话回复）。
-            if command.session_id == [0u8; 6]
-                && !matches!(
-                    command.kind,
-                    CommandKind::CardDenied | CommandKind::CardBalance
-                )
-            {
-                anyhow::bail!("无效的 5.8.9 载荷：会话号缺失");
-            }
+            // 帧会话号固定使用本连接的服务端会话（设备应答须带回该号）；
+            // Command.session_id 只是调用方占位，不做校验。
+            let session_id = server_session;
             let frame = match command.kind {
                 CommandKind::CardDenied => crate::cards::build_card_denied(
-                    command.session_id,
+                    session_id,
                     command.card_number,
                     command.card_invalid,
                     command.card_balance_units,
                 )?,
                 CommandKind::CardBalance => crate::cards::build_card_balance_reply(
-                    command.session_id,
+                    session_id,
                     command.card_number,
                     !command.card_invalid,
                     command.card_balance_units,
@@ -214,7 +208,7 @@ impl DeviceSession for DcSession {
                         consumer_type: command.consumer_type,
                         card_number: command.card_number,
                         card_balance_units: command.card_balance_units,
-                        session: command.session_id,
+                        session: session_id,
                         port: command.port,
                         order_bcd: command.order_bcd,
                         mode: crate::commands::ChargeMode::from_code(command.mode)
@@ -222,8 +216,8 @@ impl DeviceSession for DcSession {
                         quantity: command.quantity,
                     })?
                 }
-                CommandKind::Stop => crate::commands::build_stop(command.session_id, command.port)?,
-                CommandKind::Reboot => crate::commands::build_reboot(command.session_id),
+                CommandKind::Stop => crate::commands::build_stop(session_id, command.port)?,
+                CommandKind::Reboot => crate::commands::build_reboot(session_id),
             };
             write(&frame).await?;
             // 启动命令后立即切换到充电心跳节奏。

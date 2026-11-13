@@ -13,6 +13,11 @@ pub struct CancelToken {
 }
 
 impl CancelToken {
+    /// 从既有 watch 通道构造（测试/自定义装配用）。
+    pub fn from_watch(rx: tokio::sync::watch::Receiver<bool>) -> Self {
+        Self { rx }
+    }
+
     pub fn is_cancelled(&self) -> bool {
         *self.rx.borrow()
     }

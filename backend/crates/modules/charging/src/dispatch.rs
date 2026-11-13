@@ -100,17 +100,9 @@ impl StartDispatcher {
             Err(e) => return Err(e.into()),
             Ok(_) => {}
         }
-        chargepilot_mod_order::occupy_port_tx(
-            &mut *conn,
-            &device_id,
-            port_no,
-            id,
-            user_id,
-            chrono::Utc::now(),
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         // 命令落库即标记已发送；设备确认随回执推进（旧版 sent_at 语义）。
+        // 端口占用不在受理时写：与旧版一致，成功回执（apply_start_receipt）
+        // 才占 active_port_charge，结束回执按订单释放。
         sqlx::query("UPDATE `charge_command` SET `status` = 'sent', `sent_at` = UTC_TIMESTAMP(3) WHERE `command_id` = ?")
             .bind(&command_id)
             .execute(&mut *conn)

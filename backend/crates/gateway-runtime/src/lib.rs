@@ -6,6 +6,7 @@
 
 pub mod command_sink;
 pub mod device_events;
+pub mod listener;
 pub mod registry;
 pub mod sink;
 pub mod snapshot;
@@ -13,6 +14,7 @@ pub mod telemetry;
 
 pub use command_sink::GatewayCommandSink;
 pub use device_events::DeviceEventDispatcher;
+pub use listener::DeviceListener;
 pub use registry::SessionRegistry;
 pub use sink::GatewaySink;
 pub use snapshot::{DeviceSnapshot, SnapshotStore};
