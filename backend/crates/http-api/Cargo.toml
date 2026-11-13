@@ -15,7 +15,9 @@ anyhow.workspace = true
 tracing.workspace = true
 chargepilot-platform.workspace = true
 chargepilot-mod-identity.workspace = true
+chargepilot-mod-device.workspace = true
 chargepilot-mod-ops.workspace = true
+chargepilot-mod-pricing.workspace = true
 chargepilot-mod-wallet.workspace = true
 
 [dev-dependencies]

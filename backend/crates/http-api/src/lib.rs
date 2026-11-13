@@ -4,6 +4,7 @@
 pub mod admin_auth;
 pub mod admin_guard;
 pub mod admin_management;
+pub mod admin_pricing_device;
 pub mod deps;
 pub mod user_auth;
 pub mod user_ops;
@@ -20,6 +21,7 @@ pub fn build_router(
     axum::Router::new()
         .merge(admin_auth::router())
         .merge(admin_management::router())
+        .merge(admin_pricing_device::router())
         .merge(user_ops::router())
         .merge(user_auth::router())
         .route("/health/live", axum::routing::get(|| async { "ok" }))
