@@ -43,7 +43,7 @@ fn paging(q: &Paging) -> (u32, u32) {
 }
 
 /// 钱包域错误 → HTTP（码值与文案沿用旧版字面量契约）。
-fn wallet_error(e: chargepilot_mod_wallet::WalletError, rid: &str) -> Response {
+pub fn wallet_error(e: chargepilot_mod_wallet::WalletError, rid: &str) -> Response {
     use chargepilot_mod_wallet::WalletError as E;
     match &e {
         E::Forbidden => crate::respond(403, 1003, "没有操作权限", rid),

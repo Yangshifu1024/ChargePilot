@@ -44,7 +44,11 @@ async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAlloc
         jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
         allocator: allocator.clone(),
         exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
+        // 这些 flow 不触达钱包与支付域。
         wallet: None,
+        checkout: None,
+        wallet_recharge: None,
+        simulation_payment: false,
     });
     Some((
         chargepilot_http_api::build_router(deps, prometheus_handle(), None),

@@ -117,7 +117,7 @@ impl RechargeService {
             }
         }
         // 幂等重放：同请求号读取既有申请，归属与金额一致则复用支付单。
-        let prior: Option<(i64, i64, i64)> = sqlx::query_as(
+        let prior: Option<(u64, i64, u64)> = sqlx::query_as(
             "SELECT `user_id`, `amount_cents`, `payment_order_id` FROM `wallet_recharge_request` \
              WHERE `request_id` = ? LIMIT 1 FOR UPDATE",
         )
@@ -126,10 +126,10 @@ impl RechargeService {
         .await?;
         let pay = match prior {
             Some((uid, amount, payment_id)) => {
-                if uid != user_id as i64 || amount != input.amount_cents {
+                if uid != user_id || amount != input.amount_cents {
                     return Err(WalletError::RequestConflict);
                 }
-                self.payments.load_in_tx(&mut tx, payment_id as u64).await?
+                self.payments.load_in_tx(&mut tx, payment_id).await?
             }
             None => {
                 let pay = self

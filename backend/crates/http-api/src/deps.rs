@@ -13,6 +13,12 @@ pub struct ApiDeps {
     pub exchanger: Arc<Exchanger>,
     /// 钱包域服务组（批 2）：退款/风控共用一个 RefundService 实例。
     pub wallet: Option<Arc<WalletServices>>,
+    /// 下单服务（批 3）：端口扫描、计费规则与渠道经本层装配。
+    pub checkout: Option<Arc<chargepilot_mod_payment::CheckoutService>>,
+    /// 钱包充值申请服务（批 3 接线：支付桥实现 RechargePayments）。
+    pub wallet_recharge: Option<Arc<chargepilot_mod_wallet::recharge::RechargeService>>,
+    /// 支付渠道模式：simulation 时开放模拟确认路由（旧版 PAYMENT_MODE）。
+    pub simulation_payment: bool,
 }
 
 /// 钱包域装配（payment 来源读取 + settlement 退款记录 + wallet 服务）。
@@ -34,7 +40,54 @@ impl WalletServices {
             db,
             refund: refund.clone(),
         });
-        Self { refund, risk }
+        Self {
+            refund,
+            risk,
+        }
+    }
+}
+
+/// 支付域装配（渠道模式 + 下单服务 + 充值申请服务）。
+pub struct PaymentServices {
+    pub checkout: Arc<chargepilot_mod_payment::CheckoutService>,
+    pub wallet_recharge: Arc<chargepilot_mod_wallet::recharge::RechargeService>,
+    pub simulation_payment: bool,
+}
+
+impl PaymentServices {
+    /// 按环境变量 PAYMENT_MODE 装配（disabled / simulation / wechat_direct）。
+    /// wechat_direct 的直连渠道随批 6 接入，当前按 disabled 处理。
+    pub fn from_env(db: sqlx::MySqlPool, allocator: Arc<SegmentAllocator>) -> anyhow::Result<Self> {
+        let mode = std::env::var("PAYMENT_MODE").unwrap_or_else(|_| "simulation".into());
+        let provider: Arc<dyn chargepilot_mod_payment::PayProvider> = match mode.as_str() {
+            "simulation" => Arc::new(chargepilot_mod_payment::channel::SimulationProvider),
+            "wechat_direct" | "disabled" => {
+                Arc::new(chargepilot_mod_payment::channel::DisabledProvider)
+            }
+            other => anyhow::bail!("PAYMENT_MODE 取值非法: {other}"),
+        };
+        let scanner: Arc<dyn chargepilot_mod_payment::PortScanner> =
+            Arc::new(chargepilot_mod_payment::scan::TablePortScanner::new(db.clone()));
+        let checkout = Arc::new(chargepilot_mod_payment::CheckoutService {
+            pool: db.clone(),
+            allocator: (*allocator).clone(),
+            scanner,
+            provider: provider.clone(),
+        });
+        let bridge = Arc::new(chargepilot_mod_payment::recharge_bridge::RechargePaymentBridge {
+            pool: db.clone(),
+            allocator: (*allocator).clone(),
+            provider,
+        });
+        let wallet_recharge = Arc::new(chargepilot_mod_wallet::recharge::RechargeService {
+            db: db.clone(),
+            payments: bridge,
+        });
+        Ok(Self {
+            checkout,
+            wallet_recharge,
+            simulation_payment: mode == "simulation",
+        })
     }
 }
 

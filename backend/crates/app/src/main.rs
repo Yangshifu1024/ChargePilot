@@ -81,13 +81,20 @@ async fn serve() -> anyhow::Result<()> {
     }
 
     // 业务路由装配
+    let allocator = Arc::new(allocator);
+    let payment_services =
+        chargepilot_http_api::deps::PaymentServices::from_env(db.clone(), allocator.clone())
+            .context("支付域装配失败")?;
     let deps = Arc::new(chargepilot_http_api::deps::ApiDeps {
         db: db.clone(),
         redis_url: Arc::new(cfg.redis_url.clone()),
         jwt_secret: Arc::new(cfg.jwt_secret.clone()),
-        allocator: Arc::new(allocator),
+        allocator,
         exchanger: Arc::new(chargepilot_http_api::deps::exchanger_from_env()?),
         wallet: Some(Arc::new(chargepilot_http_api::deps::WalletServices::build(db.clone()))),
+        checkout: Some(payment_services.checkout),
+        wallet_recharge: Some(payment_services.wallet_recharge),
+        simulation_payment: payment_services.simulation_payment,
     });
     let app = chargepilot_http_api::build_router(
         deps,

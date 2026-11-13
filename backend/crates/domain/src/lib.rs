@@ -12,3 +12,4 @@ pub mod charging_settle;
 pub mod charging_spec;
 pub mod charging_state;
 pub mod money;
+pub mod payment_intent;
