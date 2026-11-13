@@ -301,6 +301,7 @@ async fn state_machine_full_flow() {
         pool: db.as_ref().clone(),
         allocator: (*alloc).clone(),
         sink: Arc::new(SimulationSink),
+        simulation: true,
     };
     let payload = json!({
         "event_id": format!("E{}", rand_suffix()),

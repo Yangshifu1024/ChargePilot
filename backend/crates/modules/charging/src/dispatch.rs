@@ -11,6 +11,9 @@ pub struct StartDispatcher {
     pub pool: MySqlPool,
     pub allocator: SegmentAllocator,
     pub sink: std::sync::Arc<dyn CommandSink>,
+    /// simulation=true：sink 受理即登记成功回执（模拟闭环）；
+    /// 真实网关链路等待设备 B8 回执（device_event 处理器推进）。
+    pub simulation: bool,
 }
 
 impl EventDispatcher for StartDispatcher {
@@ -125,7 +128,10 @@ impl StartDispatcher {
         };
         match self.sink.send_start(&cmd).await {
             Ok(()) => {
-                // 已受理（ack）：模拟链路立即登记成功回执，真实网关回执异步到达。
+                // simulation：受理即登记成功回执；真实网关等 B8 回执异步推进。
+                if !self.simulation {
+                    return Ok(());
+                }
                 crate::receipts::apply_start_receipt(
                     &self.pool,
                     &crate::receipts::StartReceiptInput {

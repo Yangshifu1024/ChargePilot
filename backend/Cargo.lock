@@ -386,7 +386,9 @@ name = "chargepilot-gateway-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chargepilot-domain",
  "chargepilot-events",
+ "chargepilot-mod-charging",
  "chargepilot-protocol",
  "chargepilot-storage",
  "chrono",

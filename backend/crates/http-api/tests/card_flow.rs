@@ -326,6 +326,7 @@ async fn card_swipe_full_flow() {
         pool: db.as_ref().clone(),
         allocator: (*alloc).clone(),
         sink: Arc::new(SimulationSink),
+        simulation: true,
     };
     dispatcher
         .handle(&json!({

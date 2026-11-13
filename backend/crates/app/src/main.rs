@@ -69,6 +69,7 @@ async fn serve() -> anyhow::Result<()> {
             pool: db.clone(),
             allocator: (*allocator).clone(),
             sink: Arc::new(chargepilot_mod_charging::SimulationSink),
+            simulation: true,
         }),
     );
     let registry = Arc::new(registry);
