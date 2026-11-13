@@ -17,6 +17,7 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 chargepilot-events.workspace = true
+chargepilot-mod-ops.workspace = true
 chargepilot-platform.workspace = true
 chargepilot-storage.workspace = true
 chargepilot-http-api.workspace = true

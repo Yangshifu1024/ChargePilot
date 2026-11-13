@@ -66,6 +66,20 @@ async fn serve() -> anyhow::Result<()> {
         chargepilot_events::runtime::spawn_dispatch_loop(db.clone(), registry, token.clone())
     });
 
+    // 后台引导账号（提供 ADMIN_BOOTSTRAP_USER/PASSWORD 时确保存在）
+    let bootstrap_user = std::env::var("ADMIN_BOOTSTRAP_USER").unwrap_or_default();
+    let bootstrap_pass = std::env::var("ADMIN_BOOTSTRAP_PASSWORD").unwrap_or_default();
+    if !bootstrap_user.is_empty() {
+        chargepilot_mod_ops::repo::ensure_bootstrap(
+            &db,
+            &allocator,
+            &bootstrap_user,
+            &bootstrap_pass,
+        )
+        .await
+        .context("后台引导账号创建失败")?;
+    }
+
     // 业务路由装配
     let deps = Arc::new(chargepilot_http_api::deps::ApiDeps {
         db: db.clone(),

@@ -1,6 +1,7 @@
 //! HTTP 适配：axum 路由合并 + 鉴权中间件 + 统一信封输出（测试主缝所在层）。
 //! 依赖方向：本层只调各域模块服务，不写业务 SQL、不持有业务表。
 
+pub mod admin_auth;
 pub mod deps;
 pub mod user_auth;
 
@@ -14,6 +15,7 @@ pub fn build_router(
     prometheus: metrics_exporter_prometheus::PrometheusHandle,
 ) -> axum::Router {
     axum::Router::new()
+        .merge(admin_auth::router())
         .merge(user_auth::router())
         .route("/health/live", axum::routing::get(|| async { "ok" }))
         .route("/health/ready", axum::routing::get(readiness))

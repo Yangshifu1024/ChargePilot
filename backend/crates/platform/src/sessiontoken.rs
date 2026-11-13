@@ -188,3 +188,15 @@ mod tests {
         let _ = sid2;
     }
 }
+
+/// 生成随机挑战码（base64url，无填充）——MFA 挑战等场景。
+pub fn random_token(byte_len: usize) -> String {
+    // 复用 mint 的随机源：直接生成
+    fn inner(n: usize) -> anyhow::Result<String> {
+        use rand::RngCore;
+        let mut b = vec![0u8; n];
+        rand::rng().fill_bytes(&mut b);
+        Ok(B64.encode(b))
+    }
+    inner(byte_len).unwrap_or_default()
+}
