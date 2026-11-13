@@ -11,3 +11,4 @@ pub mod charging_scheme;
 pub mod charging_settle;
 pub mod charging_spec;
 pub mod charging_state;
+pub mod money;

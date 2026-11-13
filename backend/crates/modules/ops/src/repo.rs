@@ -6,7 +6,6 @@ use chrono::Datelike as _;
 use sqlx::MySqlPool;
 
 const MAX_FAILED_ATTEMPTS: u32 = 5;
-const LOCK_MINUTES: i64 = 30;
 
 /// 按用户名取未删除账号。
 pub async fn find_by_username(

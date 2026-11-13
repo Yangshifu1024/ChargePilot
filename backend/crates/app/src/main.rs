@@ -87,6 +87,7 @@ async fn serve() -> anyhow::Result<()> {
         jwt_secret: Arc::new(cfg.jwt_secret.clone()),
         allocator: Arc::new(allocator),
         exchanger: Arc::new(chargepilot_http_api::deps::exchanger_from_env()?),
+        wallet: Some(Arc::new(chargepilot_http_api::deps::WalletServices::build(db.clone()))),
     });
     let app = chargepilot_http_api::build_router(
         deps,

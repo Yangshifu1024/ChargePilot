@@ -11,6 +11,31 @@ pub struct ApiDeps {
     pub jwt_secret: Arc<String>,
     pub allocator: Arc<SegmentAllocator>,
     pub exchanger: Arc<Exchanger>,
+    /// 钱包域服务组（批 2）：退款/风控共用一个 RefundService 实例。
+    pub wallet: Option<Arc<WalletServices>>,
+}
+
+/// 钱包域装配（payment 来源读取 + settlement 退款记录 + wallet 服务）。
+#[derive(Clone)]
+pub struct WalletServices {
+    pub refund: Arc<chargepilot_mod_wallet::refund::RefundService>,
+    pub risk: Arc<chargepilot_mod_wallet::risk::RiskService>,
+}
+
+impl WalletServices {
+    /// 按默认归属装配（payment 提供 sources、settlement 提供 recorder）。
+    pub fn build(db: sqlx::MySqlPool) -> Self {
+        let refund = Arc::new(chargepilot_mod_wallet::refund::RefundService {
+            db: db.clone(),
+            sources: Arc::new(chargepilot_mod_payment::sources::RechargeSources),
+            recorder: Arc::new(chargepilot_mod_settlement::recorder::RefundRecorder),
+        });
+        let risk = Arc::new(chargepilot_mod_wallet::risk::RiskService {
+            db,
+            refund: refund.clone(),
+        });
+        Self { refund, risk }
+    }
 }
 
 /// 登录模式解析（LOGIN_MODE 环境变量，旧版语义）。

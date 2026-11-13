@@ -156,7 +156,6 @@ pub async fn import_devices(
             )));
         }
         // 导入身份幂等登记（同号不同配置 → 409）
-        let identity_json = serde_json::to_string(&d)?;
         let fresh = sqlx::query(
             "INSERT IGNORE INTO `device_import_identity` (`device_id`, `request_json`) VALUES (?, ?)",
         )
@@ -182,7 +181,7 @@ pub async fn import_devices(
         }
         // provision 幂等（device_provision 首次原文 + 比对）
         let provision_request = json!({"device_id": d.device_id, "vendor_id": d.vendor_id, "station_id": d.station_id, "port_count": d.port_count});
-        let prov_fresh = sqlx::query(
+        let _prov_fresh = sqlx::query(
             "INSERT IGNORE INTO `device_provision` (`device_id`, `request_json`) VALUES (?, ?)",
         )
         .bind(&d.device_id)
@@ -212,7 +211,7 @@ pub async fn import_devices(
         .fetch_optional(&mut *tx)
         .await?;
         match device_row {
-            Some((dev_pk, dev_vendor)) => {
+            Some((_, dev_vendor)) => {
                 if dev_vendor != d.vendor_id {
                     return Err(DeviceError::Conflict(format!(
                         "设备 {} 归属厂商不一致",

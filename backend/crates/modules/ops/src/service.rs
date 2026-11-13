@@ -174,19 +174,3 @@ impl<'a> SessionService<'a> {
     }
 }
 
-/// 按 ID 取账号最小身份（实时鉴权的版本核对）。
-async fn find_identity_by_id(db: &MySqlPool, id: u64) -> Result<AccountIdentity, OpsError> {
-    let row: Option<(u64, u64, String)> = sqlx::query_as(
-        "SELECT `id`, `auth_version`, `username` FROM `admin_user` WHERE `id` = ? AND `deleted_at` IS NULL",
-    )
-    .bind(id)
-    .fetch_optional(db)
-    .await
-    .map_err(OpsError::from)?;
-    row.map(|(id, auth_version, username)| AccountIdentity {
-        id,
-        auth_version,
-        username,
-    })
-    .ok_or(OpsError::Credentials)
-}

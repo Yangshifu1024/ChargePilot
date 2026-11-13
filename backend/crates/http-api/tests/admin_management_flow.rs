@@ -44,6 +44,7 @@ async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAlloc
         jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
         allocator: allocator.clone(),
         exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
+        wallet: None,
     });
     Some((
         chargepilot_http_api::build_router(deps, prometheus_handle(), None),
@@ -59,6 +60,13 @@ static MGMT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 async fn cleanup_test_admins(db: &sqlx::MySqlPool) {
     let _ = sqlx::query("DELETE FROM admin_user WHERE username LIKE 'root-%' OR username LIKE 'lim-%' OR username LIKE 'last-%'")
         .execute(db).await;
+    // 陈旧残留（其他 flow 历史运行的超管账号）只删 1 小时前的，避免干扰并行中的测试进程。
+    let _ = sqlx::query(
+        "DELETE FROM admin_user WHERE (username LIKE 'p3-%' OR username LIKE 'wf-%') \
+         AND created_at < NOW() - INTERVAL 1 HOUR",
+    )
+    .execute(db)
+    .await;
     let _ = sqlx::query("DELETE FROM role WHERE code LIKE 'lim_%' OR code LIKE 'rogue_%'")
         .execute(db)
         .await;
@@ -106,7 +114,7 @@ async fn req(
     )
 }
 
-async fn login(router: &axum::Router, username: &str, password: &str, ip: &str) -> Option<String> {
+async fn login(router: &axum::Router, username: &str, password: &str, _ip: &str) -> Option<String> {
     let (status, body) = req(
         router.clone(),
         "POST",
@@ -155,9 +163,22 @@ async fn seed_limited_admin(
     (username, role_id, admin_id)
 }
 
+
+/// 跨测试文件互斥锁：这些 flow 共享开发库，部分断言依赖全局计数
+/// （如"最后一个客户管理员"），用固定端口的 TCP 监听作锁串行各文件。
+fn global_flow_lock() -> std::net::TcpListener {
+    loop {
+        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:39701") {
+            return l;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
 #[tokio::test]
 async fn permission_boundary_and_management() {
-    let _guard = MGMT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let _flow_lock = global_flow_lock();    let _guard = MGMT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some((router, db, alloc)) = build().await else {
         return;
     };
@@ -240,9 +261,16 @@ async fn permission_boundary_and_management() {
         }
     }
 
-    // 4. 最后管理员保护：把唯一的其他 customer_admin 删除后，超管删除自身唯一伙伴被拒。
-    // 构造：受限账号（有 admin_user.update）尝试停用超管（customer_admin）→
-    // 停用后无其他有效 customer_admin → 409 必须保留。
+    // 4. 最后管理员保护：唯一性由测试构造——先停用其他所有有效的
+    // customer_admin（历史运行/并行测试的账号一律禁用），使 super_id 成为
+    // 最后一个；受限账号（有 admin_user.update）停用它必须 409 且整体回滚。
+    sqlx::query(
+        "UPDATE `admin_user` SET `status` = 'disabled'          WHERE `role_id` = 1 AND `id` <> ? AND `status` = 'active' AND `deleted_at` IS NULL",
+    )
+    .bind(super_id)
+    .execute(db.as_ref())
+    .await
+    .unwrap();
     let (status, body) = req(
         router.clone(),
         "PUT",
@@ -367,7 +395,8 @@ async fn permission_boundary_and_management() {
 
 #[tokio::test]
 async fn last_admin_self_protection() {
-    let _guard = MGMT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let _flow_lock = global_flow_lock();    let _guard = MGMT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some((router, db, alloc)) = build().await else {
         return;
     };

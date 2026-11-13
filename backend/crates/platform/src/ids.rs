@@ -146,13 +146,9 @@ mod tests {
         if url.is_empty() {
             return None;
         }
-        let pool = MySqlPool::connect(&url).await.ok()?;
-        // 重置水位（测试自清理）
-        sqlx::query("UPDATE `snowflake_state` SET `last_millisecond` = 0 WHERE `id` = 1")
-            .execute(&pool)
-            .await
-            .ok()?;
-        Some(pool)
+        // 共享水位绝不回拨：库中已有历史发号，重置会令后续测试
+        // 从旧区间重新发号，撞出主键冲突（1062）。号段本应只进不退。
+        MySqlPool::connect(&url).await.ok()
     }
 
     #[tokio::test]

@@ -4,7 +4,6 @@
 use super::{DeviceError, StationResult};
 use chargepilot_mod_ops::Profile;
 use chargepilot_mod_ops::repo;
-use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::MySqlPool;
 

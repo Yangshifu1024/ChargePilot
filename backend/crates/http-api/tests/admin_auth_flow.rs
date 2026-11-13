@@ -45,6 +45,7 @@ async fn build_app() -> Option<axum::Router> {
         jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
         allocator,
         exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
+        wallet: None,
     });
     let _ = db;
     Some(chargepilot_http_api::build_router(
@@ -136,9 +137,22 @@ async fn get_bearer(
     )
 }
 
+
+/// 跨测试文件互斥锁：这些 flow 共享开发库，部分断言依赖全局计数
+/// （如"最后一个客户管理员"），用固定端口的 TCP 监听作锁串行各文件。
+fn global_flow_lock() -> std::net::TcpListener {
+    loop {
+        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:39701") {
+            return l;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
 #[tokio::test]
 async fn plain_login_flow() {
-    let Some(router) = build_app().await else {
+
+    let _flow_lock = global_flow_lock();    let Some(router) = build_app().await else {
         return;
     };
     let db = chargepilot_storage::open_pool(&env_or_skip("TEST_MYSQL_URL").unwrap(), 4)
@@ -196,7 +210,7 @@ async fn plain_login_flow() {
     let new_refresh = body["data"]["refresh_token"].as_str().unwrap().to_string();
     let (status, body) = refresh_with(router.clone(), &refresh, &ip).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "旧刷新令牌应失效: {body}");
-    let (status, body) = post(
+    let (status, _body) = post(
         router.clone(),
         "/api/v1/admin/auth/login",
         &format!(r#"{{"username":"{user}","password":"plain-pass-123"}}"#),
@@ -226,7 +240,8 @@ async fn refresh_with(router: axum::Router, token: &str, ip: &str) -> (StatusCod
 
 #[tokio::test]
 async fn mfa_login_flow_with_replay_rejection() {
-    let Some(router) = build_app().await else {
+
+    let _flow_lock = global_flow_lock();    let Some(router) = build_app().await else {
         return;
     };
     let db = chargepilot_storage::open_pool(&env_or_skip("TEST_MYSQL_URL").unwrap(), 4)
@@ -325,7 +340,8 @@ async fn mfa_login_flow_with_replay_rejection() {
 
 #[tokio::test]
 async fn login_rate_limit() {
-    let Some(router) = build_app().await else {
+
+    let _flow_lock = global_flow_lock();    let Some(router) = build_app().await else {
         return;
     };
     let ip = rand_ip();

@@ -46,6 +46,7 @@ async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAlloc
         jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
         allocator: allocator.clone(),
         exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
+        wallet: None,
     });
     Some((
         chargepilot_http_api::build_router(deps, prometheus_handle(), None),
@@ -118,9 +119,22 @@ async fn login_super(
         .map(|s| (s.to_string(), id))
 }
 
+
+/// 跨测试文件互斥锁：这些 flow 共享开发库，部分断言依赖全局计数
+/// （如"最后一个客户管理员"），用固定端口的 TCP 监听作锁串行各文件。
+fn global_flow_lock() -> std::net::TcpListener {
+    loop {
+        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:39701") {
+            return l;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
 #[tokio::test]
 async fn import_devices_and_fault_flow() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let _flow_lock = global_flow_lock();    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some((router, db, alloc)) = build().await else {
         return;
     };
@@ -251,7 +265,7 @@ async fn import_devices_and_fault_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, body) = req(
+    let (status, _body) = req(
         router.clone(),
         "POST",
         &format!("/api/v1/admin/device-fault-reports/{report_id_u64}/resolve"),
@@ -331,4 +345,9 @@ async fn import_devices_and_fault_flow() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(body["data"]["devices"].is_array(), "站点详情应含设备列表");
+
+    // 测试尾部自清理（删除本测试建立的 p3b- 超管账号，防残留污染计数类断言）
+    let _ = sqlx::query("DELETE FROM admin_user WHERE username LIKE 'p3b-%'")
+        .execute(&*db)
+        .await;
 }

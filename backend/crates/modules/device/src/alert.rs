@@ -148,7 +148,7 @@ pub async fn ack(
     if !actor_locked.permissions.iter().any(|p| p == "alert.ack") {
         return Err(DeviceError::Forbidden);
     }
-    let (id, created_month, status): (u64, chrono::NaiveDate, String) = sqlx::query_as(
+    let (id, _created_month, status): (u64, chrono::NaiveDate, String) = sqlx::query_as(
         "SELECT `id`, `created_month`, `status` FROM `alert_event` WHERE `id` = ? FOR UPDATE",
     )
     .bind(alert_id)

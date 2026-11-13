@@ -341,7 +341,9 @@ dependencies = [
  "chargepilot-mod-device",
  "chargepilot-mod-identity",
  "chargepilot-mod-ops",
+ "chargepilot-mod-payment",
  "chargepilot-mod-pricing",
+ "chargepilot-mod-settlement",
  "chargepilot-mod-wallet",
  "chargepilot-platform",
  "chargepilot-storage",
@@ -432,6 +434,13 @@ version = "0.1.0"
 [[package]]
 name = "chargepilot-mod-payment"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chargepilot-domain",
+ "chargepilot-mod-wallet",
+ "sqlx",
+ "thiserror",
+]
 
 [[package]]
 name = "chargepilot-mod-pricing"
@@ -453,14 +462,30 @@ dependencies = [
 [[package]]
 name = "chargepilot-mod-settlement"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chargepilot-domain",
+ "chargepilot-mod-wallet",
+ "sqlx",
+ "thiserror",
+]
 
 [[package]]
 name = "chargepilot-mod-wallet"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chargepilot-domain",
+ "chargepilot-mod-ops",
  "chargepilot-platform",
+ "chrono",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "sha2",
  "sqlx",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]

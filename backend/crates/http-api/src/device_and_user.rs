@@ -8,7 +8,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_device::{
-    DeviceError, alert, fault, import, management, station, user_station,
+    DeviceError, alert, fault, import, management, user_station,
 };
 use chargepilot_mod_ops::OpsError;
 use chargepilot_mod_ops::management::Page;
@@ -479,6 +479,11 @@ async fn station_detail(
         }
         Err(e) => device_error(e, &rid),
     }
+}
+
+/// 公开包装：钱包路由复用同一鉴权路径（旧版同用 user 组鉴权）。
+pub async fn user_id_from_pub(deps: &Arc<ApiDeps>, headers: &HeaderMap) -> Result<u64, Response> {
+    user_id_from(deps, headers).await
 }
 
 async fn user_id_from(deps: &Arc<ApiDeps>, headers: &HeaderMap) -> Result<u64, Response> {

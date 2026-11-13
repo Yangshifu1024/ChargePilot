@@ -2,6 +2,7 @@
 //! 依赖方向：本层只调各域模块服务，不写业务 SQL、不持有业务表。
 
 pub mod admin_auth;
+pub mod admin_finance;
 pub mod admin_guard;
 pub mod admin_management;
 pub mod admin_pricing_device;
@@ -9,6 +10,7 @@ pub mod deps;
 pub mod device_and_user;
 pub mod user_auth;
 pub mod user_ops;
+pub mod user_wallet;
 
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
@@ -24,9 +26,11 @@ pub fn build_router(
     let mut app = axum::Router::new()
         .merge(admin_auth::router())
         .merge(admin_management::router())
+        .merge(admin_finance::router())
         .merge(admin_pricing_device::router())
         .merge(device_and_user::router())
         .merge(user_ops::router())
+        .merge(user_wallet::router())
         .merge(user_auth::router())
         .route("/health/live", axum::routing::get(|| async { "ok" }))
         .route("/health/ready", axum::routing::get(readiness))

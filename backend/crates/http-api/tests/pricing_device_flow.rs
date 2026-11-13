@@ -44,6 +44,7 @@ async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAlloc
         jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
         allocator: allocator.clone(),
         exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
+        wallet: None,
     });
     Some((
         chargepilot_http_api::build_router(deps, prometheus_handle(), None),
@@ -115,9 +116,22 @@ async fn login_super(
     body["data"]["access_token"].as_str().map(str::to_string)
 }
 
+
+/// 跨测试文件互斥锁：这些 flow 共享开发库，部分断言依赖全局计数
+/// （如"最后一个客户管理员"），用固定端口的 TCP 监听作锁串行各文件。
+fn global_flow_lock() -> std::net::TcpListener {
+    loop {
+        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:39701") {
+            return l;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
 #[tokio::test]
 async fn publish_inherit_and_version_baseline() {
-    let Some((router, db, alloc)) = build().await else {
+
+    let _flow_lock = global_flow_lock();    let Some((router, db, alloc)) = build().await else {
         return;
     };
     let token = login_super(&router, &db, &alloc).await.expect("超管登录");
@@ -144,13 +158,12 @@ async fn publish_inherit_and_version_baseline() {
     // 建模板（有效方案）
     let scheme = json!({
         "name": format!("方案{}", rand_suffix()), "remark": "",
-        "amount": {"algorithm": "time", "periods": [
-            {"electric_cents": 50, "service_cents": 30, "end_minute": 720},
-            {"electric_cents": 30, "service_cents": 20, "end_minute": 1440}]},
+        "amount": {"algorithm": "server_energy", "periods": [
+            {"electric_cents": 50, "service_cents": 30, "end_minute": 1440}]},
         "packages": [
-            {"id": 1, "name": "1元", "mode": "money", "price_cents": 100},
+            {"id": 1, "name": "1元", "mode": "amount", "price_cents": 100},
             {"id": 2, "name": "2小时", "mode": "duration", "price_cents": 200, "minutes": 120}],
-        "policy": {"free_minutes": 0, "min_electric_cents": 0, "max_minutes": 600, "loss_rate_bp": 0, "channel_bp": 0},
+        "policy": {"free_minutes": 0, "min_electric_cents": 0, "max_minutes": 600, "loss_rate_bp": 0, "channel_bp": 10000},
         "stop": {"stop_when_full": true},
         "card": {"package_id": 2, "max_minutes": 600},
         "display": {"duration": [], "energy": []}
@@ -275,20 +288,27 @@ async fn publish_inherit_and_version_baseline() {
         chargepilot_mod_pricing::metering::active_device_rule(&db, station_id, Some(&device_id))
             .await;
     assert!(rule.is_ok(), "生效规则应可查询");
+
+    // 测试尾部自清理（删除本测试建立的 p3- 超管账号，防残留污染计数类断言）
+    let _ = sqlx::query("DELETE FROM admin_user WHERE username LIKE 'p3-%'")
+        .execute(&*db)
+        .await;
 }
 
 #[tokio::test]
 async fn invalid_scheme_is_rejected_with_conflict() {
-    let Some((router, db, alloc)) = build().await else {
+
+    let _flow_lock = global_flow_lock();    let Some((router, db, alloc)) = build().await else {
         return;
     };
     let token = login_super(&router, &db, &alloc).await.expect("超管登录");
     // 时段不覆盖全天 → 409
     let bad = json!({
         "name": "坏方案", "remark": "",
-        "amount": {"algorithm": "time", "periods": [{"electric_cents": 50, "end_minute": 720}]},
-        "packages": [{"id": 1, "name": "1元", "mode": "money", "price_cents": 100}],
-        "policy": {}, "stop": {}, "card": {}, "display": {"duration": [], "energy": []}
+        "amount": {"algorithm": "server_energy", "periods": [{"electric_cents": 50, "service_cents": 30, "end_minute": 720}]},
+        "packages": [{"id": 1, "name": "1元", "mode": "amount", "price_cents": 100}],
+        "policy": {"free_minutes": 0, "min_electric_cents": 0, "max_minutes": 600, "loss_rate_bp": 0, "channel_bp": 10000},
+        "stop": {}, "card": {"package_id": 2, "max_minutes": 600}, "display": {"duration": [], "energy": []}
     });
     let (status, body) = req(
         router.clone(),
@@ -300,4 +320,9 @@ async fn invalid_scheme_is_rejected_with_conflict() {
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "无效方案应 409: {body}");
     assert!(body["message"].as_str().unwrap().contains("全天"));
+
+    // 测试尾部自清理
+    let _ = sqlx::query("DELETE FROM admin_user WHERE username LIKE 'p3-%'")
+        .execute(&*db)
+        .await;
 }
