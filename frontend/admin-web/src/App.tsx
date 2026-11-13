@@ -1,0 +1,60 @@
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import LoginPage from './pages/Login';
+import MainLayout from './layouts/MainLayout';
+import DashboardPage from './pages/Dashboard';
+import OrdersPage from './pages/Orders';
+import PaymentOrdersPage from './pages/PaymentOrders';
+import SecurityPage from './pages/Security';
+import ChargeUsersPage from './pages/ChargeUsers';
+import DevicesPage from './pages/Devices';
+import VendorsPage from './pages/Vendors';
+import StationsPage from './pages/Stations';
+import UsersPage from './pages/Users';
+import AlertsPage from './pages/Alerts';
+import CouponsPage from './pages/Coupons';
+import BillingPage from './pages/Billing';
+import AnnouncementsPage from './pages/Announcements';
+import CaseworkPage from './pages/Casework';
+import ExportsPage from './pages/Exports';
+import AuditLogsPage from './pages/AuditLogs';
+import TemplatesPage from './pages/Templates';
+import OnlineCards from './pages/OnlineCards';
+
+function RequireAuth({ children }: { children: JSX.Element }) {
+  const token = localStorage.getItem('cp_token');
+  const location = useLocation();
+  if (!token) return <Navigate to="/login" state={{ from: location }} replace />;
+  return children;
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/" element={<RequireAuth><MainLayout /></RequireAuth>}>
+        <Route index element={<DashboardPage />} />
+        <Route path="orders" element={<OrdersPage />} />
+        <Route path="payment-orders" element={<PaymentOrdersPage />} />
+        <Route path="security" element={<SecurityPage />} />
+        <Route path="users" element={<ChargeUsersPage />} />
+        <Route path="online-cards" element={<OnlineCards />} />
+        <Route path="devices" element={<DevicesPage />} />
+        <Route path="vendors" element={<VendorsPage />} />
+        <Route path="stations" element={<StationsPage />} />
+        <Route path="templates" element={<TemplatesPage />} />
+        <Route path="pricing-templates" element={<Navigate to="/templates" replace />} />
+        <Route path="package-templates" element={<Navigate to="/templates" replace />} />
+
+        <Route path="admin-users" element={<UsersPage />} />
+        <Route path="alerts" element={<AlertsPage />} />
+        <Route path="exports" element={<ExportsPage />} />
+        <Route path="audit-logs" element={<AuditLogsPage />} />
+        <Route path="coupons" element={<CouponsPage />} />
+        <Route path="billing" element={<BillingPage />} />
+        <Route path="announcements" element={<AnnouncementsPage />} />
+        <Route path="casework" element={<CaseworkPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
+  );
+}

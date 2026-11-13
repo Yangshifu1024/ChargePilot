@@ -23,6 +23,7 @@ pub struct Config {
 impl Config {
     /// 从环境变量加载并校验。任何校验失败即返回错误（启动 fail-fast）。
     pub fn from_env() -> anyhow::Result<Self> {
+        warn_unknown_env_vars();
         let database_url = require("DATABASE_URL")?;
         let redis_url = require("REDIS_URL")?;
         let http_addr = optional("HTTP_ADDR", "0.0.0.0:8080");
@@ -72,6 +73,68 @@ impl Config {
             jwt_secret,
             paid_start_timeout_secs,
         })
+    }
+}
+
+/// 环境变量冻结清单（阶段 09）：应用可识别的全部变量。
+/// 清单外变量（含拼写错误）启动时显式告警——配置漂移有据可查，不静默忽略。
+const KNOWN_ENV_VARS: &[&str] = &[
+    // 核心
+    "DATABASE_URL",
+    "REDIS_URL",
+    "HTTP_ADDR",
+    "DEVICE_ADDR",
+    "JWT_SECRET",
+    "PAID_START_TIMEOUT_SECS",
+    // 静态产物与导出
+    "ADMIN_STATIC_DIR",
+    "H5_STATIC_DIR",
+    "EXPORT_DIR",
+    "EXPORT_MAX_ROWS",
+    // 引导账号
+    "ADMIN_BOOTSTRAP_USER",
+    "ADMIN_BOOTSTRAP_PASSWORD",
+    // 微信凭据组（production 必填；development 模式可缺省）
+    "WECHAT_APPID",
+    "WECHAT_SECRET",
+    "WECHAT_MCH_ID",
+    "WECHAT_MCH_SERIAL",
+    "WECHAT_PRIVATE_KEY_PEM",
+    "WECHAT_PLATFORM_CERTS",
+    "WECHAT_NOTIFY_URL",
+    // 运行模式与日志
+    "PAYMENT_MODE",
+    "LOGIN_MODE",
+    "RUST_LOG",
+];
+
+/// 宿主/容器运行时会注入的系统变量（与配置无关，不告警）。
+const SYSTEM_ENV_PREFIXES: &[&str] = &[
+    "PATH", "HOME", "LANG", "LC_", "TMPDIR", "USER", "SHELL", "TERM", "PWD", "SHLVL", "TZ",
+    "HOSTNAME", "SSH_", "XPC_", "__CF", "LS_COLORS", "COLORFGBG", "EDITOR", "RUST_BACKTRACE",
+    "MYSQL_", "GATEWAY_", "WINDIR", "COMSPEC", "PROGRAMFILES", "ProgramFiles", "HOMEDRIVE",
+    "HOMEPATH", "SYSTEMROOT", "SystemRoot", "SYSTEMDRIVE", "TEMP", "TMP", "APPDATA",
+    "LOCALAPPDATA", "ProgramData", "PUBLIC", "DriverData", "OS", "PROCESSOR_", "NUMBER_OF_",
+    "PATHEXT", "PROMPT", "SESSIONNAME", "USERDOMAIN", "USERNAME", "COMPUTERNAME", "COMMONPROGRAM",
+    "CommonProgram", "POWERSHELL", "EXEPATH", "HOMESHARE", "LOGONSERVER", "ONEHEADER",
+];
+
+/// 对清单外变量打 WARN（不阻断启动：容器运行时变量难以穷举，漂移靠日志可查）。
+fn warn_unknown_env_vars() {
+    for (name, _) in std::env::vars() {
+        if KNOWN_ENV_VARS.contains(&name.as_str()) {
+            continue;
+        }
+        if SYSTEM_ENV_PREFIXES
+            .iter()
+            .any(|p| name.starts_with(p) || name == *p)
+        {
+            continue;
+        }
+        tracing::warn!(
+            var = %name,
+            "未在冻结清单内的环境变量（若为配置项请核对拼写与 docs/operations.md）"
+        );
     }
 }
 
@@ -173,5 +236,33 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cfg.device_addr, "0.0.0.0:9100");
+    }
+}
+
+#[cfg(test)]
+mod freeze_tests {
+    use super::*;
+
+    #[test]
+    fn frozen_list_covers_core_vars() {
+        // 冻结清单覆盖核心五项（阶段 09 spec：约 15 个）。
+        for name in [
+            "DATABASE_URL",
+            "REDIS_URL",
+            "JWT_SECRET",
+            "HTTP_ADDR",
+            "DEVICE_ADDR",
+        ] {
+            assert!(KNOWN_ENV_VARS.contains(&name), "{name} 应在冻结清单");
+        }
+        // 微信凭据组 7 个是 spec 明确要求的一组，总数冻结在 22 个不再增长。
+        assert_eq!(KNOWN_ENV_VARS.len(), 22);
+    }
+
+    #[test]
+    fn system_prefixes_do_not_shadow_known_vars() {
+        // 系统前缀不得吞掉清单内变量（RUST_LOG 同时在两侧时清单优先）。
+        assert!(KNOWN_ENV_VARS.contains(&"RUST_LOG"));
+        assert!(!SYSTEM_ENV_PREFIXES.contains(&"RUST_LOG"));
     }
 }

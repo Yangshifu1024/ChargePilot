@@ -1,0 +1,84 @@
+# ChargePilot 生产单栈（阶段 09）：app + MySQL 8.4 + Redis 8；
+# Caddy 为可选边缘 TLS（--profile edge）。镜像一律 gh-proxy.org/docker/ 前缀。
+# 用法：docker compose -f docker/compose.prod.yaml --env-file docker/.env up -d
+#       启用边缘 TLS：加 --profile edge（并配置 docker/Caddyfile 的域名）
+
+services:
+  app:
+    image: chargepilot/app:latest
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      # 容器网络内的服务地址（覆盖宿主开发值）
+      DATABASE_URL: mysql://chargepilot:${MYSQL_PASSWORD}@mysql:3306/chargepilot
+      REDIS_URL: redis://redis:6379
+      HTTP_ADDR: 0.0.0.0:8080
+      DEVICE_ADDR: 0.0.0.0:9100
+      ADMIN_STATIC_DIR: /opt/chargepilot/admin
+      H5_STATIC_DIR: /opt/chargepilot/h5
+      EXPORT_DIR: /data/exports
+    ports:
+      - "8080:8080"
+      - "9100:9100"
+    volumes:
+      - exports:/data/exports
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mysql:
+    image: gh-proxy.org/docker/mysql:8.4
+    environment:
+      MYSQL_DATABASE: chargepilot
+      MYSQL_USER: chargepilot
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 docker/.env 配置}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 docker/.env 配置}
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  redis:
+    image: gh-proxy.org/docker/redis:8-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  caddy:
+    image: gh-proxy.org/docker/caddy:2
+    profiles: ["edge"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+  redis-data:
+  exports:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,6 @@
+# 可选边缘 TLS（compose --profile edge）：把 <域名> 换成实际域名后启用。
+# TLS 证书由 Caddy 自动签发（ACME）；内层 app 走 HTTP。
+
+<域名> {
+	reverse_proxy app:8080
+}

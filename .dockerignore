@@ -1,0 +1,10 @@
+# 构建上下文裁剪：构建残留与本地凭据不进上下文
+backend/target
+frontend/**/node_modules
+frontend/**/dist
+**/.env
+**/.env.*
+.git
+docs
+scratch
+*.md

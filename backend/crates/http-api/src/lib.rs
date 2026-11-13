@@ -62,6 +62,12 @@ pub fn build_router(
         );
         app = app.nest_service("/admin", serve);
     }
+    // H5 静态产物：hash 路由，资源直出即可（/h5/ 入口由 index.html 承载）。
+    if let Ok(h5_dir) = std::env::var("H5_STATIC_DIR") {
+        if !h5_dir.is_empty() {
+            app = app.nest_service("/h5", tower_http::services::ServeDir::new(h5_dir));
+        }
+    }
     app
 }
 

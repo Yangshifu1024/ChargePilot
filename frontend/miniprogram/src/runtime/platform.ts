@@ -1,0 +1,51 @@
+import Taro from '@tarojs/taro'
+
+export const developmentLogin = process.env.TARO_APP_LOGIN_MODE === 'development'
+export const isH5 = process.env.TARO_ENV === 'h5'
+
+// 显式引用 Taro API，让编译器加入 H5 实现；调用时读取 API，避免使用初始化前的对象。
+export const wx: any = new Proxy({
+  request: (options: any) => Taro.request(options),
+  getStorageSync: (key: string) => Taro.getStorageSync(key),
+  setStorageSync: (key: string, value: any) => Taro.setStorageSync(key, value),
+  removeStorageSync: (key: string) => Taro.removeStorageSync(key),
+  navigateTo: (options: any) => Taro.navigateTo(options),
+  navigateBack: (options: any) => Taro.navigateBack(options),
+  switchTab: (options: any) => Taro.switchTab(options),
+  // 底部导航已改为自定义组件，页面之间用 reLaunch 跳转；原生 tabBar 未配置时 switchTab 会失败。
+  reLaunch: (options: any) => Taro.reLaunch(options),
+  showModal: (options: any) => Taro.showModal(options),
+  showToast: (options: any) => Taro.showToast(options),
+  stopPullDownRefresh: (options?: any) => Taro.stopPullDownRefresh(options),
+  getLocation: (options: any) => Taro.getLocation(options),
+  openLocation: (options: any) => Taro.openLocation(options),
+  makePhoneCall: (options: any) => Taro.makePhoneCall(options),
+  setClipboardData: (options: any) => Taro.setClipboardData(options),
+  login(options: any) {
+    if (!developmentLogin) return Taro.login(options)
+    const account = Taro.getStorageSync('cp_development_account') || 'tester-1'
+    const result = { code: 'dev:' + account, errMsg: 'login:ok' }
+    options.success?.(result); options.complete?.(result)
+    return Promise.resolve(result)
+  },
+  async requestPayment(options: any) {
+    if (options.provider !== 'simulation') {
+      if (isH5) { const error = { errMsg: 'H5 当前仅支持本地模拟支付；微信支付需在微信端配置商户' }; options.fail?.(error); return }
+      return Taro.requestPayment(options)
+    }
+    try {
+      const accepted = await Taro.showModal({ title: '开发模拟支付', content: '确认后由服务端处理真实业务回调，不会扣取真实资金。' })
+      if (!accepted.confirm) throw { errMsg: 'requestPayment:fail cancel' }
+      // 这里只使用用户会话令牌，服务间令牌不得进入前端代码或环境变量。
+      const result = await Taro.request({ url: (process.env.TARO_APP_API_BASE || '/api/v1') + '/user/development/payments/confirm', method: 'POST',
+        data: { merchant_order_no: options.merchantOrderNo }, header: { Authorization: 'Bearer ' + Taro.getStorageSync('cp_token') } })
+      if (result.statusCode !== 200 || result.data?.code !== 0) throw new Error(result.data?.message || '模拟支付未确认')
+      options.success?.({ errMsg: 'requestPayment:ok' }); options.complete?.({})
+    } catch (error: any) { options.fail?.({ errMsg: error.errMsg || error.message }); options.complete?.(error) }
+  },
+  scanCode(options: any) {
+    if (!isH5) return Taro.scanCode(options)
+    const error = { errMsg: '当前浏览器请使用下方二维码内容输入框，可输入设备编号或端口码。' }
+    options.fail?.(error); options.complete?.(error)
+  },
+}, { get(target: any, key: string) { return key in target ? target[key] : (Taro as any)[key] } })

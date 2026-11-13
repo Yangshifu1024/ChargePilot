@@ -57,6 +57,11 @@ async fn serve() -> anyhow::Result<()> {
     let prometheus = chargepilot_platform::metrics::install()?;
 
     let db = chargepilot_storage::open_pool(&cfg.database_url, 32).await?;
+    // serve 自动先迁移（幂等；显式 `migrate` 子命令用于单独升级）。
+    let applied = chargepilot_storage::migrator::run_migrations(&db).await?;
+    if !applied.is_empty() {
+        tracing::info!(count = applied.len(), "启动迁移完成");
+    }
     let redis_pool = chargepilot_platform::redisx::open_pool(&cfg.redis_url, 16)?;
     let allocator = chargepilot_platform::ids::SegmentAllocator::new(db.clone(), 500);
     allocator.warm_up().await.context("号段分配器预热失败")?;
