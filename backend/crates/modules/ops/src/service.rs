@@ -173,4 +173,3 @@ impl<'a> SessionService<'a> {
         })
     }
 }
-

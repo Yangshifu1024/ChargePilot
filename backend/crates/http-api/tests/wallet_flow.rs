@@ -6,8 +6,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use chargepilot_http_api::deps::{ApiDeps, WalletServices};
 use chargepilot_platform::ids::SegmentAllocator;
-use http_body_util::BodyExt;
 use chrono::Datelike as _;
+use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -128,7 +128,10 @@ async fn req(
     let resp = router.oneshot(req).await.unwrap();
     let status = resp.status();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 async fn login_user(router: &axum::Router, tag: &str) -> (String, u64) {
@@ -173,14 +176,13 @@ async fn login_finance_as(
     let id = alloc.next_id().await.unwrap();
     let hash = chargepilot_platform::password::hash("wf-pass-123").unwrap();
     // 复用既有内置角色（迁移种子已建 customer_finance / customer_cs）。
-    let (role_id,): (u64,) = sqlx::query_as(
-        "SELECT `id` FROM `role` WHERE `code` = ? AND `deleted_at` IS NULL LIMIT 1",
-    )
-    .bind(role_code)
-    .fetch_one(db)
-    .await
-    .unwrap();
-    
+    let (role_id,): (u64,) =
+        sqlx::query_as("SELECT `id` FROM `role` WHERE `code` = ? AND `deleted_at` IS NULL LIMIT 1")
+            .bind(role_code)
+            .fetch_one(db)
+            .await
+            .unwrap();
+
     for p in perms {
         sqlx::query(
             "INSERT IGNORE INTO `role_permission` (`role_id`, `permission_id`) \
@@ -270,7 +272,6 @@ async fn seed_paid_recharge(
     payment_id
 }
 
-
 /// 跨测试文件互斥锁：这些 flow 共享开发库，部分断言依赖全局计数
 /// （如"最后一个客户管理员"），用固定端口的 TCP 监听作锁串行各文件。
 fn global_flow_lock() -> std::net::TcpListener {
@@ -284,8 +285,8 @@ fn global_flow_lock() -> std::net::TcpListener {
 
 #[tokio::test]
 async fn wallet_refund_flow() {
-
-    let _flow_lock = global_flow_lock();    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _flow_lock = global_flow_lock();
+    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some((router, db, alloc)) = build().await else {
         return;
     };
@@ -319,12 +320,13 @@ async fn wallet_refund_flow() {
     assert_eq!(body["data"]["status"], "accepted");
     assert_eq!(body["data"]["refund_cents"], 300);
     // 库断言：frozen_cents=300，refund_record 一笔 WR 单，refund_part 一行
-    let (frozen, balance): (i64, i64) =
-        sqlx::query_as("SELECT `frozen_cents`, `balance_cents` FROM `wallet_account` WHERE `user_id` = ?")
-            .bind(uid as i64)
-            .fetch_one(db.as_ref())
-            .await
-            .unwrap();
+    let (frozen, balance): (i64, i64) = sqlx::query_as(
+        "SELECT `frozen_cents`, `balance_cents` FROM `wallet_account` WHERE `user_id` = ?",
+    )
+    .bind(uid as i64)
+    .fetch_one(db.as_ref())
+    .await
+    .unwrap();
     assert_eq!((frozen, balance), (300, 500), "预占应冻结 300 不动余额");
     let (refund_no, refund_amount, refund_status, policy): (String, i64, String, String) =
         sqlx::query_as(
@@ -335,8 +337,14 @@ async fn wallet_refund_flow() {
         .fetch_one(db.as_ref())
         .await
         .unwrap();
-    assert!(refund_no.starts_with("WR"), "分笔退款号应以 WR 开头: {refund_no}");
-    assert_eq!((refund_amount, refund_status.as_str(), policy.as_str()), (300, "pending", "automatic"));
+    assert!(
+        refund_no.starts_with("WR"),
+        "分笔退款号应以 WR 开头: {refund_no}"
+    );
+    assert_eq!(
+        (refund_amount, refund_status.as_str(), policy.as_str()),
+        (300, "pending", "automatic")
+    );
 
     // 3. 重放同请求：同回执、不重复预占
     let (status, body) = req(
@@ -349,11 +357,12 @@ async fn wallet_refund_flow() {
     .await;
     assert_eq!(status, StatusCode::OK, "重放应静默: {body}");
     assert_eq!(body["data"]["status"], "accepted");
-    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM `wallet_refund_part` WHERE `request_id` = ?")
-        .bind(&request_id)
-        .fetch_one(db.as_ref())
-        .await
-        .unwrap();
+    let (n,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM `wallet_refund_part` WHERE `request_id` = ?")
+            .bind(&request_id)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(n, 1, "重放不重复拆单");
 
     // 4. 金额不同的重放 → 409
@@ -401,7 +410,10 @@ async fn wallet_refund_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "频次申请应受理转人工: {body}");
-    assert_eq!(body["data"]["status"], "manual_review", "第 3 次申请应转人工");
+    assert_eq!(
+        body["data"]["status"], "manual_review",
+        "第 3 次申请应转人工"
+    );
     let (wallet_status,): (String,) =
         sqlx::query_as("SELECT `status` FROM `wallet_account` WHERE `user_id` = ?")
             .bind(uid as i64)
@@ -440,10 +452,12 @@ async fn wallet_refund_flow() {
     assert_eq!(view["status"], "manual_review");
 
     // 9. 无权限管理员 → 403；财务登录 → 列表可见
-    let (fin_token, _fin_id) = login_finance(&router, &db, &alloc, &[
-        "finance.wallet_risk.review",
-        "finance.wallet_risk.release",
-    ])
+    let (fin_token, _fin_id) = login_finance(
+        &router,
+        &db,
+        &alloc,
+        &["finance.wallet_risk.review", "finance.wallet_risk.release"],
+    )
     .await;
     let (status, body) = req(
         router.clone(),
@@ -454,9 +468,19 @@ async fn wallet_refund_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body["data"]["items"].as_array().unwrap().len() >= 1, "风控列表应有记录");
+    assert!(
+        body["data"]["items"].as_array().unwrap().len() >= 1,
+        "风控列表应有记录"
+    );
     // 客服（仅 review 权限）也在列表可见；解冻端点则拒
-    let (cs_token, _cs_id) = login_finance_as(&router, &db, &alloc, "customer_cs", &["finance.wallet_risk.review"]).await;
+    let (cs_token, _cs_id) = login_finance_as(
+        &router,
+        &db,
+        &alloc,
+        "customer_cs",
+        &["finance.wallet_risk.review"],
+    )
+    .await;
     let (status, _) = req(
         router.clone(),
         "POST",
@@ -485,13 +509,12 @@ async fn wallet_refund_flow() {
             .await
             .unwrap();
     assert_eq!(frozen_after, 400, "批准应追加预占 300+100");
-    let (part_n,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM `wallet_refund_part` WHERE `request_id` = ?",
-    )
-    .bind(&freeze_request)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let (part_n,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM `wallet_refund_part` WHERE `request_id` = ?")
+            .bind(&freeze_request)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(part_n, 1, "批准应拆单一条");
 
     // 11. 审核重放：同人同结论同依据 → 同回执
@@ -551,7 +574,10 @@ async fn wallet_refund_flow() {
         .find(|v| v["request_id"] == freeze_request.as_str())
         .expect("申请应在列表");
     // 旧版语义：分笔为 pending（执行器未领取）时展示态保持 pending，processing 只在渠道受理后出现。
-    assert_eq!(view["status"], "pending", "已批准在途（分笔 pending）应显示 pending");
+    assert_eq!(
+        view["status"], "pending",
+        "已批准在途（分笔 pending）应显示 pending"
+    );
     assert!(view["review"]["approved"] == true);
 
     // 14. 余额查询：frozen 400、available 100
@@ -575,8 +601,8 @@ async fn wallet_refund_flow() {
 
 #[tokio::test]
 async fn wallet_review_rejection_path() {
-
-    let _flow_lock = global_flow_lock();    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _flow_lock = global_flow_lock();
+    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some((router, db, alloc)) = build().await else {
         return;
     };
@@ -608,10 +634,12 @@ async fn wallet_review_rejection_path() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["data"]["status"], "manual_review");
 
-    let (fin_token, _fid) = login_finance(&router, &db, &alloc, &[
-        "finance.wallet_risk.review",
-        "finance.wallet_risk.release",
-    ])
+    let (fin_token, _fid) = login_finance(
+        &router,
+        &db,
+        &alloc,
+        &["finance.wallet_risk.review", "finance.wallet_risk.release"],
+    )
     .await;
     // 驳回：不预占，展示 rejected
     let (status, body) = req(

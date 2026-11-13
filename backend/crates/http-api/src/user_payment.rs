@@ -3,10 +3,10 @@
 //! /wallet/recharge；模拟确认仅在 PAYMENT_MODE=simulation 时装配。
 
 use crate::deps::ApiDeps;
+use axum::Json as AxumJson;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Response;
-use axum::Json as AxumJson;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::json;
@@ -165,10 +165,7 @@ async fn wallet_recharge(
 }
 
 /// 下单错误映射（对齐旧版 CheckoutError Kind → 状态码/文案）。
-fn checkout_error(
-    e: chargepilot_mod_payment::CheckoutError,
-    rid: &str,
-) -> Response {
+fn checkout_error(e: chargepilot_mod_payment::CheckoutError, rid: &str) -> Response {
     use chargepilot_mod_payment::CheckoutError as E;
     match &e {
         E::InvalidInput => crate::respond(400, 1005, "请求参数无效", rid),

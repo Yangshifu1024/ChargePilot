@@ -110,7 +110,7 @@ impl SegmentAllocator {
         Ok(result.rows_affected())
     }
 
-/// 资金强一致路径：在业务事务内取下一个号段并推进水位（同事务提交，崩溃回滚则号段未发）。
+    /// 资金强一致路径：在业务事务内取下一个号段并推进水位（同事务提交，崩溃回滚则号段未发）。
     /// 调用方把返回的 tx 交给后续资金写入，保证「ID 与记录同事务」。
     pub async fn next_id_in_tx(&self, tx: &mut sqlx::MySqlConnection) -> anyhow::Result<u64> {
         let watermark: u64 = sqlx::query_scalar(

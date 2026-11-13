@@ -80,7 +80,10 @@ pub async fn lock_wallet_account_tx(
 }
 
 /// 在调用方事务中为 userID 开户，初始余额、冻结额为零且状态 active（旧版 OpenWalletAccount）。
-pub async fn open_wallet_account_tx(tx: &mut MySqlConnection, user_id: u64) -> Result<(), WalletError> {
+pub async fn open_wallet_account_tx(
+    tx: &mut MySqlConnection,
+    user_id: u64,
+) -> Result<(), WalletError> {
     sqlx::query(
         "INSERT INTO `wallet_account` (`user_id`, `balance_cents`, `frozen_cents`, `status`) \
          VALUES (?, 0, 0, 'active')",
@@ -93,7 +96,10 @@ pub async fn open_wallet_account_tx(tx: &mut MySqlConnection, user_id: u64) -> R
 
 /// 在调用方事务中读取 userID 未删除身份的 openid；缺用户或空身份返回空串
 /// 由退款/充值用例拒绝（旧版 FindUserOpenID）。
-pub async fn find_user_openid_tx(tx: &mut MySqlConnection, user_id: u64) -> Result<String, WalletError> {
+pub async fn find_user_openid_tx(
+    tx: &mut MySqlConnection,
+    user_id: u64,
+) -> Result<String, WalletError> {
     // openid 列为 varbinary（微信加密标识原样字节），读取侧 CAST 为 CHAR。
     let openid: Option<Option<String>> = sqlx::query_scalar(
         "SELECT CAST(`openid` AS CHAR) FROM `user` WHERE `id` = ? AND `deleted_at` IS NULL LIMIT 1",
@@ -131,7 +137,10 @@ pub async fn freeze_wallet_tx(tx: &mut MySqlConnection, wallet_id: u64) -> Resul
 }
 
 /// 将 walletID 钱包恢复 active 并增加版本号（旧版 ActivateWallet）。
-pub async fn activate_wallet_tx(tx: &mut MySqlConnection, wallet_id: u64) -> Result<(), WalletError> {
+pub async fn activate_wallet_tx(
+    tx: &mut MySqlConnection,
+    wallet_id: u64,
+) -> Result<(), WalletError> {
     sqlx::query(
         "UPDATE `wallet_account` SET `status` = 'active', `version` = `version` + 1 WHERE `id` = ?",
     )

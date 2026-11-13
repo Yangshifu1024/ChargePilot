@@ -124,7 +124,6 @@ async fn login_super(
         .map(|s| (s.to_string(), id))
 }
 
-
 /// 跨测试文件互斥锁：这些 flow 共享开发库，部分断言依赖全局计数
 /// （如"最后一个客户管理员"），用固定端口的 TCP 监听作锁串行各文件。
 fn global_flow_lock() -> std::net::TcpListener {
@@ -138,8 +137,8 @@ fn global_flow_lock() -> std::net::TcpListener {
 
 #[tokio::test]
 async fn import_devices_and_fault_flow() {
-
-    let _flow_lock = global_flow_lock();    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _flow_lock = global_flow_lock();
+    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some((router, db, alloc)) = build().await else {
         return;
     };

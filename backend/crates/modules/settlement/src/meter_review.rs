@@ -4,8 +4,8 @@
 //! 2. 直接登记最终金额（合计不超过套餐价格，重排队按人工金额入账）。
 //! 权限与审计由 HTTP 层负责；首审人实时权限由调用方传入。
 
-use chargepilot_domain::charging_actual::{ActualMeter, EndMeter, Rule};
 use chargepilot_domain::charging_actual::price_actual;
+use chargepilot_domain::charging_actual::{ActualMeter, EndMeter, Rule};
 use chargepilot_mod_payment::checkout::PricingSnapshot;
 use sqlx::{Acquire, MySqlPool};
 
@@ -73,8 +73,8 @@ async fn read_billing_source(
     let (Some(snapshot_json), Some(meter_json)) = (snapshot_json, meter_json) else {
         return Err(ReviewError::NotFound);
     };
-    let snapshot: PricingSnapshot = serde_json::from_str(&snapshot_json)
-        .map_err(|_| ReviewError::InvalidSource)?;
+    let snapshot: PricingSnapshot =
+        serde_json::from_str(&snapshot_json).map_err(|_| ReviewError::InvalidSource)?;
     let meter: EndMeter =
         serde_json::from_str(&meter_json).map_err(|_| ReviewError::InvalidSource)?;
     Ok((snapshot, meter))
@@ -275,11 +275,10 @@ pub async fn review_meter(
     if approve {
         // 原始源未变 + 修正分段可计价。
         let (snapshot, meter) = read_billing_source(&mut *c, charge_order_id).await?;
-        let corrected: serde_json::Value = serde_json::from_str(&corrected_json)
+        let corrected: serde_json::Value =
+            serde_json::from_str(&corrected_json).map_err(|_| ReviewError::InvalidSource)?;
+        let corrected_meter: EndMeter = serde_json::from_value(corrected["meter"].clone())
             .map_err(|_| ReviewError::InvalidSource)?;
-        let corrected_meter: EndMeter =
-            serde_json::from_value(corrected["meter"].clone())
-                .map_err(|_| ReviewError::InvalidSource)?;
         // 校验修正仅替换分段（其余计量事实不变）。
         if corrected_meter.charged_wh != meter.charged_wh
             || corrected_meter.charged_seconds != meter.charged_seconds
@@ -407,8 +406,8 @@ pub async fn resolve_manual_amount(
     let Some(snapshot_json) = snapshot_json else {
         return Err(ReviewError::NotFound);
     };
-    let snapshot: PricingSnapshot = serde_json::from_str(&snapshot_json)
-        .map_err(|_| ReviewError::InvalidSource)?;
+    let snapshot: PricingSnapshot =
+        serde_json::from_str(&snapshot_json).map_err(|_| ReviewError::InvalidSource)?;
     if electric_cents + service_cents > snapshot.offer.price_cents {
         return Err(ReviewError::Conflict);
     }

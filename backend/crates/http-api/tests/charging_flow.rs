@@ -8,7 +8,7 @@ use chargepilot_http_api::deps::{ApiDeps, WalletServices};
 use chargepilot_mod_charging::{SimulationSink, StartDispatcher};
 use chargepilot_platform::ids::SegmentAllocator;
 use http_body_util::BodyExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -129,7 +129,10 @@ async fn req(
     let resp = router.oneshot(req).await.unwrap();
     let status = resp.status();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 /// 开发登录并返回 (jwt, user_id)。
@@ -266,7 +269,11 @@ async fn create_paid_order(
         .await
         .expect("支付成功事务应成功");
     assert_eq!(result.replayed, false);
-    (result.charge_order_id, result.charge_order_no, merchant_order_no)
+    (
+        result.charge_order_id,
+        result.charge_order_no,
+        merchant_order_no,
+    )
 }
 
 #[tokio::test]
@@ -300,10 +307,7 @@ async fn state_machine_full_flow() {
         "charge_order_id": charge_order_id,
         "order_no": order_no,
     });
-    dispatcher
-        .handle(&payload)
-        .await
-        .expect("启动投递应成功");
+    dispatcher.handle(&payload).await.expect("启动投递应成功");
     let (cmd_status, order_status): (String, String) = sqlx::query_as(
         "SELECT cmd.`status`, c.`status` FROM `charge_command` cmd \
          JOIN `charge_order` c ON c.`id` = cmd.`charge_order_id` WHERE cmd.`charge_order_id` = ?",
@@ -314,24 +318,22 @@ async fn state_machine_full_flow() {
     .unwrap();
     assert_eq!(cmd_status, "acked", "simulation 闭环应直接 ack");
     assert_eq!(order_status, "charging", "启动回执后订单应 charging");
-    let occupied: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM `active_port_charge` WHERE `charge_order_id` = ?",
-    )
-    .bind(charge_order_id as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let occupied: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM `active_port_charge` WHERE `charge_order_id` = ?")
+            .bind(charge_order_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(occupied, 1, "端口应被预占");
 
     // 2. 事件重放：幂等（不重复建命令）。
     dispatcher.handle(&payload).await.expect("重放投递应成功");
-    let cmd_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM `charge_command` WHERE `charge_order_id` = ?",
-    )
-    .bind(charge_order_id as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let cmd_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM `charge_command` WHERE `charge_order_id` = ?")
+            .bind(charge_order_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(cmd_count, 1, "重放不得重复建命令");
 
     // 3. 用户停止：截止冻结 + 停止命令。
@@ -352,12 +354,13 @@ async fn state_machine_full_flow() {
     .await
     .unwrap();
     assert_eq!(cutoff, 1, "计费截止必须已冻结");
-    let stop_cmd: String =
-        sqlx::query_scalar("SELECT `status` FROM `charge_stop_command` WHERE `charge_order_id` = ?")
-            .bind(charge_order_id as i64)
-            .fetch_one(db.as_ref())
-            .await
-            .unwrap();
+    let stop_cmd: String = sqlx::query_scalar(
+        "SELECT `status` FROM `charge_stop_command` WHERE `charge_order_id` = ?",
+    )
+    .bind(charge_order_id as i64)
+    .fetch_one(db.as_ref())
+    .await
+    .unwrap();
     assert_eq!(stop_cmd, "sent");
 
     // 4. 停止重放：截止点不延长（no-op upsert）。
@@ -387,18 +390,20 @@ async fn state_machine_full_flow() {
     assert_eq!(cutoff_at_before, cutoff_at_after, "截止点不得延长");
 
     // 5. 结束回执：订单完成 + 端口释放 + 计费任务 + 出站事件。
-    let stop_command_id: String =
-        sqlx::query_scalar("SELECT CAST(`command_id` AS CHAR) FROM `charge_stop_command` WHERE `charge_order_id` = ?")
-            .bind(charge_order_id as i64)
-            .fetch_one(db.as_ref())
-            .await
-            .unwrap();
-    let start_command_id: String =
-        sqlx::query_scalar("SELECT CAST(`command_id` AS CHAR) FROM `charge_start_receipt` WHERE `charge_order_id` = ?")
-            .bind(charge_order_id as i64)
-            .fetch_one(db.as_ref())
-            .await
-            .unwrap();
+    let stop_command_id: String = sqlx::query_scalar(
+        "SELECT CAST(`command_id` AS CHAR) FROM `charge_stop_command` WHERE `charge_order_id` = ?",
+    )
+    .bind(charge_order_id as i64)
+    .fetch_one(db.as_ref())
+    .await
+    .unwrap();
+    let start_command_id: String = sqlx::query_scalar(
+        "SELECT CAST(`command_id` AS CHAR) FROM `charge_start_receipt` WHERE `charge_order_id` = ?",
+    )
+    .bind(charge_order_id as i64)
+    .fetch_one(db.as_ref())
+    .await
+    .unwrap();
     let now = chrono::Utc::now();
     let meter = chargepilot_domain::charging_actual::EndMeter {
         segments: vec![chargepilot_domain::charging_actual::MeterSegment {
@@ -444,13 +449,12 @@ async fn state_machine_full_flow() {
             .await
             .unwrap();
     assert_eq!(job, "pending", "计费任务应已登记");
-    let released: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM `active_port_charge` WHERE `charge_order_id` = ?",
-    )
-    .bind(charge_order_id as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let released: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM `active_port_charge` WHERE `charge_order_id` = ?")
+            .bind(charge_order_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(released, 0, "端口占用应已释放");
     let ended_event: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM `domain_event` WHERE `kind` = 'charge_ended' AND `payload_json` LIKE ?",

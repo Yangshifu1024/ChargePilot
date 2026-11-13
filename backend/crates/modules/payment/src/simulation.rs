@@ -2,7 +2,7 @@
 //! 装配；确认仍走支付成功事务（apply::apply_payment），用户与金额取自原支付单，
 //! 交易号为 SIM 前缀稳定编号保证幂等重放。
 
-use super::apply::{apply_payment, ApplyError, ApplyResult, VerifiedPayment};
+use super::apply::{ApplyError, ApplyResult, VerifiedPayment, apply_payment};
 use sqlx::MySqlPool;
 
 /// 模拟确认错误（HTTP 层映射旧版 Err 族）。
@@ -51,7 +51,17 @@ async fn find_development_payment(
     pool: &MySqlPool,
     order_no: &str,
     user_id: u64,
-) -> Result<(u64, String, i64, Option<String>, chrono::DateTime<chrono::Utc>, String), SimulationError> {
+) -> Result<
+    (
+        u64,
+        String,
+        i64,
+        Option<String>,
+        chrono::DateTime<chrono::Utc>,
+        String,
+    ),
+    SimulationError,
+> {
     let row: Option<(u64, String, i64, Option<String>, chrono::DateTime<chrono::Utc>, String)> =
         sqlx::query_as(
             "SELECT p.`id`, p.`biz_type`, p.`total_cents`, CAST(u.`openid` AS CHAR), p.`created_at`, p.`status` \
@@ -66,14 +76,7 @@ async fn find_development_payment(
     let Some((id, biz_type, total_cents, openid, created_at, status)) = row else {
         return Err(SimulationError::NotFound);
     };
-    Ok((
-        id,
-        biz_type,
-        total_cents,
-        openid,
-        created_at,
-        status,
-    ))
+    Ok((id, biz_type, total_cents, openid, created_at, status))
 }
 
 /// 校验支付单经模拟渠道预支付（旧版 provider == "simulation" 判定）。

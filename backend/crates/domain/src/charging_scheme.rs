@@ -3,13 +3,13 @@
 //! 语义基准：旧仓库 internal/domain/charging/scheme.go，逐条对齐（错误文案与旧版一致）。
 
 use crate::charging_actual::{ActualMeter, Rule};
-use crate::charging_cost::{cutoff_meter, Fee};
-use crate::charging_settle::{actual_from_meter, settle_session, Offer, Settlement};
-use crate::charging_spec::{
-    validate_spec as engine_validate_spec, BillingError, ChargeMode, TimeCharge,
-};
+use crate::charging_cost::{Fee, cutoff_meter};
+use crate::charging_settle::{Offer, Settlement, actual_from_meter, settle_session};
 /// 引擎计价配置：与本模块的存储包装 Spec（SpecSnapshot 别名）区分。
 use crate::charging_spec::Spec as EngineSpec;
+use crate::charging_spec::{
+    BillingError, ChargeMode, TimeCharge, validate_spec as engine_validate_spec,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -168,7 +168,9 @@ impl Scheme {
         }
         if let Some(amount) = &s.amount {
             if !amount.algorithm.server_billed() {
-                return Err(SchemeError("金额模式须选择最大功率、实时功率或电量算法".into()));
+                return Err(SchemeError(
+                    "金额模式须选择最大功率、实时功率或电量算法".into(),
+                ));
             }
             let spec = EngineSpec {
                 mode: amount.algorithm.clone(),
@@ -201,7 +203,11 @@ impl Scheme {
         let mut ids = std::collections::HashSet::new();
         let (mut amount, mut energy, mut card) = (false, false, s.card.package_id == 0);
         for p in &s.packages {
-            if p.id == 0 || p.id > 99 || ids.contains(&p.id) || p.name.is_empty() || p.name.chars().count() > 64
+            if p.id == 0
+                || p.id > 99
+                || ids.contains(&p.id)
+                || p.name.is_empty()
+                || p.name.chars().count() > 64
             {
                 return Err(SchemeError("套餐编号须唯一（1～99），名称不能为空".into()));
             }
@@ -216,11 +222,17 @@ impl Scheme {
                         || p.price_cents < s.policy.min_electric_cents
                         || p.price_cents > MAX_RATE_CENTS
                     {
-                        return Err(SchemeError("金额套餐须绑定金额算法，价格不能低于最低电费".into()));
+                        return Err(SchemeError(
+                            "金额套餐须绑定金额算法，价格不能低于最低电费".into(),
+                        ));
                     }
                 }
                 "duration" => {
-                    if p.minutes == 0 || p.minutes > 4320 || p.kwh != 0 || p.price_cents <= 0 || p.price_cents > MAX_RATE_CENTS
+                    if p.minutes == 0
+                        || p.minutes > 4320
+                        || p.kwh != 0
+                        || p.price_cents <= 0
+                        || p.price_cents > MAX_RATE_CENTS
                     {
                         return Err(SchemeError("时长套餐须填写价格与1～4320分钟".into()));
                     }
@@ -242,7 +254,9 @@ impl Scheme {
                     if p.price_cents != p.kwh as i64 * (e.electric_cents + e.service_cents)
                         || p.price_cents > MAX_RATE_CENTS
                     {
-                        return Err(SchemeError("电量套餐价格必须由度数及电费、服务费自动计算".into()));
+                        return Err(SchemeError(
+                            "电量套餐价格必须由度数及电费、服务费自动计算".into(),
+                        ));
                     }
                 }
                 _ => return Err(SchemeError("套餐仅支持金额、时长、电量".into())),
@@ -541,8 +555,7 @@ impl Scheme {
                 }
                 let mut count: u16 = 2;
                 let mut ops = vec!["首次扣款并确认启动，设备按累计上限执行".to_string()];
-                if wallet < 2 * p.price_cents
-                    || (p.minutes as u32) * 2 > n.card.max_minutes as u32
+                if wallet < 2 * p.price_cents || (p.minutes as u32) * 2 > n.card.max_minutes as u32
                 {
                     count = 1;
                     ops.push("余额或累计上限不足，整次拒绝加时".into());
@@ -553,7 +566,8 @@ impl Scheme {
                     r.paid_cents = 2 * p.price_cents;
                     r.status = "confirming".into();
                     r.reason = "模拟事务提交后应答丢失：按同一事件编号查询，不再次扣款".into();
-                    r.operations.push("查询同一事件的事务结果，重试不再次扣款".into());
+                    r.operations
+                        .push("查询同一事件的事务结果，重试不再次扣款".into());
                     r.wallet_after = Some(wallet - r.paid_cents);
                     return Ok(r);
                 } else {
@@ -592,8 +606,9 @@ impl Scheme {
             return Err(SchemeError("设备协议不支持满充停止".into()));
         }
         if self.energy.is_some()
-            || (self.amount.is_some() && self.amount.as_ref().unwrap().algorithm
-                == ChargeMode::new(ChargeMode::SERVER_ENERGY))
+            || (self.amount.is_some()
+                && self.amount.as_ref().unwrap().algorithm
+                    == ChargeMode::new(ChargeMode::SERVER_ENERGY))
                 && !c.reports_energy
         {
             return Err(SchemeError("设备协议不支持电量上报".into()));

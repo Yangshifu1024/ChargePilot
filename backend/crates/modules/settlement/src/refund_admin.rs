@@ -4,7 +4,7 @@
 //! 已结束充电必须先有费用回执，不能抢在计费之前退款。
 
 use chargepilot_domain::money::{
-    ExecutionPolicy, PaymentBizType, PaymentStatus, PayMethod, RefundStatus,
+    ExecutionPolicy, PayMethod, PaymentBizType, PaymentStatus, RefundStatus,
 };
 use sqlx::{Acquire, MySqlPool};
 
@@ -138,12 +138,11 @@ pub async fn request_manual_refund(
             "completed" | "refunding" | "refunded"
         )
     {
-        let receipt: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM `charge_fee_receipt` WHERE `charge_order_id` = ?",
-        )
-        .bind(order_id as i64)
-        .fetch_optional(&mut *c)
-        .await?;
+        let receipt: Option<i64> =
+            sqlx::query_scalar("SELECT 1 FROM `charge_fee_receipt` WHERE `charge_order_id` = ?")
+                .bind(order_id as i64)
+                .fetch_optional(&mut *c)
+                .await?;
         if receipt.is_none() {
             return Err(RefundAdminError::NotSettled);
         }
@@ -267,14 +266,12 @@ pub async fn review_manual_refund(
         .bind(reason)
         .execute(&mut *c)
         .await?;
-        sqlx::query(
-            "UPDATE `refund_record` SET `status` = ?, `failure_reason` = ? WHERE `id` = ?",
-        )
-        .bind(RefundStatus::REJECTED)
-        .bind(reason)
-        .bind(record_id as i64)
-        .execute(&mut *c)
-        .await?;
+        sqlx::query("UPDATE `refund_record` SET `status` = ?, `failure_reason` = ? WHERE `id` = ?")
+            .bind(RefundStatus::REJECTED)
+            .bind(reason)
+            .bind(record_id as i64)
+            .execute(&mut *c)
+            .await?;
         tx.commit().await?;
         return Ok(ReviewOutcome::Rejected);
     }
@@ -295,7 +292,10 @@ pub async fn review_manual_refund(
         .await
         .map_err(|_| RefundAdminError::Conflict)?;
         if order_started != 0
-            && matches!(order_status.as_str(), "completed" | "refunding" | "refunded")
+            && matches!(
+                order_status.as_str(),
+                "completed" | "refunding" | "refunded"
+            )
         {
             let receipt: Option<i64> = sqlx::query_scalar(
                 "SELECT 1 FROM `charge_fee_receipt` WHERE `charge_order_id` = ?",

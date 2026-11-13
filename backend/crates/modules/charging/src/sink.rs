@@ -20,8 +20,7 @@ pub trait CommandSink: Send + Sync {
 
 /// dyn 兼容的 Future 别名（与 events/wallet 同一模式）。
 pub mod futures_bounds {
-    pub type BoxFuture<'a, T> =
-        std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+    pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 }
 
 /// 启动命令内容（charge_command 行的发送投影）。

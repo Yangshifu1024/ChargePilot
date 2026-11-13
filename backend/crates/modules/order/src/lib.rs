@@ -3,8 +3,8 @@
 //! 支付成功事务由 payment 模块编排，本模块只提供订单侧的表访问。
 
 use chargepilot_domain::money::PaymentStatus;
-use chrono::Datelike;
 use chargepilot_platform::ids::SegmentAllocator;
+use chrono::Datelike;
 use sqlx::MySqlConnection;
 
 /// 订单状态词表（charge_order.status，与 domain/charging_order 的状态机一致）。
@@ -232,16 +232,24 @@ pub async fn lock_for_lifecycle_tx(
     charge_order_id: u64,
     order_no: &str,
 ) -> Result<Option<LifecycleView>, OrderError> {
-    let row: Option<(u64, String, u64, String, u8, String, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)> =
-        sqlx::query_as(
-            "SELECT `id`, `order_no`, `user_id`, `device_id`, `port_no`, `status`, \
+    let row: Option<(
+        u64,
+        String,
+        u64,
+        String,
+        u8,
+        String,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    )> = sqlx::query_as(
+        "SELECT `id`, `order_no`, `user_id`, `device_id`, `port_no`, `status`, \
                     `started_at`, `ended_at` \
              FROM `charge_order` WHERE `id` = ? AND `order_no` = ? FOR UPDATE",
-        )
-        .bind(charge_order_id as i64)
-        .bind(order_no)
-        .fetch_optional(&mut *tx)
-        .await?;
+    )
+    .bind(charge_order_id as i64)
+    .bind(order_no)
+    .fetch_optional(&mut *tx)
+    .await?;
     Ok(row.map(
         |(id, no, user_id, device_id, port_no, status, started_at, ended_at)| LifecycleView {
             charge_order_id: id,

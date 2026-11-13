@@ -11,8 +11,8 @@
 pub mod repo;
 pub mod swipe;
 
-pub use repo::{active_session_count, find_card_charge, CardChargeRow, CardOperationRow};
+pub use repo::{CardChargeRow, CardOperationRow, active_session_count, find_card_charge};
 pub use swipe::{
-    card_charge_port_release_tx, confirm_start_operation_tx, fail_start_operation_tx,
-    CardOperationResult, SwipeError, SwipeInput, SwipeService,
+    CardOperationResult, SwipeError, SwipeInput, SwipeService, card_charge_port_release_tx,
+    confirm_start_operation_tx, fail_start_operation_tx,
 };

@@ -6,10 +6,10 @@ use super::{
     WalletError, account,
     refund::{RefundService, WalletRefundReservation},
 };
-use chargepilot_domain::money::{release_replay, review_replay, valid_review_comment, PriorReview};
+use chargepilot_domain::money::{PriorReview, release_replay, review_replay, valid_review_comment};
 use chargepilot_mod_ops::Profile;
 use serde::Serialize;
-use sqlx::{Acquire, MySqlPool, MySqlConnection};
+use sqlx::{Acquire, MySqlConnection, MySqlPool};
 
 /// 需原样存档的复核意见（旧版 RiskReviewInput）。
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -87,7 +87,11 @@ impl RiskService {
         page: u32,
         size: u32,
     ) -> Result<(Vec<WalletRiskRow>, i64), WalletError> {
-        if !actor.permissions.iter().any(|p| p == "finance.wallet_risk.review") {
+        if !actor
+            .permissions
+            .iter()
+            .any(|p| p == "finance.wallet_risk.review")
+        {
             return Err(WalletError::Forbidden);
         }
         let offset = (page.max(1) - 1) * size.max(1);
@@ -121,19 +125,27 @@ impl RiskService {
              JOIN `wallet_risk_freeze_link` l ON l.`request_id` = r.`request_id` \
              WHERE v.`request_id` {null_clause}"
         );
-        let (total,): (i64,) = sqlx::query_as(&count_sql)
-            .fetch_one(&self.db)
-            .await?;
+        let (total,): (i64,) = sqlx::query_as(&count_sql).fetch_one(&self.db).await?;
         // 操作资格按角色与实时权限计算（旧版语义）。
         let rows: Vec<WalletRiskRow> = raws
             .into_iter()
             .map(|raw| {
-                let review = raw.review_json.and_then(|s| parse_receipt(serde_json::Value::String(s)));
-                let release = raw.release_json.and_then(|s| parse_receipt(serde_json::Value::String(s)));
+                let review = raw
+                    .review_json
+                    .and_then(|s| parse_receipt(serde_json::Value::String(s)));
+                let release = raw
+                    .release_json
+                    .and_then(|s| parse_receipt(serde_json::Value::String(s)));
                 let can_review = (actor.role == "customer_finance" || actor.role == "customer_cs")
-                    && actor.permissions.iter().any(|p| p == "finance.wallet_risk.review");
+                    && actor
+                        .permissions
+                        .iter()
+                        .any(|p| p == "finance.wallet_risk.review");
                 let can_release = actor.role == "customer_finance"
-                    && actor.permissions.iter().any(|p| p == "finance.wallet_risk.release")
+                    && actor
+                        .permissions
+                        .iter()
+                        .any(|p| p == "finance.wallet_risk.release")
                     && review.is_some()
                     && release.is_none()
                     && raw.freeze_status.as_deref() == Some("frozen");
@@ -168,7 +180,10 @@ impl RiskService {
         request_id_hdr: &str,
     ) -> Result<serde_json::Value, WalletError> {
         if actor.role != "customer_finance" && actor.role != "customer_cs"
-            || !actor.permissions.iter().any(|p| p == "finance.wallet_risk.review")
+            || !actor
+                .permissions
+                .iter()
+                .any(|p| p == "finance.wallet_risk.review")
         {
             return Err(WalletError::Forbidden);
         }
@@ -194,8 +209,8 @@ impl RiskService {
             if review_replay(&p, actor.id, approved, &input.comment).is_err() {
                 return Err(WalletError::RequestConflict);
             }
-            let response: serde_json::Value = serde_json::from_str(&prior.3)
-                .map_err(|e| WalletError::Storage(e.to_string()))?;
+            let response: serde_json::Value =
+                serde_json::from_str(&prior.3).map_err(|e| WalletError::Storage(e.to_string()))?;
             tx.commit().await?;
             return Ok(response);
         }
@@ -272,7 +287,10 @@ impl RiskService {
         request_id_hdr: &str,
     ) -> Result<serde_json::Value, WalletError> {
         if actor.role != "customer_finance"
-            || !actor.permissions.iter().any(|p| p == "finance.wallet_risk.release")
+            || !actor
+                .permissions
+                .iter()
+                .any(|p| p == "finance.wallet_risk.release")
         {
             return Err(WalletError::Forbidden);
         }
@@ -294,18 +312,17 @@ impl RiskService {
             if release_replay(&p, actor.id, &input.comment).is_err() {
                 return Err(WalletError::RequestConflict);
             }
-            let response: serde_json::Value = serde_json::from_str(&prior.2)
-                .map_err(|e| WalletError::Storage(e.to_string()))?;
+            let response: serde_json::Value =
+                serde_json::from_str(&prior.2).map_err(|e| WalletError::Storage(e.to_string()))?;
             tx.commit().await?;
             return Ok(response);
         }
         // 审核须恰好一条（旧版 CountRiskReviews）。
-        let (review_count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM `wallet_risk_review` WHERE `request_id` = ?",
-        )
-        .bind(request_id)
-        .fetch_one(&mut *tx)
-        .await?;
+        let (review_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM `wallet_risk_review` WHERE `request_id` = ?")
+                .bind(request_id)
+                .fetch_one(&mut *tx)
+                .await?;
         if review_count != 1 {
             return Err(WalletError::RequestConflict);
         }
@@ -413,7 +430,10 @@ async fn lock_refund_request(
 type PriorRow = (u64, bool, String, String);
 
 /// 读取审核记录（actor_id, approved, comment, response_json）；无记录 None。
-async fn find_risk_review(tx: &mut MySqlConnection, request_id: &str) -> Result<Option<PriorRow>, WalletError> {
+async fn find_risk_review(
+    tx: &mut MySqlConnection,
+    request_id: &str,
+) -> Result<Option<PriorRow>, WalletError> {
     sqlx::query_as(
         "SELECT `actor_id`, `approved`, `comment`, CAST(`response_json` AS CHAR) FROM `wallet_risk_review` \
          WHERE `request_id` = ? LIMIT 1",
@@ -425,7 +445,10 @@ async fn find_risk_review(tx: &mut MySqlConnection, request_id: &str) -> Result<
 }
 
 /// 读取解冻记录（actor_id, comment, response_json → approved 恒 false 占位）；无记录 None。
-async fn find_risk_release(tx: &mut MySqlConnection, request_id: &str) -> Result<Option<(u64, String, String)>, WalletError> {
+async fn find_risk_release(
+    tx: &mut MySqlConnection,
+    request_id: &str,
+) -> Result<Option<(u64, String, String)>, WalletError> {
     sqlx::query_as(
         "SELECT `actor_id`, `comment`, CAST(`response_json` AS CHAR) FROM `wallet_risk_release` \
          WHERE `request_id` = ? LIMIT 1",

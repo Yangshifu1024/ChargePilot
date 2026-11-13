@@ -6,9 +6,9 @@
 //! 按 ID 锁定并复核状态。不能直接按支付状态扫描加锁，否则可能锁到待支付记录，
 //! 与到账事务形成死锁。
 
-use chargepilot_domain::money::{PaymentBizType, PaymentStatus, PayMethod};
-use chargepilot_mod_wallet::refund::RechargeSource;
+use chargepilot_domain::money::{PayMethod, PaymentBizType, PaymentStatus};
 use chargepilot_mod_wallet::WalletError;
+use chargepilot_mod_wallet::refund::RechargeSource;
 use sqlx::MySqlConnection;
 
 /// 充值来源读取器（旧版 RechargeSources）。
@@ -68,10 +68,7 @@ impl RechargeSources {
                AND `pay_method` = ? AND `status` IN (?, ?) AND `deleted_at` IS NULL \
              ORDER BY `id` FOR UPDATE"
         );
-        let mut q = sqlx::query_as::<
-            _,
-            (u64, u64, i64, i64, i64, Option<String>),
-        >(&sql);
+        let mut q = sqlx::query_as::<_, (u64, u64, i64, i64, i64, Option<String>)>(&sql);
         for id in &ids {
             q = q.bind(id);
         }

@@ -48,7 +48,11 @@ impl std::error::Error for IntentError {}
 /// 支付前冻结的预估量与设备执行量（旧版 Reserve 的 estimate 分支）。
 /// 时长套餐下发购买分钟（charge_mode=0），电量套餐下发 Wh（charge_mode=1），
 /// 金额套餐下发最长时长（charge_mode=4）并由平台检查费用上限。
-pub fn intent_estimate(scheme: &Scheme, package: &Package, offer_price_cents: i64) -> Result<Estimate, IntentError> {
+pub fn intent_estimate(
+    scheme: &Scheme,
+    package: &Package,
+    offer_price_cents: i64,
+) -> Result<Estimate, IntentError> {
     if offer_price_cents != package.price_cents || package.price_cents <= 0 {
         return Err(IntentError::InvalidPricing);
     }
@@ -85,13 +89,21 @@ pub fn intent_estimate(scheme: &Scheme, package: &Package, offer_price_cents: i6
 }
 
 /// 迟到支付判定：当前时刻或到账时刻越过支付期限即视为迟到（旧版 Apply）。
-pub fn is_late_payment(now_unix_micros: i64, paid_at_unix_micros: i64, expires_at_unix_micros: i64) -> bool {
+pub fn is_late_payment(
+    now_unix_micros: i64,
+    paid_at_unix_micros: i64,
+    expires_at_unix_micros: i64,
+) -> bool {
     now_unix_micros > expires_at_unix_micros || paid_at_unix_micros > expires_at_unix_micros
 }
 
 /// 充电业务单号：C + 北京时间 14 位时间戳 + 设备编号 + 两位端口号（旧版 ChargeOrderNumber）。
 /// 设备编号仅允许字母、数字、下划线与连字符；总长不超过 64 字节。
-pub fn charge_order_no(at_unix_micros: i64, device: &str, port_no: u8) -> Result<String, IntentError> {
+pub fn charge_order_no(
+    at_unix_micros: i64,
+    device: &str,
+    port_no: u8,
+) -> Result<String, IntentError> {
     if device.is_empty() || port_no == 0 || port_no > 99 {
         return Err(IntentError::Conflict);
     }
@@ -128,10 +140,22 @@ mod tests {
 
     #[test]
     fn charge_no_rejects_bad_device() {
-        assert_eq!(charge_order_no(AT_MICROS, "", 1), Err(IntentError::Conflict));
-        assert_eq!(charge_order_no(AT_MICROS, "D/E", 1), Err(IntentError::Conflict));
-        assert_eq!(charge_order_no(AT_MICROS, "D", 0), Err(IntentError::Conflict));
-        assert_eq!(charge_order_no(AT_MICROS, "D", 100), Err(IntentError::Conflict));
+        assert_eq!(
+            charge_order_no(AT_MICROS, "", 1),
+            Err(IntentError::Conflict)
+        );
+        assert_eq!(
+            charge_order_no(AT_MICROS, "D/E", 1),
+            Err(IntentError::Conflict)
+        );
+        assert_eq!(
+            charge_order_no(AT_MICROS, "D", 0),
+            Err(IntentError::Conflict)
+        );
+        assert_eq!(
+            charge_order_no(AT_MICROS, "D", 100),
+            Err(IntentError::Conflict)
+        );
     }
 
     #[test]

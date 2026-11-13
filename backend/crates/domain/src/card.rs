@@ -107,8 +107,24 @@ mod tests {
         };
         assert!(!can_extend(7, 7, &amount, 0, 600, 500, false));
         // 零价/零时长拒绝。
-        assert!(!can_extend(7, 7, &duration_package(0, 60), 0, 600, 500, false));
-        assert!(!can_extend(7, 7, &duration_package(100, 0), 0, 600, 500, false));
+        assert!(!can_extend(
+            7,
+            7,
+            &duration_package(0, 60),
+            0,
+            600,
+            500,
+            false
+        ));
+        assert!(!can_extend(
+            7,
+            7,
+            &duration_package(100, 0),
+            0,
+            600,
+            500,
+            false
+        ));
     }
 
     #[test]

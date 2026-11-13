@@ -2,8 +2,8 @@
 //! 语义基准：旧仓库 internal/domain/charging/{cost,scheme_cost,breakdown}.go，逐行对齐。
 
 use crate::charging_spec::{
-    beijing, compile_periods, div_prec16, round_to_cents, string_fixed6, validate_spec, BillingError,
-    ChargeMode, MAX_SLICES, Spec, Usage,
+    BillingError, ChargeMode, MAX_SLICES, Spec, Usage, beijing, compile_periods, div_prec16,
+    round_to_cents, string_fixed6, validate_spec,
 };
 use chrono::{DateTime, Datelike, Duration, TimeZone, Utc};
 use rust_decimal::Decimal;

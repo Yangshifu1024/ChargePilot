@@ -77,7 +77,9 @@ pub async fn credit_recharge_in_tx(
     .await?
     .rows_affected();
     if n != 1 {
-        return Err(WalletError::Storage("recharge wallet version conflict".into()));
+        return Err(WalletError::Storage(
+            "recharge wallet version conflict".into(),
+        ));
     }
     let txn_no = format!("RC{}", digest[..32].to_uppercase());
     let month = chrono::Utc::now().date_naive().with_day(1).expect("月首日");

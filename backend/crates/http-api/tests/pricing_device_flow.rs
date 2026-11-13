@@ -121,7 +121,6 @@ async fn login_super(
     body["data"]["access_token"].as_str().map(str::to_string)
 }
 
-
 /// 跨测试文件互斥锁：这些 flow 共享开发库，部分断言依赖全局计数
 /// （如"最后一个客户管理员"），用固定端口的 TCP 监听作锁串行各文件。
 fn global_flow_lock() -> std::net::TcpListener {
@@ -135,8 +134,8 @@ fn global_flow_lock() -> std::net::TcpListener {
 
 #[tokio::test]
 async fn publish_inherit_and_version_baseline() {
-
-    let _flow_lock = global_flow_lock();    let Some((router, db, alloc)) = build().await else {
+    let _flow_lock = global_flow_lock();
+    let Some((router, db, alloc)) = build().await else {
         return;
     };
     let token = login_super(&router, &db, &alloc).await.expect("超管登录");
@@ -302,8 +301,8 @@ async fn publish_inherit_and_version_baseline() {
 
 #[tokio::test]
 async fn invalid_scheme_is_rejected_with_conflict() {
-
-    let _flow_lock = global_flow_lock();    let Some((router, db, alloc)) = build().await else {
+    let _flow_lock = global_flow_lock();
+    let Some((router, db, alloc)) = build().await else {
         return;
     };
     let token = login_super(&router, &db, &alloc).await.expect("超管登录");

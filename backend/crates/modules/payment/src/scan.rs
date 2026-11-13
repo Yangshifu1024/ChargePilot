@@ -52,10 +52,7 @@ impl std::error::Error for ScanError {}
 
 /// 端口扫描器（checkout 依赖的窄接口）。
 pub trait PortScanner: Send + Sync {
-    fn resolve_scan<'a>(
-        &'a self,
-        code: &'a str,
-    ) -> BoxFuture<'a, Result<ScanResult, ScanError>>;
+    fn resolve_scan<'a>(&'a self, code: &'a str) -> BoxFuture<'a, Result<ScanResult, ScanError>>;
 }
 
 /// 直查桩：按端口二维码读 device_port 与 device 表（阶段 06 替换为网关客户端）。
@@ -73,10 +70,7 @@ impl TablePortScanner {
 }
 
 impl PortScanner for TablePortScanner {
-    fn resolve_scan<'a>(
-        &'a self,
-        code: &'a str,
-    ) -> BoxFuture<'a, Result<ScanResult, ScanError>> {
+    fn resolve_scan<'a>(&'a self, code: &'a str) -> BoxFuture<'a, Result<ScanResult, ScanError>> {
         Box::pin(async move {
             if code.is_empty() {
                 return Err(ScanError::NotFound);

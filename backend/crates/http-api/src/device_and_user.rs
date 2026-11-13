@@ -7,9 +7,7 @@ use crate::deps::ApiDeps;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_device::{
-    DeviceError, alert, fault, import, management, user_station,
-};
+use chargepilot_mod_device::{DeviceError, alert, fault, import, management, user_station};
 use chargepilot_mod_ops::OpsError;
 use chargepilot_mod_ops::management::Page;
 use chargepilot_platform::httpx;

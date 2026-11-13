@@ -4,8 +4,8 @@
 
 use super::channel::{PayProvider, PrepayRequest};
 use chargepilot_domain::money::{PayMethod, PaymentBizType, PaymentStatus};
-use chargepilot_mod_wallet::recharge::futures_bounds::BoxFuture;
 use chargepilot_mod_wallet::recharge::RechargePayment;
+use chargepilot_mod_wallet::recharge::futures_bounds::BoxFuture;
 use chargepilot_platform::ids::SegmentAllocator;
 use sqlx::MySqlPool;
 
@@ -42,14 +42,19 @@ impl chargepilot_mod_wallet::recharge::RechargePayments for RechargePaymentBridg
         payment_id: u64,
     ) -> BoxFuture<'a, Result<RechargePayment, chargepilot_mod_wallet::WalletError>> {
         Box::pin(async move {
-            let row: Option<(u64, String, i64, String, Option<chrono::DateTime<chrono::Utc>>)> =
-                sqlx::query_as(
-                    "SELECT `id`, `order_no`, `total_cents`, `status`, `expired_at` \
+            let row: Option<(
+                u64,
+                String,
+                i64,
+                String,
+                Option<chrono::DateTime<chrono::Utc>>,
+            )> = sqlx::query_as(
+                "SELECT `id`, `order_no`, `total_cents`, `status`, `expired_at` \
                      FROM `payment_order` WHERE `id` = ?",
-                )
-                .bind(payment_id as i64)
-                .fetch_optional(&mut *tx)
-                .await?;
+            )
+            .bind(payment_id as i64)
+            .fetch_optional(&mut *tx)
+            .await?;
             row.map(|(id, no, cents, status, expiry)| Self::view(id, no, cents, status, expiry))
                 .ok_or(chargepilot_mod_wallet::WalletError::NotFound)
         })

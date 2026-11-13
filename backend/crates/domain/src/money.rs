@@ -6,7 +6,7 @@
 //! 禁止取并集。各词表的「判定集合」（如 RefundablePaymentStatuses）是业务规则，
 //! 不是全量取值，使用处必须引用具名常量。
 
-use chrono::{Datelike, DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize};
 
 // ---------- payment_order 词表（旧版 payment.go） ----------
@@ -53,7 +53,10 @@ impl PaymentStatus {
 
     /// 到账或已退回的判定集合（订单侧支付状态推导按此判定）。
     pub fn is_paid_like(&self) -> bool {
-        matches!(self.0.as_str(), Self::PAID | Self::REFUNDED | Self::PARTIAL_REFUNDED)
+        matches!(
+            self.0.as_str(),
+            Self::PAID | Self::REFUNDED | Self::PARTIAL_REFUNDED
+        )
     }
 
     /// 仍可发起渠道退款的支付单状态集合（比 paid_like 少 refunded）。
@@ -233,7 +236,9 @@ pub struct RefundDraft {
 impl RefundDraft {
     /// 从当前时刻派生 created_month（UTC 月首，旧版 time.Date(y, m, 1, ...) 语义）。
     pub fn month_start_of(now: DateTime<Utc>) -> chrono::NaiveDate {
-        now.date_naive().with_day(1).unwrap_or_else(|| now.date_naive())
+        now.date_naive()
+            .with_day(1)
+            .unwrap_or_else(|| now.date_naive())
     }
 }
 

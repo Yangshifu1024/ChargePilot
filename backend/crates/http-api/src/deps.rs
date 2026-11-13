@@ -42,10 +42,7 @@ impl WalletServices {
             db,
             refund: refund.clone(),
         });
-        Self {
-            refund,
-            risk,
-        }
+        Self { refund, risk }
     }
 }
 
@@ -83,19 +80,22 @@ impl PaymentServices {
             "disabled" => Arc::new(chargepilot_mod_payment::channel::DisabledProvider),
             other => anyhow::bail!("PAYMENT_MODE 取值非法: {other}"),
         };
-        let scanner: Arc<dyn chargepilot_mod_payment::PortScanner> =
-            Arc::new(chargepilot_mod_payment::scan::TablePortScanner::new(db.clone()));
+        let scanner: Arc<dyn chargepilot_mod_payment::PortScanner> = Arc::new(
+            chargepilot_mod_payment::scan::TablePortScanner::new(db.clone()),
+        );
         let checkout = Arc::new(chargepilot_mod_payment::CheckoutService {
             pool: db.clone(),
             allocator: (*allocator).clone(),
             scanner,
             provider: provider.clone(),
         });
-        let bridge = Arc::new(chargepilot_mod_payment::recharge_bridge::RechargePaymentBridge {
-            pool: db.clone(),
-            allocator: (*allocator).clone(),
-            provider,
-        });
+        let bridge = Arc::new(
+            chargepilot_mod_payment::recharge_bridge::RechargePaymentBridge {
+                pool: db.clone(),
+                allocator: (*allocator).clone(),
+                provider,
+            },
+        );
         let wallet_recharge = Arc::new(chargepilot_mod_wallet::recharge::RechargeService {
             db: db.clone(),
             payments: bridge,

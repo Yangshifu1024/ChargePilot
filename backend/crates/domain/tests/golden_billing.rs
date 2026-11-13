@@ -3,15 +3,17 @@
 //! 覆盖：Cost / PriceActual / SettleSession / MeasuredSegments / Estimate /
 //! BudgetStop / CutoffMeter / DecideStop / ValidateSpec / Scheme 校验。
 
-use chargepilot_domain::charging_actual::{price_actual, ActualMeter, MeterSegment, Rule};
+use chargepilot_domain::charging_actual::{ActualMeter, MeterSegment, Rule, price_actual};
 use chargepilot_domain::charging_cost::Fee;
-use chargepilot_domain::charging_measured::{measured_segments, Reading, ReadingSample, SessionSpan};
+use chargepilot_domain::charging_measured::{
+    Reading, ReadingSample, SessionSpan, measured_segments,
+};
 use chargepilot_domain::charging_scheme::Scheme;
 use chargepilot_domain::charging_settle::{
-    budget_stop_at_meter, decide_stop, estimate_charge, settle_session, ControlInstruction, Offer,
-    SessionActual, Settlement,
+    ControlInstruction, Offer, SessionActual, Settlement, budget_stop_at_meter, decide_stop,
+    estimate_charge, settle_session,
 };
-use chargepilot_domain::charging_spec::{validate_spec, BillingError, Spec, Usage};
+use chargepilot_domain::charging_spec::{BillingError, Spec, Usage, validate_spec};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
@@ -71,10 +73,7 @@ fn assert_err(case_id: &str, got: Result<impl Sized, BillingError>, want: &str) 
         (Ok(_), None) => {}
         (Ok(_), Some(e)) => panic!("[{case_id}] 期待错误 {e:?} 却成功"),
         (Err(got), None) => panic!("[{case_id}] 期待成功却得到错误 {got:?}"),
-        (Err(got), Some(want)) => assert_eq!(
-            got, want,
-            "[{case_id}] 错误变体与旧版不一致"
-        ),
+        (Err(got), Some(want)) => assert_eq!(got, want, "[{case_id}] 错误变体与旧版不一致"),
     }
 }
 
@@ -147,7 +146,11 @@ impl WireMeter {
             ended_at: self.ended_at,
             charged_wh: self.charged_wh,
             charged_seconds: self.charged_seconds,
-            segments: self.segments.into_iter().map(|s| s.into_segment()).collect(),
+            segments: self
+                .segments
+                .into_iter()
+                .map(|s| s.into_segment())
+                .collect(),
         }
     }
 }
@@ -189,10 +192,22 @@ fn parse_rule(v: &Value) -> Rule {
 fn assert_fee_eq(case_id: &str, got: &Fee, want: &Value) {
     let want_fee: Fee = serde_json::from_value(want.clone()).expect("want Fee 合法");
     assert_eq!(got.basis, want_fee.basis, "[{case_id}] basis");
-    assert_eq!(got.electric_cents, want_fee.electric_cents, "[{case_id}] electric_cents");
-    assert_eq!(got.service_cents, want_fee.service_cents, "[{case_id}] service_cents");
-    assert_eq!(got.total_cents, want_fee.total_cents, "[{case_id}] total_cents");
-    assert_eq!(got.billable_wh, want_fee.billable_wh, "[{case_id}] billable_wh");
+    assert_eq!(
+        got.electric_cents, want_fee.electric_cents,
+        "[{case_id}] electric_cents"
+    );
+    assert_eq!(
+        got.service_cents, want_fee.service_cents,
+        "[{case_id}] service_cents"
+    );
+    assert_eq!(
+        got.total_cents, want_fee.total_cents,
+        "[{case_id}] total_cents"
+    );
+    assert_eq!(
+        got.billable_wh, want_fee.billable_wh,
+        "[{case_id}] billable_wh"
+    );
     assert_eq!(
         got.fragments.len(),
         want_fee.fragments.len(),
@@ -202,17 +217,39 @@ fn assert_fee_eq(case_id: &str, got: &Fee, want: &Value) {
     );
     for (g, w) in got.fragments.iter().zip(want_fee.fragments.iter()) {
         let parse = |s: &str| -> DateTime<Utc> {
-            DateTime::parse_from_rfc3339(s).expect("时间可解析").with_timezone(&Utc)
+            DateTime::parse_from_rfc3339(s)
+                .expect("时间可解析")
+                .with_timezone(&Utc)
         };
-        assert_eq!(parse(&g.started_at), parse(&w.started_at), "[{case_id}] fragment started_at");
-        assert_eq!(parse(&g.ended_at), parse(&w.ended_at), "[{case_id}] fragment ended_at");
+        assert_eq!(
+            parse(&g.started_at),
+            parse(&w.started_at),
+            "[{case_id}] fragment started_at"
+        );
+        assert_eq!(
+            parse(&g.ended_at),
+            parse(&w.ended_at),
+            "[{case_id}] fragment ended_at"
+        );
         assert_eq!(g.power_w, w.power_w, "[{case_id}] fragment power_w");
         assert_eq!(g.quantity, w.quantity, "[{case_id}] fragment quantity");
         assert_eq!(g.unit, w.unit, "[{case_id}] fragment unit");
-        assert_eq!(g.electric_rate, w.electric_rate, "[{case_id}] fragment electric_rate");
-        assert_eq!(g.service_rate, w.service_rate, "[{case_id}] fragment service_rate");
-        assert_eq!(g.electric_cents, w.electric_cents, "[{case_id}] fragment electric_cents");
-        assert_eq!(g.service_cents, w.service_cents, "[{case_id}] fragment service_cents");
+        assert_eq!(
+            g.electric_rate, w.electric_rate,
+            "[{case_id}] fragment electric_rate"
+        );
+        assert_eq!(
+            g.service_rate, w.service_rate,
+            "[{case_id}] fragment service_rate"
+        );
+        assert_eq!(
+            g.electric_cents, w.electric_cents,
+            "[{case_id}] fragment electric_cents"
+        );
+        assert_eq!(
+            g.service_cents, w.service_cents,
+            "[{case_id}] fragment service_cents"
+        );
     }
 }
 
@@ -222,8 +259,7 @@ fn run_case(c: &GoldenCase) {
     match c.kind.as_str() {
         "cost" => {
             let spec = parse_spec(&c.input["spec"]);
-            let usage: WireUsage =
-                serde_json::from_value(c.input["usage"].clone()).expect("usage");
+            let usage: WireUsage = serde_json::from_value(c.input["usage"].clone()).expect("usage");
             let got = chargepilot_domain::charging_cost::cost(&spec, &usage.into_usage());
             match (&got, want_err_of(&c.want_err)) {
                 (Ok(fee), None) => assert_fee_eq(&c.id, fee, &c.want),
@@ -232,8 +268,7 @@ fn run_case(c: &GoldenCase) {
         }
         "price_actual" => {
             let rule = parse_rule(&c.input["rule"]);
-            let meter: WireMeter =
-                serde_json::from_value(c.input["meter"].clone()).expect("meter");
+            let meter: WireMeter = serde_json::from_value(c.input["meter"].clone()).expect("meter");
             let got = price_actual(&rule, &meter.into_meter());
             match (&got, want_err_of(&c.want_err)) {
                 (Ok(fee), None) => assert_fee_eq(&c.id, fee, &c.want),
@@ -242,8 +277,7 @@ fn run_case(c: &GoldenCase) {
         }
         "settle" => {
             let spec = parse_spec(&c.input["spec"]);
-            let meter: WireMeter =
-                serde_json::from_value(c.input["meter"].clone()).expect("meter");
+            let meter: WireMeter = serde_json::from_value(c.input["meter"].clone()).expect("meter");
             let offer: Option<Offer> = match &c.input["offer"] {
                 Value::Null => None,
                 v => Some(serde_json::from_value(v.clone()).expect("offer")),
@@ -269,8 +303,16 @@ fn run_case(c: &GoldenCase) {
                 serde_json::from_value(c.input["span"].clone()).expect("span");
             let samples: Vec<WireReadingSample> =
                 serde_json::from_value(c.input["samples"].clone()).expect("samples");
-            let got = measured_segments(start, &span.into_span(), &samples.into_iter().map(|s| s.into_sample()).collect::<Vec<_>>());
-            let want: Option<Vec<WireSegment>> = serde_json::from_value(c.want.clone()).expect("want segments");
+            let got = measured_segments(
+                start,
+                &span.into_span(),
+                &samples
+                    .into_iter()
+                    .map(|s| s.into_sample())
+                    .collect::<Vec<_>>(),
+            );
+            let want: Option<Vec<WireSegment>> =
+                serde_json::from_value(c.want.clone()).expect("want segments");
             match (&got, want) {
                 (Some(gs), Some(ws)) => {
                     assert_eq!(gs.len(), ws.len(), "[{}] 分段数量", c.id);
@@ -283,10 +325,7 @@ fn run_case(c: &GoldenCase) {
                     }
                 }
                 (None, None) => {}
-                (got, want) => panic!(
-                    "[{}] measured 差分失败: got={got:?} want={want:?}",
-                    c.id
-                ),
+                (got, want) => panic!("[{}] measured 差分失败: got={got:?} want={want:?}", c.id),
             }
         }
         "estimate" => {
@@ -308,26 +347,44 @@ fn run_case(c: &GoldenCase) {
         }
         "budget" => {
             let rule = parse_rule(&c.input["rule"]);
-            let offer: Offer =
-                serde_json::from_value(c.input["offer"].clone()).expect("offer");
-            let meter: WireMeter =
-                serde_json::from_value(c.input["meter"].clone()).expect("meter");
+            let offer: Offer = serde_json::from_value(c.input["offer"].clone()).expect("offer");
+            let meter: WireMeter = serde_json::from_value(c.input["meter"].clone()).expect("meter");
             let got = budget_stop_at_meter(&rule, Some(&offer), &meter.into_meter());
             match (&got, want_err_of(&c.want_err)) {
                 (Ok((plan, fee)), None) => {
                     let want_plan: WirePlan =
                         serde_json::from_value(c.want["plan"].clone()).expect("want plan");
-                    assert_eq!(plan.should_stop, want_plan.should_stop, "[{}] should_stop", c.id);
+                    assert_eq!(
+                        plan.should_stop, want_plan.should_stop,
+                        "[{}] should_stop",
+                        c.id
+                    );
                     assert_eq!(plan.reason, want_plan.reason, "[{}] reason", c.id);
-                    assert_eq!(plan.accrued_cents, want_plan.accrued_cents, "[{}] accrued_cents", c.id);
-                    assert_eq!(plan.grace_seconds, want_plan.grace_seconds, "[{}] grace_seconds", c.id);
+                    assert_eq!(
+                        plan.accrued_cents, want_plan.accrued_cents,
+                        "[{}] accrued_cents",
+                        c.id
+                    );
+                    assert_eq!(
+                        plan.grace_seconds, want_plan.grace_seconds,
+                        "[{}] grace_seconds",
+                        c.id
+                    );
                     match (&c.want["fee"], fee) {
                         (Value::Null, None) => {}
                         (v, Some(f)) => {
                             let want_fee: Fee =
                                 serde_json::from_value(v.clone()).expect("want fee");
-                            assert_eq!(f.electric_cents, want_fee.electric_cents, "[{}] fee.electric", c.id);
-                            assert_eq!(f.service_cents, want_fee.service_cents, "[{}] fee.service", c.id);
+                            assert_eq!(
+                                f.electric_cents, want_fee.electric_cents,
+                                "[{}] fee.electric",
+                                c.id
+                            );
+                            assert_eq!(
+                                f.service_cents, want_fee.service_cents,
+                                "[{}] fee.service",
+                                c.id
+                            );
                             assert_eq!(f.total_cents, want_fee.total_cents, "[{}] fee.total", c.id);
                         }
                         _ => panic!("[{}] fee 存在性不一致", c.id),
@@ -338,21 +395,34 @@ fn run_case(c: &GoldenCase) {
         }
         "cutoff" => {
             let spec = parse_spec(&c.input["spec"]);
-            let meter: WireMeter =
-                serde_json::from_value(c.input["meter"].clone()).expect("meter");
+            let meter: WireMeter = serde_json::from_value(c.input["meter"].clone()).expect("meter");
             let cutoff: DateTime<Utc> =
                 serde_json::from_value(c.input["cutoff"].clone()).expect("cutoff");
-            let got = chargepilot_domain::charging_cost::cutoff_meter(&spec, &meter.into_meter(), cutoff);
+            let got =
+                chargepilot_domain::charging_cost::cutoff_meter(&spec, &meter.into_meter(), cutoff);
             match (&got, want_err_of(&c.want_err)) {
                 (Ok(m), None) => {
                     let want: WireMeter =
                         serde_json::from_value(c.want.clone()).expect("want meter");
-                    assert_eq!(m.review_required, want.review_required, "[{}] review_required", c.id);
+                    assert_eq!(
+                        m.review_required, want.review_required,
+                        "[{}] review_required",
+                        c.id
+                    );
                     assert_eq!(m.started_at, want.started_at, "[{}] started_at", c.id);
                     assert_eq!(m.ended_at, want.ended_at, "[{}] ended_at", c.id);
                     assert_eq!(m.charged_wh, want.charged_wh, "[{}] charged_wh", c.id);
-                    assert_eq!(m.charged_seconds, want.charged_seconds, "[{}] charged_seconds", c.id);
-                    assert_eq!(m.segments.len(), want.segments.len(), "[{}] segments 数量", c.id);
+                    assert_eq!(
+                        m.charged_seconds, want.charged_seconds,
+                        "[{}] charged_seconds",
+                        c.id
+                    );
+                    assert_eq!(
+                        m.segments.len(),
+                        want.segments.len(),
+                        "[{}] segments 数量",
+                        c.id
+                    );
                     for (g, w) in m.segments.iter().zip(want.segments.iter()) {
                         assert_eq!(g.started_at, w.started_at, "[{}] seg started_at", c.id);
                         assert_eq!(g.ended_at, w.ended_at, "[{}] seg ended_at", c.id);
@@ -366,19 +436,25 @@ fn run_case(c: &GoldenCase) {
         }
         "decide_stop" => {
             let spec = parse_spec(&c.input["spec"]);
-            let usage: WireUsage =
-                serde_json::from_value(c.input["usage"].clone()).expect("usage");
+            let usage: WireUsage = serde_json::from_value(c.input["usage"].clone()).expect("usage");
             let elapsed = chrono::Duration::seconds(c.input["elapsed_seconds"].as_i64().unwrap());
             let got = decide_stop(&spec, &usage.into_usage(), elapsed);
             match (&got, want_err_of(&c.want_err)) {
                 (Ok(plan), None) => {
                     // Go 侧 StopPlan 无 json tag（PascalCase 字段名），用桥接结构比较
-                    let want: WirePlan =
-                        serde_json::from_value(c.want.clone()).expect("want plan");
+                    let want: WirePlan = serde_json::from_value(c.want.clone()).expect("want plan");
                     assert_eq!(plan.should_stop, want.should_stop, "[{}] should_stop", c.id);
                     assert_eq!(plan.reason, want.reason, "[{}] reason", c.id);
-                    assert_eq!(plan.accrued_cents, want.accrued_cents, "[{}] accrued_cents", c.id);
-                    assert_eq!(plan.grace_seconds, want.grace_seconds, "[{}] grace_seconds", c.id);
+                    assert_eq!(
+                        plan.accrued_cents, want.accrued_cents,
+                        "[{}] accrued_cents",
+                        c.id
+                    );
+                    assert_eq!(
+                        plan.grace_seconds, want.grace_seconds,
+                        "[{}] grace_seconds",
+                        c.id
+                    );
                 }
                 _ => assert_err(&c.id, got.map(|_| ()), &c.want_err),
             }
@@ -389,15 +465,19 @@ fn run_case(c: &GoldenCase) {
             assert_err(&c.id, got.map(|_| ()), &c.want_err);
         }
         "validate_scheme" => {
-            let scheme: Scheme =
-                serde_json::from_value(c.input["scheme"].clone()).expect("scheme");
+            let scheme: Scheme = serde_json::from_value(c.input["scheme"].clone()).expect("scheme");
             let got = scheme.validate();
             match (got, c.want_err.as_str()) {
                 (Ok(()), "") => {}
                 (Ok(()), _) => panic!("[{}] 期待错误 {} 却成功", c.id, c.want),
                 (Err(e), "") => panic!("[{}] 期待成功却得到错误 {e}", c.id),
                 (Err(e), "scheme_err") => {
-                    assert_eq!(e.to_string(), c.want.as_str().unwrap(), "[{}] 校验文案不一致", c.id);
+                    assert_eq!(
+                        e.to_string(),
+                        c.want.as_str().unwrap(),
+                        "[{}] 校验文案不一致",
+                        c.id
+                    );
                 }
                 (Err(e), other) => panic!("[{}] 未知 want_err={other}（err={e}）", c.id),
             }
@@ -501,11 +581,7 @@ fn golden_differential_all_cases() {
         }
     }
     if !failed.is_empty() {
-        panic!(
-            "差分对照 {} 条失败:\n{}",
-            failed.len(),
-            failed.join("\n")
-        );
+        panic!("差分对照 {} 条失败:\n{}", failed.len(), failed.join("\n"));
     }
 }
 

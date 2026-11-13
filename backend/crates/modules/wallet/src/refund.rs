@@ -3,9 +3,9 @@
 //! manual_review 表示待审核，均不表示渠道已退回资金。
 
 use super::{WalletError, account};
-use chargepilot_domain::money::{RefundDraft, PaymentBizType};
+use chargepilot_domain::money::{PaymentBizType, RefundDraft};
 use serde::Serialize;
-use sqlx::{Acquire, MySqlPool, MySqlConnection};
+use sqlx::{Acquire, MySqlConnection, MySqlPool};
 
 /// 可原路退款的充值支付来源（旧版 RechargeSource）。
 #[derive(Debug, Clone)]
@@ -119,9 +119,7 @@ impl RefundService {
         .fetch_optional(&mut *tx)
         .await?;
         if let Some((prior_user, prior_reason, response_json)) = prior {
-            if prior_user != user_id
-                || prior_reason.unwrap_or_default() != reason
-            {
+            if prior_user != user_id || prior_reason.unwrap_or_default() != reason {
                 return Err(WalletError::RequestConflict);
             }
             let receipt: RefundReceipt = serde_json::from_str(&response_json)
@@ -138,7 +136,11 @@ impl RefundService {
         if acct.balance_cents - acct.frozen_cents < input.amount_cents {
             return Err(WalletError::InsufficientBalance);
         }
-        let reason_opt = if reason.is_empty() { None } else { Some(reason.clone()) };
+        let reason_opt = if reason.is_empty() {
+            None
+        } else {
+            Some(reason.clone())
+        };
         sqlx::query(
             "INSERT INTO `wallet_refund_request` (`request_id`, `user_id`, `amount_cents`, `reason`) \
              VALUES (?, ?, ?, ?)",
@@ -177,12 +179,15 @@ impl RefundService {
             account::freeze_wallet_tx(&mut tx, acct.id).await?;
             "manual_review".to_string()
         } else {
-            self.reserve_in_tx(&mut tx, WalletRefundReservation {
-                request_id: input.request_id.clone(),
-                user_id,
-                amount_cents: input.amount_cents,
-                reason: reason.clone(),
-            })
+            self.reserve_in_tx(
+                &mut tx,
+                WalletRefundReservation {
+                    request_id: input.request_id.clone(),
+                    user_id,
+                    amount_cents: input.amount_cents,
+                    reason: reason.clone(),
+                },
+            )
             .await?;
             "accepted".to_string()
         };
@@ -192,17 +197,18 @@ impl RefundService {
             refund_cents: input.amount_cents,
         };
         // response_json 为 json 列：绑定 Value（String 绑定会 3140）。
-        let response_json = serde_json::to_value(&receipt)
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        sqlx::query("UPDATE `wallet_refund_request` SET `response_json` = ? WHERE `request_id` = ?")
-            .bind(&response_json)
-            .bind(&input.request_id)
-            .execute(&mut *tx)
-            .await?;
+        let response_json =
+            serde_json::to_value(&receipt).map_err(|e| WalletError::Storage(e.to_string()))?;
+        sqlx::query(
+            "UPDATE `wallet_refund_request` SET `response_json` = ? WHERE `request_id` = ?",
+        )
+        .bind(&response_json)
+        .bind(&input.request_id)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(receipt)
     }
-
 
     /// 按充值来源拆分退款，在调用方事务中冻结可用余额（旧版 ReserveInTx）。
     /// 冻结、退款与来源分摊一并提交；渠道结果未知时保留编号及冻结额。
@@ -221,25 +227,18 @@ impl RefundService {
         .fetch_optional(&mut *tx)
         .await?;
         let (wallet_id, balance, frozen) = row.ok_or(WalletError::NotFound)?;
-        if req.amount_cents <= 0
-            || balance < frozen
-            || req.amount_cents > balance - frozen
-        {
+        if req.amount_cents <= 0 || balance < frozen || req.amount_cents > balance - frozen {
             return Err(WalletError::RequestConflict);
         }
-        let (existing,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM `wallet_refund_part` WHERE `request_id` = ?",
-        )
-        .bind(&req.request_id)
-        .fetch_one(&mut *tx)
-        .await?;
+        let (existing,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM `wallet_refund_part` WHERE `request_id` = ?")
+                .bind(&req.request_id)
+                .fetch_one(&mut *tx)
+                .await?;
         if existing != 0 {
             return Err(WalletError::RequestConflict);
         }
-        let payments = self
-            .sources
-            .lock_recharge_sources(tx, req.user_id)
-            .await?;
+        let payments = self.sources.lock_recharge_sources(tx, req.user_id).await?;
         let mut left = req.amount_cents;
         let now = chrono::Utc::now();
         for pay in payments {
@@ -247,10 +246,7 @@ impl RefundService {
                 continue;
             }
             let reserved = self.recorder.reserved_in_tx(tx, pay.id).await?;
-            let amount = std::cmp::min(
-                left,
-                pay.paid_cents - pay.refunded_cents - reserved,
-            );
+            let amount = std::cmp::min(left, pay.paid_cents - pay.refunded_cents - reserved);
             if amount <= 0 {
                 continue;
             }
@@ -262,7 +258,10 @@ impl RefundService {
                 sha2_digest::Digest::update(&mut h, b":");
                 sha2_digest::Digest::update(&mut h, pay.id.to_string().as_bytes());
                 let out = sha2_digest::Digest::finalize(h);
-                out.iter().take(16).map(|b| format!("{b:02x}")).collect::<String>()
+                out.iter()
+                    .take(16)
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>()
             };
             let refund_id = self
                 .recorder

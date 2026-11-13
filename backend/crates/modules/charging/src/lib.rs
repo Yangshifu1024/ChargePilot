@@ -16,12 +16,13 @@ pub mod stop;
 pub mod sweeper;
 
 pub use dispatch::StartDispatcher;
-pub use receipts::{apply_end_receipt, apply_start_receipt, EndReceiptInput, ReceiptError, StartReceiptInput};
+pub use receipts::{
+    EndReceiptInput, ReceiptError, StartReceiptInput, apply_end_receipt, apply_start_receipt,
+};
 pub use sink::{CommandSink, SimulationSink, StartCommand};
 pub use stop::{ActiveStop, StopError, StopService};
 
 /// dyn 兼容 Future 别名的公共出口（模块内部各自引用）。
 pub mod futures_bounds {
-    pub type BoxFuture<'a, T> =
-        std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+    pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 }

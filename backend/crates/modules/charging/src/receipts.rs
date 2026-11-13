@@ -261,8 +261,8 @@ pub async fn apply_end_receipt(
     {
         return Err(ReceiptError::Conflict);
     }
-    let meter_json = serde_json::to_string(&input.meter)
-        .map_err(|e| ReceiptError::Storage(e.to_string()))?;
+    let meter_json =
+        serde_json::to_string(&input.meter).map_err(|e| ReceiptError::Storage(e.to_string()))?;
 
     let mut conn = pool.acquire().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
@@ -272,9 +272,13 @@ pub async fn apply_end_receipt(
     let c = tx.acquire().await?;
 
     // 锁订单（卡会话锁随批 6 接入，微信路径先订单）。
-    let view = chargepilot_mod_order::lock_for_lifecycle_tx(&mut *c, input.charge_order_id, &input.order_no)
-        .await?
-        .ok_or(ReceiptError::Conflict)?;
+    let view = chargepilot_mod_order::lock_for_lifecycle_tx(
+        &mut *c,
+        input.charge_order_id,
+        &input.order_no,
+    )
+    .await?
+    .ok_or(ReceiptError::Conflict)?;
     if view.device_id != input.device_id || view.port_no != input.port_no {
         return Err(ReceiptError::Conflict);
     }
@@ -339,8 +343,8 @@ pub async fn apply_end_receipt(
     // Wh → kWh：四位定点小数（旧版 StringFixed(4) 语义；电量非负，除法安全）。
     let kwh = (rust_decimal::Decimal::from(input.meter.charged_wh)
         / rust_decimal::Decimal::from(1000u32))
-        .round_dp(4)
-        .to_string();
+    .round_dp(4)
+    .to_string();
     chargepilot_mod_order::complete_tx(
         &mut *c,
         input.charge_order_id,
@@ -351,9 +355,13 @@ pub async fn apply_end_receipt(
     )
     .await?;
     // 释放端口占用（必须匹配本订单）。
-    let released =
-        chargepilot_mod_order::release_port_tx(&mut *c, &input.device_id, input.port_no, input.charge_order_id)
-            .await?;
+    let released = chargepilot_mod_order::release_port_tx(
+        &mut *c,
+        &input.device_id,
+        input.port_no,
+        input.charge_order_id,
+    )
+    .await?;
     if !released {
         return Err(ReceiptError::Conflict);
     }

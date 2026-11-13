@@ -5,14 +5,14 @@
 
 use crate::repo::{active_session_count, find_card_charge};
 use chargepilot_domain::card::{
-    can_extend, valid_card_no, CardOperationKind, CardOperationStatus, CardStatus,
+    CardOperationKind, CardOperationStatus, CardStatus, can_extend, valid_card_no,
 };
 use chargepilot_domain::charging_actual::Rule;
 use chargepilot_domain::charging_settle::{Estimate, Offer};
 use chargepilot_domain::charging_spec::ChargeMode;
 use chargepilot_mod_order::{
-    append_domain_event_tx, append_event_in_tx, create_paid_in_tx, freeze_pricing_in_tx,
-    new_charge_order_no_tx, new_payment_order_no, PaidOrderDraft,
+    PaidOrderDraft, append_domain_event_tx, append_event_in_tx, create_paid_in_tx,
+    freeze_pricing_in_tx, new_charge_order_no_tx, new_payment_order_no,
 };
 use chargepilot_mod_payment::card_funding::{
     checkout_port_available, create_card_intent_in_tx, create_card_payment_in_tx,
@@ -22,7 +22,7 @@ use chargepilot_mod_payment::checkout::PricingSnapshot;
 use chargepilot_mod_payment::scan::PortScanner;
 use chargepilot_mod_pricing::metering::active_device_rule;
 use chargepilot_mod_wallet::ledger::{lock_tx, move_tx};
-use chargepilot_platform::ids::{uuid_v4, SegmentAllocator};
+use chargepilot_platform::ids::{SegmentAllocator, uuid_v4};
 use sqlx::{Acquire, MySqlPool};
 
 /// 刷卡准入输入（旧版 SwipeInput）；occurred_at_unix_micros 为 0 视为缺失。
@@ -91,9 +91,9 @@ impl std::fmt::Display for SwipeError {
             SwipeError::Unsupported => f.write_str("设备不支持在线卡"),
             SwipeError::Pricing => f.write_str("充电方案不可用"),
             SwipeError::Conflict => f.write_str("端口存在进行中的支付或充电"),
-            SwipeError::CardDeclined => f.write_str(
-                "刷卡不可用：卡状态、余额、端口、累计上限或设备确认状态不满足要求",
-            ),
+            SwipeError::CardDeclined => {
+                f.write_str("刷卡不可用：卡状态、余额、端口、累计上限或设备确认状态不满足要求")
+            }
             SwipeError::CardBalance => f.write_str("刷卡不可用：钱包可用余额不足"),
             SwipeError::Persist(m) => write!(f, "刷卡处理存储错误: {m}"),
         }
@@ -154,15 +154,17 @@ impl SwipeService {
         .fetch_optional(&self.pool)
         .await?;
         let prior: Option<(String, u64, String, i64, u16, String)> = match swipe_device_id {
-            Some(d) => sqlx::query_as(
-                "SELECT `kind`, `charge_order_id`, `status`, `price_cents`, `minutes`, \
+            Some(d) => {
+                sqlx::query_as(
+                    "SELECT `kind`, `charge_order_id`, `status`, `price_cents`, `minutes`, \
                         CAST(`operation_id` AS CHAR) AS `operation_id` \
                  FROM `card_operation` WHERE `device_id` = ? AND `event_id` = ?",
-            )
-            .bind(d)
-            .bind(&input.event_id)
-            .fetch_optional(&self.pool)
-            .await?,
+                )
+                .bind(d)
+                .bind(&input.event_id)
+                .fetch_optional(&self.pool)
+                .await?
+            }
             None => None,
         };
         if let Some((kind, charge_order_id, status, price_cents, minutes, operation_id)) = prior {
@@ -223,9 +225,10 @@ impl SwipeService {
         let active_sessions = active_session_count(&self.pool, &input.port_id).await?;
         // 首购才需要方案；续购沿用会话冻结套餐。
         let rule = if active_sessions == 0 {
-            let active = active_device_rule(&self.pool, resolved.station_id, Some(&resolved.device_id))
-                .await
-                .map_err(|_| SwipeError::Pricing)?;
+            let active =
+                active_device_rule(&self.pool, resolved.station_id, Some(&resolved.device_id))
+                    .await
+                    .map_err(|_| SwipeError::Pricing)?;
             if active.scheme.card.package_id == 0 {
                 return Err(SwipeError::Pricing);
             }
@@ -269,8 +272,15 @@ impl SwipeService {
         .bind(&input.event_id)
         .fetch_optional(&mut *c)
         .await?;
-        if let Some((kind, charge_order_id, prev_card_id, status, price_cents, minutes, operation_id)) =
-            previous
+        if let Some((
+            kind,
+            charge_order_id,
+            prev_card_id,
+            status,
+            price_cents,
+            minutes,
+            operation_id,
+        )) = previous
         {
             if prev_card_id != card.id {
                 return Err(SwipeError::CardDeclined);
@@ -296,12 +306,11 @@ impl SwipeService {
             return Err(SwipeError::CardDeclined);
         }
         // 用户可用性与 openid（intent 列非空；刷卡用户即绑定用户）。
-        let user: Option<(String, Vec<u8>)> = sqlx::query_as(
-            "SELECT `status`, `openid` FROM `user` WHERE `id` = ? FOR UPDATE",
-        )
-        .bind(card.user_id as i64)
-        .fetch_optional(&mut *c)
-        .await?;
+        let user: Option<(String, Vec<u8>)> =
+            sqlx::query_as("SELECT `status`, `openid` FROM `user` WHERE `id` = ? FOR UPDATE")
+                .bind(card.user_id as i64)
+                .fetch_optional(&mut *c)
+                .await?;
         let Some((user_status, openid)) = user else {
             return Err(SwipeError::CardDeclined);
         };
@@ -325,198 +334,207 @@ impl SwipeService {
         let operation_id = uuid_v4();
         let now = chrono::Utc::now();
         let now_micros = now.timestamp_micros();
-        let (kind, order_id, package, status): (String, u64, chargepilot_domain::charging_scheme::Package, String) =
-            match session {
-                Some((order_id, session_card_id, purchased, max_minutes, package_json)) => {
-                    // 续购：沿用冻结套餐，不读当前价格。
-                    let package: chargepilot_domain::charging_scheme::Package =
-                        serde_json::from_str(&package_json).map_err(|_| SwipeError::CardDeclined)?;
-                    let order: Option<(String, u64, Option<chrono::DateTime<chrono::Utc>>, String, Option<u64>)> =
-                        sqlx::query_as(
-                            "SELECT `order_no`, `user_id`, `started_at`, `status`, `payment_order_id` \
+        let (kind, order_id, package, status): (
+            String,
+            u64,
+            chargepilot_domain::charging_scheme::Package,
+            String,
+        ) = match session {
+            Some((order_id, session_card_id, purchased, max_minutes, package_json)) => {
+                // 续购：沿用冻结套餐，不读当前价格。
+                let package: chargepilot_domain::charging_scheme::Package =
+                    serde_json::from_str(&package_json).map_err(|_| SwipeError::CardDeclined)?;
+                let order: Option<(
+                    String,
+                    u64,
+                    Option<chrono::DateTime<chrono::Utc>>,
+                    String,
+                    Option<u64>,
+                )> = sqlx::query_as(
+                    "SELECT `order_no`, `user_id`, `started_at`, `status`, `payment_order_id` \
                              FROM `charge_order` WHERE `id` = ? FOR UPDATE",
-                        )
-                        .bind(order_id as i64)
-                        .fetch_optional(&mut *c)
-                        .await?;
-                    let Some((order_no, order_user, started_at, order_status, payment_order_id)) =
-                        order
-                    else {
-                        return Err(SwipeError::CardDeclined);
-                    };
-                    let Some(started_at) = started_at else {
-                        return Err(SwipeError::CardDeclined);
-                    };
-                    if order_user != card.user_id || order_status != "charging" {
-                        return Err(SwipeError::CardDeclined);
-                    }
-                    // 剩余时长耗尽或计费已冻结：续购无效。
-                    if now >= started_at + chrono::Duration::minutes(purchased as i64) {
-                        return Err(SwipeError::CardDeclined);
-                    }
-                    let frozen: i64 = sqlx::query_scalar(
-                        "SELECT COUNT(*) FROM `charge_billing_cutoff` WHERE `charge_order_id` = ?",
-                    )
-                    .bind(order_id as i64)
-                    .fetch_one(&mut *c)
-                    .await?;
-                    if frozen != 0 {
-                        return Err(SwipeError::CardDeclined);
-                    }
-                    let pending: i64 = sqlx::query_scalar(
-                        "SELECT COUNT(*) FROM `card_operation` \
+                )
+                .bind(order_id as i64)
+                .fetch_optional(&mut *c)
+                .await?;
+                let Some((order_no, order_user, started_at, order_status, payment_order_id)) =
+                    order
+                else {
+                    return Err(SwipeError::CardDeclined);
+                };
+                let Some(started_at) = started_at else {
+                    return Err(SwipeError::CardDeclined);
+                };
+                if order_user != card.user_id || order_status != "charging" {
+                    return Err(SwipeError::CardDeclined);
+                }
+                // 剩余时长耗尽或计费已冻结：续购无效。
+                if now >= started_at + chrono::Duration::minutes(purchased as i64) {
+                    return Err(SwipeError::CardDeclined);
+                }
+                let frozen: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM `charge_billing_cutoff` WHERE `charge_order_id` = ?",
+                )
+                .bind(order_id as i64)
+                .fetch_one(&mut *c)
+                .await?;
+                if frozen != 0 {
+                    return Err(SwipeError::CardDeclined);
+                }
+                let pending: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM `card_operation` \
                          WHERE `charge_order_id` = ? AND `status` = ?",
-                    )
-                    .bind(order_id as i64)
-                    .bind(CardOperationStatus::CONFIRMING)
-                    .fetch_one(&mut *c)
-                    .await?;
-                    let available = wallet.balance_cents - wallet.frozen_cents;
-                    if !can_extend(
+                )
+                .bind(order_id as i64)
+                .bind(CardOperationStatus::CONFIRMING)
+                .fetch_one(&mut *c)
+                .await?;
+                let available = wallet.balance_cents - wallet.frozen_cents;
+                if !can_extend(
+                    card.id,
+                    session_card_id,
+                    &package,
+                    purchased,
+                    max_minutes,
+                    available,
+                    pending != 0,
+                ) {
+                    if can_extend(
                         card.id,
                         session_card_id,
                         &package,
                         purchased,
                         max_minutes,
-                        available,
+                        package.price_cents,
                         pending != 0,
                     ) {
-                        if can_extend(
-                            card.id,
-                            session_card_id,
-                            &package,
-                            purchased,
-                            max_minutes,
-                            package.price_cents,
-                            pending != 0,
-                        ) {
-                            return Err(SwipeError::CardBalance);
-                        }
-                        return Err(SwipeError::CardDeclined);
+                        return Err(SwipeError::CardBalance);
                     }
-                    let Some(payment_order_id) = payment_order_id else {
-                        return Err(SwipeError::CardDeclined);
-                    };
-                    extend_card_payment_in_tx(&mut *c, payment_order_id, package.price_cents)
-                        .await
-                        .map_err(|_| SwipeError::CardDeclined)?;
-                    sqlx::query(
-                        "UPDATE `card_charge` SET `paid_cents` = `paid_cents` + ?, \
-                         `purchased_minutes` = `purchased_minutes` + ? WHERE `charge_order_id` = ?",
-                    )
-                    .bind(package.price_cents)
-                    .bind(package.minutes as i64)
-                    .bind(order_id as i64)
-                    .execute(&mut *c)
-                    .await?;
-                    move_tx(
-                        &mut *c,
-                        card.user_id,
-                        &mut wallet,
-                        -package.price_cents,
-                        &format!("CP{operation_id}"),
-                        "在线刷卡extend",
-                    )
+                    return Err(SwipeError::CardDeclined);
+                }
+                let Some(payment_order_id) = payment_order_id else {
+                    return Err(SwipeError::CardDeclined);
+                };
+                extend_card_payment_in_tx(&mut *c, payment_order_id, package.price_cents)
                     .await
-                    .map_err(map_wallet_error)?;
-                    sqlx::query(
-                        "INSERT INTO `card_operation` (`operation_id`, `device_id`, `event_id`, \
+                    .map_err(|_| SwipeError::CardDeclined)?;
+                sqlx::query(
+                    "UPDATE `card_charge` SET `paid_cents` = `paid_cents` + ?, \
+                         `purchased_minutes` = `purchased_minutes` + ? WHERE `charge_order_id` = ?",
+                )
+                .bind(package.price_cents)
+                .bind(package.minutes as i64)
+                .bind(order_id as i64)
+                .execute(&mut *c)
+                .await?;
+                move_tx(
+                    &mut *c,
+                    card.user_id,
+                    &mut wallet,
+                    -package.price_cents,
+                    &format!("CP{operation_id}"),
+                    "在线刷卡extend",
+                )
+                .await
+                .map_err(map_wallet_error)?;
+                sqlx::query(
+                    "INSERT INTO `card_operation` (`operation_id`, `device_id`, `event_id`, \
                          `charge_order_id`, `card_id`, `kind`, `price_cents`, `minutes`, \
                          `status`, `confirmed_at`) \
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(3))",
-                    )
-                    .bind(&operation_id)
-                    .bind(resolved_device_id(&port))
-                    .bind(&input.event_id)
-                    .bind(order_id as i64)
-                    .bind(card.id as i64)
-                    .bind(CardOperationKind::EXTEND)
-                    .bind(package.price_cents)
-                    .bind(package.minutes as i64)
-                    .bind(CardOperationStatus::CONFIRMED)
-                    .execute(&mut *c)
-                    .await?;
-                    append_event_in_tx(
-                        &mut *c,
-                        order_id,
-                        &operation_id,
-                        "card_extend_confirmed",
-                        "card",
-                        &format!(
-                            "card={} cents={} minutes={}",
-                            card.id, package.price_cents, package.minutes
-                        ),
-                        now_micros,
-                    )
-                    .await
-                    .map_err(map_order_error)?;
-                    let _ = order_no;
-                    tx.commit().await?;
-                    return Ok(CardOperationResult {
-                        operation_id,
-                        charge_order_id: order_id,
-                        kind: CardOperationKind::EXTEND.to_string(),
-                        price_cents: package.price_cents,
-                        minutes: package.minutes.min(u16::MAX as u64) as u16,
-                        status: CardOperationStatus::CONFIRMED.to_string(),
-                        replayed: false,
-                    });
+                )
+                .bind(&operation_id)
+                .bind(resolved_device_id(&port))
+                .bind(&input.event_id)
+                .bind(order_id as i64)
+                .bind(card.id as i64)
+                .bind(CardOperationKind::EXTEND)
+                .bind(package.price_cents)
+                .bind(package.minutes as i64)
+                .bind(CardOperationStatus::CONFIRMED)
+                .execute(&mut *c)
+                .await?;
+                append_event_in_tx(
+                    &mut *c,
+                    order_id,
+                    &operation_id,
+                    "card_extend_confirmed",
+                    "card",
+                    &format!(
+                        "card={} cents={} minutes={}",
+                        card.id, package.price_cents, package.minutes
+                    ),
+                    now_micros,
+                )
+                .await
+                .map_err(map_order_error)?;
+                let _ = order_no;
+                tx.commit().await?;
+                return Ok(CardOperationResult {
+                    operation_id,
+                    charge_order_id: order_id,
+                    kind: CardOperationKind::EXTEND.to_string(),
+                    price_cents: package.price_cents,
+                    minutes: package.minutes.min(u16::MAX as u64) as u16,
+                    status: CardOperationStatus::CONFIRMED.to_string(),
+                    replayed: false,
+                });
+            }
+            None => {
+                // 首购：端口无支付占用、套餐可购才创建订单。
+                if !checkout_port_available(&mut *c, &port.port_id).await? {
+                    return Err(SwipeError::Conflict);
                 }
-                None => {
-                    // 首购：端口无支付占用、套餐可购才创建订单。
-                    if !checkout_port_available(&mut *c, &port.port_id).await? {
-                        return Err(SwipeError::Conflict);
-                    }
-                    if !port.available {
-                        return Err(SwipeError::CardDeclined);
-                    }
-                    let Some(active) = rule.as_ref() else {
-                        return Err(SwipeError::Pricing);
-                    };
-                    let Some(package) = active.scheme.package(active.scheme.card.package_id) else {
-                        return Err(SwipeError::Pricing);
-                    };
-                    let available = wallet.balance_cents - wallet.frozen_cents;
-                    if !can_extend(
+                if !port.available {
+                    return Err(SwipeError::CardDeclined);
+                }
+                let Some(active) = rule.as_ref() else {
+                    return Err(SwipeError::Pricing);
+                };
+                let Some(package) = active.scheme.package(active.scheme.card.package_id) else {
+                    return Err(SwipeError::Pricing);
+                };
+                let available = wallet.balance_cents - wallet.frozen_cents;
+                if !can_extend(
+                    card.id,
+                    card.id,
+                    &package,
+                    0,
+                    active.scheme.card.max_minutes,
+                    available,
+                    false,
+                ) {
+                    if can_extend(
                         card.id,
                         card.id,
                         &package,
                         0,
                         active.scheme.card.max_minutes,
-                        available,
+                        package.price_cents,
                         false,
                     ) {
-                        if can_extend(
-                            card.id,
-                            card.id,
-                            &package,
-                            0,
-                            active.scheme.card.max_minutes,
-                            package.price_cents,
-                            false,
-                        ) {
-                            return Err(SwipeError::CardBalance);
-                        }
-                        return Err(SwipeError::CardDeclined);
+                        return Err(SwipeError::CardBalance);
                     }
-                    start_purchase_in_tx(
-                        &mut *c,
-                        self,
-                        input,
-                        station_id,
-                        &port,
-                        card.id,
-                        card.user_id,
-                        &openid,
-                        active,
-                        &package,
-                        &operation_id,
-                        &mut wallet,
-                        now_micros,
-                    )
-                    .await?
+                    return Err(SwipeError::CardDeclined);
                 }
-            };
+                start_purchase_in_tx(
+                    &mut *c,
+                    self,
+                    input,
+                    station_id,
+                    &port,
+                    card.id,
+                    card.user_id,
+                    &openid,
+                    active,
+                    &package,
+                    &operation_id,
+                    &mut wallet,
+                    now_micros,
+                )
+                .await?
+            }
+        };
         tx.commit().await?;
         Ok(CardOperationResult {
             operation_id,
@@ -547,7 +565,15 @@ async fn start_purchase_in_tx(
     operation_id: &str,
     wallet: &mut chargepilot_mod_wallet::ledger::WalletRow,
     now_micros: i64,
-) -> Result<(String, u64, chargepilot_domain::charging_scheme::Package, String), SwipeError> {
+) -> Result<
+    (
+        String,
+        u64,
+        chargepilot_domain::charging_scheme::Package,
+        String,
+    ),
+    SwipeError,
+> {
     // 引擎规格与快照（与 checkout 冻结同构；结算走 duration 分支按已购时长折算）。
     let engine_spec = active.scheme.spec_for(package);
     let estimate = Estimate {
@@ -583,12 +609,18 @@ async fn start_purchase_in_tx(
         offer,
         computed_at_unix_micros: now_micros,
     };
-    let snapshot_json = serde_json::to_value(&snapshot).map_err(|e| SwipeError::Persist(e.to_string()))?;
+    let snapshot_json =
+        serde_json::to_value(&snapshot).map_err(|e| SwipeError::Persist(e.to_string()))?;
 
-    let payment_order_id = service.allocator.next_id().await.map_err(SwipeError::from_anyhow)?;
-    let pay_no = new_payment_order_no(&service.allocator).await.map_err(map_order_error)?;
-    create_card_payment_in_tx(c, payment_order_id, &pay_no, user_id, package.price_cents)
-        .await?;
+    let payment_order_id = service
+        .allocator
+        .next_id()
+        .await
+        .map_err(SwipeError::from_anyhow)?;
+    let pay_no = new_payment_order_no(&service.allocator)
+        .await
+        .map_err(map_order_error)?;
+    create_card_payment_in_tx(c, payment_order_id, &pay_no, user_id, package.price_cents).await?;
     let order_no = new_charge_order_no_tx(c, now_micros, &resolved_device_id(port), port.port_no)
         .await
         .map_err(map_order_error)?;
@@ -702,7 +734,10 @@ async fn start_purchase_in_tx(
         operation_id,
         "card_start_confirming",
         "card",
-        &format!("card={} cents={} minutes={}", card_id, package.price_cents, package.minutes),
+        &format!(
+            "card={} cents={} minutes={}",
+            card_id, package.price_cents, package.minutes
+        ),
         now_micros,
     )
     .await

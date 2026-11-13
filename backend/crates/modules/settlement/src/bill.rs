@@ -55,12 +55,14 @@ pub async fn issue_bill(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resul
     }
     // 支付事实（预付与已退；缺失按零预付推导缺口）。
     let (prepaid, refunded) = match payment_order_id {
-        Some(pid) => sqlx::query_as::<_, (i64, i64)>(
-            "SELECT `paid_cents`, `refunded_cents` FROM `payment_order` WHERE `id` = ?",
-        )
-        .bind(pid as i64)
-        .fetch_one(pool)
-        .await?,
+        Some(pid) => {
+            sqlx::query_as::<_, (i64, i64)>(
+                "SELECT `paid_cents`, `refunded_cents` FROM `payment_order` WHERE `id` = ?",
+            )
+            .bind(pid as i64)
+            .fetch_one(pool)
+            .await?
+        }
         None => (0, 0),
     };
     let shortfall = if receipt_shortfall <= 0 && total > prepaid {
@@ -72,7 +74,9 @@ pub async fn issue_bill(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resul
     // 账单日期使用充电发生时间，不使用计费执行时间。
     let issued_at = match &started_at {
         Some(s) => s.clone(),
-        None => chrono::Utc::now().format("%Y-%m-%d %H:%i:%s.%f").to_string(),
+        None => chrono::Utc::now()
+            .format("%Y-%m-%d %H:%i:%s.%f")
+            .to_string(),
     };
     let month = chargepilot_mod_order::month_start_of(chrono::Utc::now());
 
@@ -161,17 +165,12 @@ pub async fn issue_bill(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resul
 }
 
 /// 用户已读账单（旧版 user_bill.go 已读编排）：归属校验后幂等记录已读时刻。
-pub async fn mark_bill_read(
-    pool: &MySqlPool,
-    user_id: u64,
-    bill_id: u64,
-) -> anyhow::Result<bool> {
-    let owner: Option<u64> = sqlx::query_scalar(
-        "SELECT `user_id` FROM `charge_bill` WHERE `id` = ?",
-    )
-    .bind(bill_id as i64)
-    .fetch_optional(pool)
-    .await?;
+pub async fn mark_bill_read(pool: &MySqlPool, user_id: u64, bill_id: u64) -> anyhow::Result<bool> {
+    let owner: Option<u64> =
+        sqlx::query_scalar("SELECT `user_id` FROM `charge_bill` WHERE `id` = ?")
+            .bind(bill_id as i64)
+            .fetch_optional(pool)
+            .await?;
     let Some(owner) = owner else {
         return Ok(false);
     };

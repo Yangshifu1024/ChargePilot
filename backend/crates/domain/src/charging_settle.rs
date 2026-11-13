@@ -1,11 +1,11 @@
 //! 结算与停止决策：SettleSession 金额拆分、预算停机、购买报价与套餐 Offer。
 //! 语义基准：旧仓库 internal/domain/charging/{device,offer,offer_actual,budget_stop,estimate}.go，逐行对齐。
 
-use crate::charging_actual::{price_actual, ActualMeter, Rule, StopPlan};
+use crate::charging_actual::{ActualMeter, Rule, StopPlan, price_actual};
 use crate::charging_cost::cost;
 use crate::charging_spec::{
-    div_prec16, energy_pattern_ok, int_part, parse_energy, validate_spec,
-    BillingError, ChargeExecutor, ChargeMode, Usage, MAX_SLICES, MAX_RATE_CENTS, Spec,
+    BillingError, ChargeExecutor, ChargeMode, MAX_RATE_CENTS, MAX_SLICES, Spec, Usage, div_prec16,
+    energy_pattern_ok, int_part, parse_energy, validate_spec,
 };
 use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
@@ -157,9 +157,7 @@ impl Offer {
         let mode_ok = match self.mode.as_str() {
             "amount" => self.duration_minutes == 0 && self.energy_wh == 0,
             "duration" => {
-                self.duration_minutes > 0
-                    && self.duration_minutes <= 4320
-                    && self.energy_wh == 0
+                self.duration_minutes > 0 && self.duration_minutes <= 4320 && self.energy_wh == 0
             }
             "energy" => {
                 self.duration_minutes == 0
@@ -199,7 +197,9 @@ pub fn settle_session(
         };
         match p {
             Some(p) if p.price_cents * count == paid.price_cents && p.mode == paid.mode => {
-                if p.mode == "duration" && (p.minutes as u32) * (count as u32) != paid.duration_minutes as u32 {
+                if p.mode == "duration"
+                    && (p.minutes as u32) * (count as u32) != paid.duration_minutes as u32
+                {
                     return Err(BillingError::InvalidPricing);
                 }
                 spec = scheme.spec_for(&p);
@@ -264,8 +264,8 @@ pub fn settle_session(
                 (wh as i64) * (rate.electric_cents + rate.service_cents) / 1000,
                 paid.price_cents,
             );
-            let electric = amount * rate.electric_cents
-                / (rate.electric_cents + rate.service_cents);
+            let electric =
+                amount * rate.electric_cents / (rate.electric_cents + rate.service_cents);
             settlement.electric_cents = electric;
             settlement.service_cents = amount - electric;
             settlement.total_cents = amount;
@@ -427,9 +427,7 @@ pub fn budget_stop_at_meter(
             exact = true;
             fee
         }
-        Err(BillingError::MeterReview)
-            if !meter.review_required && !meter.segments.is_empty() =>
-        {
+        Err(BillingError::MeterReview) if !meter.review_required && !meter.segments.is_empty() => {
             let lower = budget_bound(rule, meter, false)?;
             match budget_bound(rule, meter, true) {
                 Ok(upper) => {
@@ -529,9 +527,7 @@ fn budget_bound(
     bounded_spec.electric = Some(line);
     let mut bounded_meter = meter.clone();
     for segment in bounded_meter.segments.iter_mut() {
-        if segment.power_w.is_none()
-            && (is_realtime || segment.peak_w == 0)
-        {
+        if segment.power_w.is_none() && (is_realtime || segment.peak_w == 0) {
             segment.power_w = Some(0);
         }
     }

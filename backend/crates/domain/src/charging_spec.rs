@@ -474,9 +474,7 @@ pub fn validate_spec(spec: &Spec) -> Result<(), BillingError> {
 /// 避免把旧订单的冻结价格拒掉或按新算法重算（旧版 ValidateTemplateSpec）。
 pub fn validate_template_spec(spec: &Spec) -> Result<(), BillingError> {
     if let Some(scheme) = &spec.scheme {
-        return scheme
-            .validate()
-            .map_err(|_| BillingError::InvalidPricing);
+        return scheme.validate().map_err(|_| BillingError::InvalidPricing);
     }
     validate_spec(spec)?;
     if spec.service.is_some()
@@ -504,11 +502,7 @@ fn same_rate(a: &Period, b: &Period) -> bool {
 
 /// 比较区间内的费率是否不变；电量/实时功率费率相同时可直接使用区间总电量。
 /// 其他模式（含最大功率）直接返回 true（旧版行为）。
-pub fn spec_is_uniform_over(
-    spec: &Spec,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
-) -> bool {
+pub fn spec_is_uniform_over(spec: &Spec, start: DateTime<Utc>, end: DateTime<Utc>) -> bool {
     let basis_is_relevant = match &spec.electric {
         None => return true,
         Some(e) => {
@@ -551,9 +545,7 @@ pub fn truncate_minute(t: chrono::DateTime<FixedOffset>) -> chrono::DateTime<Fix
 
 /// 用户输入电量解析：范围 0.001–100 kWh（旧版 parseEnergy）。
 pub fn parse_energy(value: &str) -> Result<Decimal, BillingError> {
-    let kwh: Decimal = value
-        .parse()
-        .map_err(|_| BillingError::InvalidPricing)?;
+    let kwh: Decimal = value.parse().map_err(|_| BillingError::InvalidPricing)?;
     if kwh < decimal_milli() || kwh > Decimal::from(100) {
         return Err(BillingError::InvalidPricing);
     }

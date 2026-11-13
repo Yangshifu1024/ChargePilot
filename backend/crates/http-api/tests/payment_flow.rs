@@ -7,7 +7,7 @@ use axum::http::{Request, StatusCode};
 use chargepilot_http_api::deps::{ApiDeps, WalletServices};
 use chargepilot_platform::ids::SegmentAllocator;
 use http_body_util::BodyExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -33,11 +33,7 @@ fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
 /// 支付测试互斥锁：端口预占与频次窗口依赖库中唯一事实。
 static FLOW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-type RouterEnv = (
-    axum::Router,
-    Arc<sqlx::MySqlPool>,
-    Arc<SegmentAllocator>,
-);
+type RouterEnv = (axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAllocator>);
 
 async fn build() -> Option<RouterEnv> {
     let _ = tracing_subscriber::fmt()
@@ -65,9 +61,8 @@ async fn build() -> Option<RouterEnv> {
         return None;
     }
     // 支付域按 simulation 装配（旧版 PAYMENT_MODE=simulation 语义）。
-    let provider: Arc<dyn chargepilot_mod_payment::PayProvider> = Arc::new(
-        chargepilot_mod_payment::channel::SimulationProvider,
-    );
+    let provider: Arc<dyn chargepilot_mod_payment::PayProvider> =
+        Arc::new(chargepilot_mod_payment::channel::SimulationProvider);
     let scanner: Arc<dyn chargepilot_mod_payment::PortScanner> = Arc::new(
         chargepilot_mod_payment::scan::TablePortScanner::new(db.clone()),
     );
@@ -159,7 +154,10 @@ async fn req(
     let resp = router.oneshot(req).await.unwrap();
     let status = resp.status();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 /// 开发登录并返回 (jwt, user_id)。
@@ -250,7 +248,11 @@ async fn checkout_confirm_and_late_refund_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "offers 应成功: {body}");
-    assert_eq!(body["data"]["items"].as_array().unwrap().len(), 2, "应有两个套餐");
+    assert_eq!(
+        body["data"]["items"].as_array().unwrap().len(),
+        2,
+        "应有两个套餐"
+    );
     assert_eq!(body["data"]["stop_when_full"], true);
 
     // 2. checkout：冻结意图与端口。
@@ -264,31 +266,35 @@ async fn checkout_confirm_and_late_refund_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "下单应成功: {body}");
-    let merchant_order_no = body["data"]["merchant_order_no"].as_str().unwrap().to_string();
-    let payable = body["data"]["payable_cents"].as_i64().unwrap();
-    assert_eq!(payable, 100, "1 元金额档应付 100 分");
-    assert!(body["data"]["payment_params"]["prepay_id"]
+    let merchant_order_no = body["data"]["merchant_order_no"]
         .as_str()
         .unwrap()
-        .starts_with("SIM"), "模拟渠道应返回 SIM 预支付编号");
+        .to_string();
+    let payable = body["data"]["payable_cents"].as_i64().unwrap();
+    assert_eq!(payable, 100, "1 元金额档应付 100 分");
+    assert!(
+        body["data"]["payment_params"]["prepay_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("SIM"),
+        "模拟渠道应返回 SIM 预支付编号"
+    );
     let intent_id = body["data"]["intent_id"].as_str().unwrap().to_string();
 
     // 库断言：意图 initiated + 支付单 initiated + 快照冻结。
-    let intent_status: String = sqlx::query_scalar(
-        "SELECT `status` FROM `charge_payment_intent` WHERE `intent_id` = ?",
-    )
-    .bind(&intent_id)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let intent_status: String =
+        sqlx::query_scalar("SELECT `status` FROM `charge_payment_intent` WHERE `intent_id` = ?")
+            .bind(&intent_id)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(intent_status, "initiated");
-    let (pay_status, biz_id): (String, u64) = sqlx::query_as(
-        "SELECT `status`, `biz_id` FROM `payment_order` WHERE `order_no` = ?",
-    )
-    .bind(&merchant_order_no)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let (pay_status, biz_id): (String, u64) =
+        sqlx::query_as("SELECT `status`, `biz_id` FROM `payment_order` WHERE `order_no` = ?")
+            .bind(&merchant_order_no)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(pay_status, "initiated");
     assert_eq!(biz_id, 0, "支付单在到账前不关联业务");
 
@@ -332,7 +338,10 @@ async fn checkout_confirm_and_late_refund_flow() {
     assert_eq!(body["data"]["replayed"], false);
     let charge_order_id = body["data"]["charge_order_id"].as_u64().unwrap();
     let charge_order_no = body["data"]["charge_order_no"].as_str().unwrap();
-    assert!(charge_order_no.starts_with('C'), "充电单号应为 C 前缀: {charge_order_no}");
+    assert!(
+        charge_order_no.starts_with('C'),
+        "充电单号应为 C 前缀: {charge_order_no}"
+    );
 
     // 库断言：订单 paid + 快照 + 支付单绑定 + 意图 paid + 事件出站。
     let (order_status, pay_status2): (String, String) = sqlx::query_as(
@@ -372,7 +381,10 @@ async fn checkout_confirm_and_late_refund_flow() {
     .await;
     assert_eq!(status, StatusCode::OK, "二次确认应成功: {body}");
     assert_eq!(body["data"]["replayed"], true);
-    assert_eq!(body["data"]["charge_order_id"].as_u64().unwrap(), charge_order_id);
+    assert_eq!(
+        body["data"]["charge_order_id"].as_u64().unwrap(),
+        charge_order_id
+    );
 
     // 7. 端口预占：用户 B 同端口下单被拒（端口已被进行中订单占用）。
     let openid_b = format!("pay-b-{}", rand_suffix());
@@ -400,7 +412,10 @@ async fn checkout_confirm_and_late_refund_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "B 下单应成功: {body}");
-    let late_order_no = body["data"]["merchant_order_no"].as_str().unwrap().to_string();
+    let late_order_no = body["data"]["merchant_order_no"]
+        .as_str()
+        .unwrap()
+        .to_string();
     sqlx::query("UPDATE `charge_payment_intent` SET `expires_at` = DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 10 MINUTE) WHERE `merchant_order_no` = ?")
         .bind(&late_order_no)
         .execute(db.as_ref())
@@ -452,7 +467,10 @@ async fn wallet_recharge_full_chain() {
     .await;
     assert_eq!(status, StatusCode::OK, "充值申请应成功: {body}");
     assert_eq!(body["data"]["can_pay"], true);
-    let merchant_order_no = body["data"]["merchant_order_no"].as_str().unwrap().to_string();
+    let merchant_order_no = body["data"]["merchant_order_no"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // 2. 同请求重放：同支付单。
     let (status, replay) = req(
@@ -464,7 +482,10 @@ async fn wallet_recharge_full_chain() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "充值重放应成功: {replay}");
-    assert_eq!(replay["data"]["merchant_order_no"].as_str().unwrap(), merchant_order_no);
+    assert_eq!(
+        replay["data"]["merchant_order_no"].as_str().unwrap(),
+        merchant_order_no
+    );
 
     // 3. 模拟确认 → 余额到账（批 2 缝合：支付成功事务 → 钱包入账）。
     let (status, body) = req(
@@ -478,13 +499,12 @@ async fn wallet_recharge_full_chain() {
     assert_eq!(status, StatusCode::OK, "充值确认应成功: {body}");
     assert_eq!(body["data"]["replayed"], false);
 
-    let balance: i64 = sqlx::query_scalar(
-        "SELECT `balance_cents` FROM `wallet_account` WHERE `user_id` = ?",
-    )
-    .bind(user_id as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let balance: i64 =
+        sqlx::query_scalar("SELECT `balance_cents` FROM `wallet_account` WHERE `user_id` = ?")
+            .bind(user_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(balance, 500, "余额应到账 500 分");
     let txn_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM `wallet_txn` WHERE `user_id` = ? AND `direction` = 'in'",
@@ -505,13 +525,12 @@ async fn wallet_recharge_full_chain() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "充值重放确认应成功");
-    let balance2: i64 = sqlx::query_scalar(
-        "SELECT `balance_cents` FROM `wallet_account` WHERE `user_id` = ?",
-    )
-    .bind(user_id as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let balance2: i64 =
+        sqlx::query_scalar("SELECT `balance_cents` FROM `wallet_account` WHERE `user_id` = ?")
+            .bind(user_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(balance2, 500, "重放不得重复入账");
 
     // 5. C 端余额接口可见（批 2 路由缝合）。

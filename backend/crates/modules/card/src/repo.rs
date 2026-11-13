@@ -66,18 +66,39 @@ pub async fn find_card_charge(
     pool: &MySqlPool,
     charge_order_id: u64,
 ) -> Result<Option<CardChargeRow>, sqlx::Error> {
-    let row: Option<(u64, u64, String, Option<String>, i64, u16, u16, String, i64, serde_json::Value)> =
-        sqlx::query_as(
-            "SELECT `charge_order_id`, `card_id`, `port_code`, `active_port`, `paid_cents`, \
+    let row: Option<(
+        u64,
+        u64,
+        String,
+        Option<String>,
+        i64,
+        u16,
+        u16,
+        String,
+        i64,
+        serde_json::Value,
+    )> = sqlx::query_as(
+        "SELECT `charge_order_id`, `card_id`, `port_code`, `active_port`, `paid_cents`, \
                     `purchased_minutes`, `max_minutes`, CAST(`card_no` AS CHAR) AS `card_no`, \
                     `wallet_after_cents`, CAST(`package_json` AS JSON) \
              FROM `card_charge` WHERE `charge_order_id` = ?",
-        )
-        .bind(charge_order_id as i64)
-        .fetch_optional(pool)
-        .await?;
+    )
+    .bind(charge_order_id as i64)
+    .fetch_optional(pool)
+    .await?;
     Ok(row.map(
-        |(charge_order_id, card_id, port_code, active_port, paid_cents, purchased_minutes, max_minutes, card_no, wallet_after_cents, package_json)| {
+        |(
+            charge_order_id,
+            card_id,
+            port_code,
+            active_port,
+            paid_cents,
+            purchased_minutes,
+            max_minutes,
+            card_no,
+            wallet_after_cents,
+            package_json,
+        )| {
             CardChargeRow {
                 charge_order_id,
                 card_id,
@@ -96,11 +117,10 @@ pub async fn find_card_charge(
 
 /// 统计端口当前占用的刷卡会话数（旧版 ActiveSessionCount）。
 pub async fn active_session_count(pool: &MySqlPool, port_code: &str) -> Result<i64, sqlx::Error> {
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM `card_charge` WHERE `active_port` = ?",
-    )
-    .bind(port_code)
-    .fetch_one(pool)
-    .await?;
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM `card_charge` WHERE `active_port` = ?")
+            .bind(port_code)
+            .fetch_one(pool)
+            .await?;
     Ok(count)
 }

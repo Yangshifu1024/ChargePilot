@@ -7,7 +7,7 @@ use super::scan::{ScanError, ScanResult};
 use chargepilot_domain::charging_actual::Rule;
 use chargepilot_domain::charging_settle::{Estimate, Offer};
 use chargepilot_domain::money::{PayMethod, PaymentBizType, PaymentStatus};
-use chargepilot_domain::payment_intent::{intent_estimate, IntentError, IntentStatus};
+use chargepilot_domain::payment_intent::{IntentError, IntentStatus, intent_estimate};
 use chargepilot_platform::ids::SegmentAllocator;
 use sqlx::{Acquire, MySqlPool};
 
@@ -226,7 +226,9 @@ impl CheckoutService {
             .ok_or(CheckoutError::OfferUnavailable)?;
         let estimate = intent_estimate(&active.scheme, &package, selected.price_cents)?;
         let intent = self
-            .reserve(user_id, input, &port, &active, &selected, &package, &estimate)
+            .reserve(
+                user_id, input, &port, &active, &selected, &package, &estimate,
+            )
             .await?;
         self.prepare(intent).await
     }
@@ -370,8 +372,8 @@ impl CheckoutService {
             offer: offer.clone(),
             computed_at_unix_micros: chrono::Utc::now().timestamp_micros(),
         };
-        let snapshot_json = serde_json::to_string(&snapshot)
-            .map_err(|e| CheckoutError::Storage(e.to_string()))?;
+        let snapshot_json =
+            serde_json::to_string(&snapshot).map_err(|e| CheckoutError::Storage(e.to_string()))?;
         let merchant_order_no = chargepilot_mod_order::new_payment_order_no(&self.allocator)
             .await
             .map_err(|e| CheckoutError::Storage(e.to_string()))?;
@@ -572,10 +574,7 @@ impl CheckoutService {
 }
 
 /// ActiveRule → 快照外的临时 Rule（offers 只用编号与归属；spec 为空默认）。
-fn rule_stub(
-    active: &chargepilot_mod_pricing::metering::ActiveRule,
-    port: &ScanResult,
-) -> Rule {
+fn rule_stub(active: &chargepilot_mod_pricing::metering::ActiveRule, port: &ScanResult) -> Rule {
     Rule {
         id: active.rule_id,
         station_id: port.station_id,

@@ -16,8 +16,7 @@ pub trait PayProvider: Send + Sync {
 
 /// dyn 兼容的 Future 别名（与 wallet::recharge 同一模式）。
 pub mod futures_bounds {
-    pub type BoxFuture<'a, T> =
-        std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+    pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 }
 
 /// 预支付请求（旧版 PrepayRequest）。

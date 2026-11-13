@@ -22,7 +22,17 @@ pub async fn run_once(pool: &MySqlPool, limit: u32) -> anyhow::Result<usize> {
     .await?;
     let mut ok = 0usize;
     for (refund_id, refund_cents, payment_order_id, user_id, biz_id, biz_type) in rows {
-        match execute_one(pool, refund_id, refund_cents, payment_order_id, user_id, biz_id, &biz_type).await {
+        match execute_one(
+            pool,
+            refund_id,
+            refund_cents,
+            payment_order_id,
+            user_id,
+            biz_id,
+            &biz_type,
+        )
+        .await
+        {
             Ok(true) => ok += 1,
             Ok(false) => {}
             Err(e) => {

@@ -168,7 +168,6 @@ async fn seed_limited_admin(
     (username, role_id, admin_id)
 }
 
-
 /// 跨测试文件互斥锁：这些 flow 共享开发库，部分断言依赖全局计数
 /// （如"最后一个客户管理员"），用固定端口的 TCP 监听作锁串行各文件。
 fn global_flow_lock() -> std::net::TcpListener {
@@ -182,8 +181,8 @@ fn global_flow_lock() -> std::net::TcpListener {
 
 #[tokio::test]
 async fn permission_boundary_and_management() {
-
-    let _flow_lock = global_flow_lock();    let _guard = MGMT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _flow_lock = global_flow_lock();
+    let _guard = MGMT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some((router, db, alloc)) = build().await else {
         return;
     };
@@ -203,7 +202,7 @@ async fn permission_boundary_and_management() {
         ],
     )
     .await;
-    
+
     // 超管：SQL 直建 + 挂 customer_admin（内置角色，权限来自种子）
     let super_id = alloc.next_id().await.unwrap();
     let hash = chargepilot_platform::password::hash("super-pass-123").unwrap();
@@ -400,8 +399,8 @@ async fn permission_boundary_and_management() {
 
 #[tokio::test]
 async fn last_admin_self_protection() {
-
-    let _flow_lock = global_flow_lock();    let _guard = MGMT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _flow_lock = global_flow_lock();
+    let _guard = MGMT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some((router, db, alloc)) = build().await else {
         return;
     };
@@ -412,7 +411,7 @@ async fn last_admin_self_protection() {
     let hash = chargepilot_platform::password::hash("last-pass-1234").unwrap();
     sqlx::query("INSERT INTO `admin_user` (`id`, `username`, `password_hash`, `role_id`) VALUES (?, ?, ?, 1)")
         .bind(id).bind(&name).bind(hash).execute(db.as_ref()).await.unwrap();
-        let token = login(&router, &name, "last-pass-1234", &rand_ip())
+    let token = login(&router, &name, "last-pass-1234", &rand_ip())
         .await
         .expect("登录");
 

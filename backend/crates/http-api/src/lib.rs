@@ -9,8 +9,8 @@ pub mod admin_pricing_device;
 pub mod deps;
 pub mod device_and_user;
 pub mod user_auth;
-pub mod user_ops;
 pub mod user_charging;
+pub mod user_ops;
 pub mod user_payment;
 pub mod user_wallet;
 

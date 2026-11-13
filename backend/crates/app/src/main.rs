@@ -109,12 +109,13 @@ async fn serve() -> anyhow::Result<()> {
                 if token.is_cancelled() {
                     return Ok(());
                 }
-                if let Err(e) =
-                    chargepilot_mod_settlement::refund_executor::run_once(&db, 50).await
+                if let Err(e) = chargepilot_mod_settlement::refund_executor::run_once(&db, 50).await
                 {
                     tracing::warn!(error = %e, "退款执行失败");
                 }
-                token.sleep_or_cancelled(std::time::Duration::from_secs(15)).await;
+                token
+                    .sleep_or_cancelled(std::time::Duration::from_secs(15))
+                    .await;
             }
         }
     });
@@ -128,12 +129,12 @@ async fn serve() -> anyhow::Result<()> {
                 if token.is_cancelled() {
                     return Ok(());
                 }
-                if let Err(e) =
-                    chargepilot_mod_charging::sweeper::sweep_once(&db, 5).await
-                {
+                if let Err(e) = chargepilot_mod_charging::sweeper::sweep_once(&db, 5).await {
                     tracing::warn!(error = %e, "启动超时扫描失败");
                 }
-                token.sleep_or_cancelled(std::time::Duration::from_secs(30)).await;
+                token
+                    .sleep_or_cancelled(std::time::Duration::from_secs(30))
+                    .await;
             }
         }
     });
@@ -162,7 +163,9 @@ async fn serve() -> anyhow::Result<()> {
         jwt_secret: Arc::new(cfg.jwt_secret.clone()),
         allocator,
         exchanger: Arc::new(chargepilot_http_api::deps::exchanger_from_env()?),
-        wallet: Some(Arc::new(chargepilot_http_api::deps::WalletServices::build(db.clone()))),
+        wallet: Some(Arc::new(chargepilot_http_api::deps::WalletServices::build(
+            db.clone(),
+        ))),
         checkout: Some(payment_services.checkout),
         wallet_recharge: Some(payment_services.wallet_recharge),
         simulation_payment: payment_services.simulation_payment,

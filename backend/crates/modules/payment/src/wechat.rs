@@ -88,9 +88,7 @@ pub fn authorization_header(
     nonce: &str,
     body: &str,
 ) -> anyhow::Result<String> {
-    let message = format!(
-        "{method}\n{url_path}\n{timestamp}\n{nonce}\n{body}\n"
-    );
+    let message = format!("{method}\n{url_path}\n{timestamp}\n{nonce}\n{body}\n");
     let signature = sign_request(config, &message)?;
     Ok(format!(
         "WECHATPAY2-SHA256-RSA2048 mchid=\"{}\",nonce_str=\"{}\",signature=\"{}\",timestamp=\"{}\",serial_no=\"{}\"",
@@ -162,7 +160,11 @@ pub fn encrypt_sensitive(
     use rsa::Oaep;
     use rsa::sha2::Sha256;
     let padded = key
-        .encrypt(&mut rsa::rand_core::OsRng, Oaep::new::<Sha256>(), plaintext.as_bytes())
+        .encrypt(
+            &mut rsa::rand_core::OsRng,
+            Oaep::new::<Sha256>(),
+            plaintext.as_bytes(),
+        )
         .map_err(|e| anyhow::anyhow!("敏感信息加密失败: {e}"))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(padded))
 }
@@ -193,8 +195,8 @@ pub fn verify_and_decrypt_callback(
     )? {
         anyhow::bail!("回调验签失败");
     }
-    let payload: serde_json::Value = serde_json::from_str(body)
-        .map_err(|e| anyhow::anyhow!("回调报文不是合法 JSON: {e}"))?;
+    let payload: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| anyhow::anyhow!("回调报文不是合法 JSON: {e}"))?;
     let resource = &payload["resource"];
     let nonce = resource["nonce"]
         .as_str()
@@ -256,7 +258,10 @@ impl HttpExecutor for WechatHttpExecutor {
         Box<dyn std::future::Future<Output = Result<(u16, String), String>> + Send + 'a>,
     > {
         Box::pin(async {
-            Err("微信 APIv3 真实外呼未接入（上线前清单）：签名与解析已就绪，待 TLS 客户端接通".to_string())
+            Err(
+                "微信 APIv3 真实外呼未接入（上线前清单）：签名与解析已就绪，待 TLS 客户端接通"
+                    .to_string(),
+            )
         })
     }
 }
@@ -275,10 +280,8 @@ impl super::channel::PayProvider for WechatDirectProvider {
     fn prepay<'a>(
         &'a self,
         request: super::channel::PrepayRequest,
-    ) -> super::channel::futures_bounds::BoxFuture<
-        'a,
-        Result<super::channel::PrepayParams, String>,
-    > {
+    ) -> super::channel::futures_bounds::BoxFuture<'a, Result<super::channel::PrepayParams, String>>
+    {
         Box::pin(async move {
             let body = serde_json::json!({
                 "appid": self.appid,

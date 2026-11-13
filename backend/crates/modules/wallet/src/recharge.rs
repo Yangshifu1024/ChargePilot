@@ -5,7 +5,7 @@
 use super::{WalletError, account};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{Acquire, MySqlPool, MySqlConnection};
+use sqlx::{Acquire, MySqlConnection, MySqlPool};
 
 /// 充值支付能力（旧版 RechargePayments）：实现由 payment 模块注入（批 3 接线），
 /// 钱包不引用支付实现。
@@ -34,8 +34,7 @@ pub trait RechargePayments: Send + Sync {
 
 /// dyn 兼容的 Future 别名（与 events 层 EventDispatcher 同一模式）。
 pub mod futures_bounds {
-    pub type BoxFuture<'a, T> =
-        std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+    pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 }
 
 /// 返回支付编号、金额、状态与截止时间（旧版 RechargePayment）。
@@ -153,10 +152,8 @@ impl RechargeService {
             }
         };
         tx.commit().await?;
-        let can_pay = pay.status == "initiated"
-            && pay
-                .expires_at
-                .is_some_and(|t| t > chrono::Utc::now());
+        let can_pay =
+            pay.status == "initiated" && pay.expires_at.is_some_and(|t| t > chrono::Utc::now());
         let mut out = RechargeResult {
             request_id: input.request_id.clone(),
             payment_order_id: pay.id,

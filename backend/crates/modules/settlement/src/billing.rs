@@ -4,8 +4,8 @@
 //! 事件出站；计量/快照无效转人工，存储错误退避重试。
 
 use chargepilot_domain::charging_actual::{ActualMeter, EndMeter};
-use chargepilot_domain::charging_spec::BillingError;
 use chargepilot_domain::charging_settle::settle_session;
+use chargepilot_domain::charging_spec::BillingError;
 use chargepilot_domain::money::{ExecutionPolicy, PaymentBizType, PaymentStatus, RefundStatus};
 use sqlx::{Acquire, MySqlPool};
 
@@ -43,11 +43,23 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     .await?;
     let Some((order_no, user_id, payment_order_id)) = order else {
         // 订单不在 completed（异常回滚等）：任务转人工，避免空转。
-        defer_job(pool, charge_order_id, JobStatus::MANUAL_REVIEW, "订单不在已完成状态").await?;
+        defer_job(
+            pool,
+            charge_order_id,
+            JobStatus::MANUAL_REVIEW,
+            "订单不在已完成状态",
+        )
+        .await?;
         return Ok(false);
     };
     let Some(payment_order_id) = payment_order_id else {
-        defer_job(pool, charge_order_id, JobStatus::MANUAL_REVIEW, "订单缺少支付关联").await?;
+        defer_job(
+            pool,
+            charge_order_id,
+            JobStatus::MANUAL_REVIEW,
+            "订单缺少支付关联",
+        )
+        .await?;
         return Ok(false);
     };
     // 快照 rule（spec 为选中套餐的引擎规格）。
@@ -58,7 +70,13 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     .fetch_optional(pool)
     .await?;
     let Some(snapshot_json) = snapshot_json else {
-        defer_job(pool, charge_order_id, JobStatus::MANUAL_REVIEW, "订单缺少计费快照").await?;
+        defer_job(
+            pool,
+            charge_order_id,
+            JobStatus::MANUAL_REVIEW,
+            "订单缺少计费快照",
+        )
+        .await?;
         return Ok(false);
     };
     let snapshot: chargepilot_mod_payment::checkout::PricingSnapshot =
@@ -70,7 +88,13 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     .fetch_optional(pool)
     .await?;
     let Some(meter_json) = meter_json else {
-        defer_job(pool, charge_order_id, JobStatus::MANUAL_REVIEW, "订单缺少结束计量").await?;
+        defer_job(
+            pool,
+            charge_order_id,
+            JobStatus::MANUAL_REVIEW,
+            "订单缺少结束计量",
+        )
+        .await?;
         return Ok(false);
     };
     let mut meter: EndMeter =
@@ -86,10 +110,10 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     .fetch_optional(pool)
     .await?;
     if let Some((original_json, corrected_json)) = approved {
-        let original: serde_json::Value = serde_json::from_str(&original_json)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let corrected: serde_json::Value = serde_json::from_str(&corrected_json)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let original: serde_json::Value =
+            serde_json::from_str(&original_json).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let corrected: serde_json::Value =
+            serde_json::from_str(&corrected_json).map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let current = serde_json::json!({ "meter": meter });
         if current == original {
             if let Ok(corrected_meter) =
@@ -132,11 +156,23 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         match settle_session(&rule.spec, &actual, paid.as_ref(), None) {
             Ok(s) => s,
             Err(BillingError::MeterReview) | Err(BillingError::InvalidPricing) => {
-                defer_job(pool, charge_order_id, JobStatus::MANUAL_REVIEW, "实际计量或计费快照需核实").await?;
+                defer_job(
+                    pool,
+                    charge_order_id,
+                    JobStatus::MANUAL_REVIEW,
+                    "实际计量或计费快照需核实",
+                )
+                .await?;
                 return Ok(false);
             }
             Err(e) => {
-                defer_job(pool, charge_order_id, JobStatus::PENDING, &format!("计费暂不可用: {e}")).await?;
+                defer_job(
+                    pool,
+                    charge_order_id,
+                    JobStatus::PENDING,
+                    &format!("计费暂不可用: {e}"),
+                )
+                .await?;
                 return Ok(false);
             }
         }
@@ -161,16 +197,30 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     .await?;
     let Some((pay_status, paid_cents, refunded_cents, pay_id)) = payment else {
         tx.rollback().await?;
-        defer_job(pool, charge_order_id, JobStatus::MANUAL_REVIEW, "支付单缺失或类型不符").await?;
+        defer_job(
+            pool,
+            charge_order_id,
+            JobStatus::MANUAL_REVIEW,
+            "支付单缺失或类型不符",
+        )
+        .await?;
         return Ok(false);
     };
-    if !matches!(pay_status.as_str(), PaymentStatus::PAID | PaymentStatus::PARTIAL_REFUNDED)
-        || paid_cents <= 0
+    if !matches!(
+        pay_status.as_str(),
+        PaymentStatus::PAID | PaymentStatus::PARTIAL_REFUNDED
+    ) || paid_cents <= 0
         || refunded_cents < 0
         || refunded_cents > paid_cents
     {
         tx.rollback().await?;
-        defer_job(pool, charge_order_id, JobStatus::MANUAL_REVIEW, "支付单状态不允许结算").await?;
+        defer_job(
+            pool,
+            charge_order_id,
+            JobStatus::MANUAL_REVIEW,
+            "支付单状态不允许结算",
+        )
+        .await?;
         return Ok(false);
     }
 
@@ -267,7 +317,10 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
             .await?;
     }
     // 订单事件 + 出站事件（结算完成信号）。
-    let event_id = format!("B{}", &calculation_no[calculation_no.len().saturating_sub(32)..]);
+    let event_id = format!(
+        "B{}",
+        &calculation_no[calculation_no.len().saturating_sub(32)..]
+    );
     chargepilot_mod_order::append_event_in_tx(
         &mut *c,
         charge_order_id,

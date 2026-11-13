@@ -4,7 +4,7 @@
 //! 每一步幂等：重放同报文返回相同回执，不同报文报冲突。
 
 use chargepilot_domain::money::{PaymentBizType, PaymentStatus};
-use chargepilot_domain::payment_intent::{is_late_payment, IntentStatus};
+use chargepilot_domain::payment_intent::{IntentStatus, is_late_payment};
 use sqlx::{Acquire, MySqlPool};
 
 /// 已验签（或模拟确认）的支付事实（旧版 VerifiedPayment）。
@@ -89,8 +89,9 @@ pub async fn apply_payment(
     pool: &MySqlPool,
     payment: &VerifiedPayment,
 ) -> Result<ApplyResult, ApplyError> {
-    let paid_at = chrono::DateTime::<chrono::Utc>::from_timestamp_micros(payment.paid_at_unix_micros)
-        .ok_or(ApplyError::Conflict)?;
+    let paid_at =
+        chrono::DateTime::<chrono::Utc>::from_timestamp_micros(payment.paid_at_unix_micros)
+            .ok_or(ApplyError::Conflict)?;
     if payment.merchant_order_no.is_empty()
         || payment.transaction_id.is_empty()
         || payment.paid_cents <= 0
@@ -109,17 +110,33 @@ pub async fn apply_payment(
     let conn = tx.acquire().await?;
 
     // 先按渠道商户单号锁定支付订单，再按业务类型分流。
-    let order: Option<(u64, String, u64, u64, i64, String, Option<String>, chrono::NaiveDate)> =
-        sqlx::query_as(
-            "SELECT `id`, `biz_type`, `biz_id`, `user_id`, `total_cents`, `status`, \
+    let order: Option<(
+        u64,
+        String,
+        u64,
+        u64,
+        i64,
+        String,
+        Option<String>,
+        chrono::NaiveDate,
+    )> = sqlx::query_as(
+        "SELECT `id`, `biz_type`, `biz_id`, `user_id`, `total_cents`, `status`, \
                     `wechat_transaction_id`, `created_month` \
              FROM `payment_order` WHERE `order_no` = ? FOR UPDATE",
-        )
-        .bind(&payment.merchant_order_no)
-        .fetch_optional(&mut *conn)
-        .await?;
-    let Some((order_id, biz_type, biz_id, order_user, total_cents, order_status, existing_txn, _month)) =
-        order
+    )
+    .bind(&payment.merchant_order_no)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((
+        order_id,
+        biz_type,
+        biz_id,
+        order_user,
+        total_cents,
+        order_status,
+        existing_txn,
+        _month,
+    )) = order
     else {
         return Err(ApplyError::Conflict);
     };
@@ -143,9 +160,15 @@ pub async fn apply_payment(
                 return Err(ApplyError::Conflict);
             }
             tx.commit().await?;
-            return Ok(ApplyResult { replayed: true, ..Default::default() });
+            return Ok(ApplyResult {
+                replayed: true,
+                ..Default::default()
+            });
         }
-        if order_status != PaymentStatus::INITIATED || previous.is_some() || total_cents != payment.paid_cents {
+        if order_status != PaymentStatus::INITIATED
+            || previous.is_some()
+            || total_cents != payment.paid_cents
+        {
             return Err(ApplyError::Conflict);
         }
         sqlx::query(
@@ -199,18 +222,42 @@ pub async fn apply_payment(
     }
 
     // 锁定支付意图并核对归属、付款人与金额。
-    let intent: Option<(String, u64, u64, String, i64, i64, u8, u16, i64, String, Option<u64>, chrono::DateTime<chrono::Utc>)> =
-        sqlx::query_as(
-            "SELECT CAST(`intent_id` AS CHAR), `user_id`, `payment_order_id`, CAST(`openid` AS CHAR), \
+    let intent: Option<(
+        String,
+        u64,
+        u64,
+        String,
+        i64,
+        i64,
+        u8,
+        u16,
+        i64,
+        String,
+        Option<u64>,
+        chrono::DateTime<chrono::Utc>,
+    )> = sqlx::query_as(
+        "SELECT CAST(`intent_id` AS CHAR), `user_id`, `payment_order_id`, CAST(`openid` AS CHAR), \
                     `electric_cents`, `service_cents`, `charge_mode`, `charge_quantity`, \
                     `total_cents`, `port_code`, `charge_order_id`, `expires_at` \
              FROM `charge_payment_intent` WHERE `merchant_order_no` = ? FOR UPDATE",
-        )
-        .bind(&payment.merchant_order_no)
-        .fetch_optional(&mut *conn)
-        .await?;
-    let Some((intent_id, intent_user, intent_payment_id, intent_openid, _e_cents, _s_cents, charge_mode, charge_quantity, intent_total, port_code, intent_order_id, expires_at)) =
-        intent
+    )
+    .bind(&payment.merchant_order_no)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((
+        intent_id,
+        intent_user,
+        intent_payment_id,
+        intent_openid,
+        _e_cents,
+        _s_cents,
+        charge_mode,
+        charge_quantity,
+        intent_total,
+        port_code,
+        intent_order_id,
+        expires_at,
+    )) = intent
     else {
         return Err(ApplyError::Conflict);
     };
@@ -249,14 +296,19 @@ pub async fn apply_payment(
         }
         // 迟到退款登记后的重放：意图仍 refund_required → 原样返回。
         if intent_order_id.is_none() {
-            let current_status: String =
-                sqlx::query_scalar("SELECT `status` FROM `charge_payment_intent` WHERE `intent_id` = ?")
-                    .bind(&intent_id)
-                    .fetch_one(&mut *conn)
-                    .await?;
+            let current_status: String = sqlx::query_scalar(
+                "SELECT `status` FROM `charge_payment_intent` WHERE `intent_id` = ?",
+            )
+            .bind(&intent_id)
+            .fetch_one(&mut *conn)
+            .await?;
             if current_status == IntentStatus::REFUND_REQUIRED {
                 tx.commit().await?;
-                return Ok(ApplyResult { refund_required: true, replayed: true, ..Default::default() });
+                return Ok(ApplyResult {
+                    refund_required: true,
+                    replayed: true,
+                    ..Default::default()
+                });
             }
             return Err(ApplyError::Conflict);
         }
@@ -269,7 +321,12 @@ pub async fn apply_payment(
         .fetch_one(&mut *conn)
         .await?;
         tx.commit().await?;
-        return Ok(ApplyResult { charge_order_id, charge_order_no: order_no, replayed: true, refund_required: false });
+        return Ok(ApplyResult {
+            charge_order_id,
+            charge_order_no: order_no,
+            replayed: true,
+            refund_required: false,
+        });
     }
     // 首次处理：必须 initiated 且未关联业务、摘要未登记。
     if order_status != PaymentStatus::INITIATED || biz_id != 0 || previous.is_some() {
@@ -305,7 +362,11 @@ pub async fn apply_payment(
     }
 
     // 迟到支付：登记自动退款与出站事件，不启动充电（旧版 queueLatePaymentRefund）。
-    let late = is_late_payment(now.timestamp_micros(), payment.paid_at_unix_micros, expires_at.timestamp_micros());
+    let late = is_late_payment(
+        now.timestamp_micros(),
+        payment.paid_at_unix_micros,
+        expires_at.timestamp_micros(),
+    );
     if late {
         // 意图 → refund_required；退款编号由摘要稳定派生，失败整体回滚。
         let intent_updated = sqlx::query(
@@ -354,22 +415,23 @@ pub async fn apply_payment(
         .await
         .map_err(|e| ApplyError::Storage(e.to_string()))?;
         tx.commit().await?;
-        return Ok(ApplyResult { refund_required: true, ..Default::default() });
+        return Ok(ApplyResult {
+            refund_required: true,
+            ..Default::default()
+        });
     }
 
     // 支付确认到账：创建充电订单（paid）并冻结快照（旧版首段；券核销阶段 05 接入）。
-    let device_id: String = sqlx::query_scalar(
-        "SELECT `device_id` FROM `charge_payment_intent` WHERE `intent_id` = ?",
-    )
-    .bind(&intent_id)
-    .fetch_one(&mut *conn)
-    .await?;
-    let port_no: u8 = sqlx::query_scalar(
-        "SELECT `port_no` FROM `charge_payment_intent` WHERE `intent_id` = ?",
-    )
-    .bind(&intent_id)
-    .fetch_one(&mut *conn)
-    .await?;
+    let device_id: String =
+        sqlx::query_scalar("SELECT `device_id` FROM `charge_payment_intent` WHERE `intent_id` = ?")
+            .bind(&intent_id)
+            .fetch_one(&mut *conn)
+            .await?;
+    let port_no: u8 =
+        sqlx::query_scalar("SELECT `port_no` FROM `charge_payment_intent` WHERE `intent_id` = ?")
+            .bind(&intent_id)
+            .fetch_one(&mut *conn)
+            .await?;
     let charge_no = chargepilot_mod_order::new_charge_order_no_tx(
         &mut *conn,
         payment.paid_at_unix_micros,
@@ -469,11 +531,15 @@ pub async fn apply_payment(
     .await
     .map_err(|e| ApplyError::Storage(e.to_string()))?;
     tx.commit().await?;
-    Ok(ApplyResult { charge_order_id, charge_order_no: charge_no, replayed: false, refund_required: false })
+    Ok(ApplyResult {
+        charge_order_id,
+        charge_order_no: charge_no,
+        replayed: false,
+        refund_required: false,
+    })
 }
 
 /// 迟到支付退款编号（旧版 stableRefundNo：WR 前缀 + 摘要前 16 字节 hex）。
 fn late_refund_no(digest: &str) -> String {
     format!("WR{}", &digest[..32.min(digest.len())])
 }
-

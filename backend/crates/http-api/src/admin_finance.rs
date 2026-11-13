@@ -5,10 +5,10 @@
 use crate::admin_auth::ops_error;
 use crate::admin_guard::AdminGuard;
 use crate::deps::ApiDeps;
+use axum::Json as AxumJson;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use axum::Json as AxumJson;
 use chargepilot_mod_ops::OpsError;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
@@ -66,10 +66,7 @@ async fn list_wallet_risks(
         )
         .await
     {
-        Ok((items, total)) => httpx::ok(
-            json!({"items": items, "total": total}),
-            &rid,
-        ),
+        Ok((items, total)) => httpx::ok(json!({"items": items, "total": total}), &rid),
         Err(e) => risk_error(e, &rid),
     }
 }
@@ -153,8 +150,12 @@ fn risk_error(e: chargepilot_mod_wallet::WalletError, rid: &str) -> Response {
     use chargepilot_mod_wallet::WalletError as E;
     match &e {
         E::Forbidden => ops_error(OpsError::Permission, rid),
-        E::RequestConflict | E::NotFound => ops_error(OpsError::bad_input("业务状态冲突".to_string()), rid),
-        E::Frozen | E::InsufficientBalance => ops_error(OpsError::bad_input("业务状态冲突".to_string()), rid),
+        E::RequestConflict | E::NotFound => {
+            ops_error(OpsError::bad_input("业务状态冲突".to_string()), rid)
+        }
+        E::Frozen | E::InsufficientBalance => {
+            ops_error(OpsError::bad_input("业务状态冲突".to_string()), rid)
+        }
         _ => {
             tracing::warn!(error = %e, "风控请求处理失败");
             let api = chargepilot_platform::error::ApiError::from(anyhow::anyhow!(e.to_string()));

@@ -3,7 +3,7 @@
 
 use crate::charging_cost::cost;
 use crate::charging_spec::{
-    spec_is_uniform_over, validate_spec, BillingError, ChargeMode, MAX_SLICES, Spec, Usage,
+    BillingError, ChargeMode, MAX_SLICES, Spec, Usage, spec_is_uniform_over, validate_spec,
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -130,9 +130,7 @@ pub fn usage_from_meter(rule: &Rule, meter: &ActualMeter) -> Result<Usage, Billi
         channel: None,
     };
     // 费率不变时可直接按总电量计价；费率变化时须有边界读数，不能按时长分摊电量。
-    if meter.segments.is_empty()
-        && !spec_is_uniform_over(&rule.spec, started_at, ended_at)
-    {
+    if meter.segments.is_empty() && !spec_is_uniform_over(&rule.spec, started_at, ended_at) {
         return Err(BillingError::MeterReview);
     }
     let mut total_wh = 0u64;
@@ -174,7 +172,10 @@ pub fn usage_from_meter(rule: &Rule, meter: &ActualMeter) -> Result<Usage, Billi
 
 /// 按 rule 计算实测费用；规则无效返回 InvalidPricing，计量缺失或矛盾返回 MeterReview。
 /// 电量计费跨越不同费率时必须有分段读数，不按时长分配电量（旧版 PriceActual）。
-pub fn price_actual(rule: &Rule, meter: &ActualMeter) -> Result<crate::charging_cost::Fee, BillingError> {
+pub fn price_actual(
+    rule: &Rule,
+    meter: &ActualMeter,
+) -> Result<crate::charging_cost::Fee, BillingError> {
     let usage = usage_from_meter(rule, meter)?;
     cost(&rule.spec, &usage)
 }

@@ -32,11 +32,12 @@ impl StartDispatcher {
             .and_then(|v| v.as_u64())
             .ok_or_else(|| anyhow::anyhow!("事件载荷缺少 charge_order_id"))?;
         // 幂等：已有命令直接确认。
-        let existing: Option<(String,)> =
-            sqlx::query_as("SELECT CAST(`command_id` AS CHAR) FROM `charge_command` WHERE `charge_order_id` = ?")
-                .bind(charge_order_id as i64)
-                .fetch_optional(&self.pool)
-                .await?;
+        let existing: Option<(String,)> = sqlx::query_as(
+            "SELECT CAST(`command_id` AS CHAR) FROM `charge_command` WHERE `charge_order_id` = ?",
+        )
+        .bind(charge_order_id as i64)
+        .fetch_optional(&self.pool)
+        .await?;
         if existing.is_some() {
             return Ok(());
         }
@@ -96,9 +97,16 @@ impl StartDispatcher {
             Err(e) => return Err(e.into()),
             Ok(_) => {}
         }
-        chargepilot_mod_order::occupy_port_tx(&mut *conn, &device_id, port_no, id, user_id, chrono::Utc::now())
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        chargepilot_mod_order::occupy_port_tx(
+            &mut *conn,
+            &device_id,
+            port_no,
+            id,
+            user_id,
+            chrono::Utc::now(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         // 命令落库即标记已发送；设备确认随回执推进（旧版 sent_at 语义）。
         sqlx::query("UPDATE `charge_command` SET `status` = 'sent', `sent_at` = UTC_TIMESTAMP(3) WHERE `command_id` = ?")
             .bind(&command_id)

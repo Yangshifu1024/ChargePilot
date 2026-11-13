@@ -15,14 +15,16 @@ impl chargepilot_mod_wallet::refund::RefundRecorder for RefundRecorder {
         &'a self,
         tx: &'a mut MySqlConnection,
         payment_id: u64,
-    ) -> chargepilot_mod_wallet::recharge::futures_bounds::BoxFuture<'a, Result<i64, WalletError>> {
+    ) -> chargepilot_mod_wallet::recharge::futures_bounds::BoxFuture<'a, Result<i64, WalletError>>
+    {
         Box::pin(RefundRecorder::reserved_in_tx(self, tx, payment_id))
     }
     fn create_in_tx<'a>(
         &'a self,
         tx: &'a mut MySqlConnection,
         draft: RefundDraft,
-    ) -> chargepilot_mod_wallet::recharge::futures_bounds::BoxFuture<'a, Result<u64, WalletError>> {
+    ) -> chargepilot_mod_wallet::recharge::futures_bounds::BoxFuture<'a, Result<u64, WalletError>>
+    {
         Box::pin(RefundRecorder::create_in_tx(self, tx, draft))
     }
 }

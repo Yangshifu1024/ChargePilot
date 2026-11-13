@@ -1,7 +1,7 @@
 //! C 端钱包查询组合：余额、流水、充值付款条件与退款进度（旧版 query.go 对齐）。
 //! 只查询调用方用户的数据；未开户返回可用的零余额视图，不以流水重算余额。
 
-use super::{account, Page, WalletError};
+use super::{Page, WalletError, account};
 use serde::Serialize;
 use sqlx::MySqlPool;
 
@@ -82,9 +82,7 @@ pub async fn transactions(
         .bind(offset)
         .fetch_all(pool)
         .await?;
-    let count_sql = format!(
-        "SELECT COUNT(*) FROM `wallet_txn` WHERE `user_id` = ?{dir_clause}"
-    );
+    let count_sql = format!("SELECT COUNT(*) FROM `wallet_txn` WHERE `user_id` = ?{dir_clause}");
     let (total,): (i64,) = sqlx::query_as(&count_sql)
         .bind(user_id as i64)
         .fetch_one(pool)
@@ -134,12 +132,11 @@ pub async fn recharges(
     .bind(offset)
     .fetch_all(pool)
     .await?;
-    let (total,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM `wallet_recharge_request` WHERE `user_id` = ?",
-    )
-    .bind(user_id as i64)
-    .fetch_one(pool)
-    .await?;
+    let (total,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM `wallet_recharge_request` WHERE `user_id` = ?")
+            .bind(user_id as i64)
+            .fetch_one(pool)
+            .await?;
     let mut items = items;
     for r in items.iter_mut() {
         r.can_pay = r.status == "initiated"
@@ -213,12 +210,11 @@ pub async fn refunds(
     .bind(offset)
     .fetch_all(pool)
     .await?;
-    let (total,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM `wallet_refund_request` WHERE `user_id` = ?",
-    )
-    .bind(user_id as i64)
-    .fetch_one(pool)
-    .await?;
+    let (total,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM `wallet_refund_request` WHERE `user_id` = ?")
+            .bind(user_id as i64)
+            .fetch_one(pool)
+            .await?;
     let ids: Vec<String> = requests.iter().map(|r| r.0.clone()).collect();
     if ids.is_empty() {
         return Ok(Page {
@@ -237,7 +233,10 @@ pub async fn refunds(
          FROM `wallet_refund_part` p JOIN `refund_record` rr ON rr.`id` = p.`refund_record_id` \
          WHERE p.`request_id` IN ({placeholders}) ORDER BY rr.`id`"
     );
-    let mut parts_q = sqlx::query_as::<_, (String, String, i64, String, Option<String>, Option<String>)>(&parts_sql);
+    let mut parts_q = sqlx::query_as::<
+        _,
+        (String, String, i64, String, Option<String>, Option<String>),
+    >(&parts_sql);
     for id in &ids {
         parts_q = parts_q.bind(id);
     }
@@ -274,11 +273,8 @@ pub async fn refunds(
     for id in &ids {
         link_q = link_q.bind(id);
     }
-    let link_rows: std::collections::HashMap<String, i64> = link_q
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .collect();
+    let link_rows: std::collections::HashMap<String, i64> =
+        link_q.fetch_all(pool).await?.into_iter().collect();
     let mut items = Vec::with_capacity(requests.len());
     for (request_id, amount_cents, reason, created_at) in requests {
         let parts: Vec<RefundPartRow> = part_rows

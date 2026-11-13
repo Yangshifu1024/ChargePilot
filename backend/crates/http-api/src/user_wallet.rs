@@ -2,10 +2,10 @@
 //! 充值申请入口（POST /wallet/recharge）依赖支付渠道准备，随批 3 接线。
 
 use crate::deps::ApiDeps;
+use axum::Json as AxumJson;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use axum::Json as AxumJson;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::json;
@@ -22,9 +22,15 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
             "/api/v1/user/wallet/recharges",
             axum::routing::get(wallet_recharges),
         )
-        .route("/api/v1/user/wallet/refunds", axum::routing::get(wallet_refunds))
+        .route(
+            "/api/v1/user/wallet/refunds",
+            axum::routing::get(wallet_refunds),
+        )
         // 旧版契约：申请入口为单数 /refund，查询为复数 /refunds。
-        .route("/api/v1/user/wallet/refund", axum::routing::post(wallet_refund))
+        .route(
+            "/api/v1/user/wallet/refund",
+            axum::routing::post(wallet_refund),
+        )
 }
 
 fn rid_of(headers: &HeaderMap) -> String {
@@ -39,7 +45,10 @@ struct Paging {
 }
 
 fn paging(q: &Paging) -> (u32, u32) {
-    (q.page.unwrap_or(1).max(1) as u32, q.page_size.unwrap_or(20).clamp(1, 100) as u32)
+    (
+        q.page.unwrap_or(1).max(1) as u32,
+        q.page_size.unwrap_or(20).clamp(1, 100) as u32,
+    )
 }
 
 /// 钱包域错误 → HTTP（码值与文案沿用旧版字面量契约）。
@@ -63,10 +72,7 @@ pub fn wallet_error(e: chargepilot_mod_wallet::WalletError, rid: &str) -> Respon
     }
 }
 
-async fn wallet_balance(
-    State(deps): State<Arc<ApiDeps>>,
-    headers: HeaderMap,
-) -> Response {
+async fn wallet_balance(State(deps): State<Arc<ApiDeps>>, headers: HeaderMap) -> Response {
     let rid = rid_of(&headers);
     let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
         Ok(id) => id,

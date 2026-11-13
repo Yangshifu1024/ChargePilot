@@ -2,7 +2,7 @@
 //! 退款执行器接手）、仪表审核修正重排队与人工最终金额入账。
 
 use chargepilot_platform::ids::SegmentAllocator;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 fn env_or_skip(name: &str) -> Option<String> {
@@ -67,7 +67,11 @@ async fn seed_completed_charge(
     let charge_order_id = alloc.next_id().await.unwrap();
     let user_id = alloc.next_id().await.unwrap();
     let device_id = format!("dev-s7-{}", rand_suffix());
-    let order_no = format!("C{}{}01", chrono::Utc::now().format("%Y%m%d%H%M%S"), device_id);
+    let order_no = format!(
+        "C{}{}01",
+        chrono::Utc::now().format("%Y%m%d%H%M%S"),
+        device_id
+    );
     let month = chargepilot_mod_order::month_start_of(chrono::Utc::now());
     let now = chrono::Utc::now();
     sqlx::query("INSERT INTO `station` (`id`, `name`, `longitude`, `latitude`, `status`) VALUES (?, '账单测试站', 120.1, 30.2, 'active')")
@@ -127,8 +131,13 @@ async fn seed_completed_charge(
     sqlx::query("INSERT INTO `charge_end_receipt` (`charge_order_id`, `stop_command_id`, `meter_json`) VALUES (?, ?, CAST(? AS JSON))")
         .bind(charge_order_id as i64).bind(format!("stop-{charge_order_id}"))
         .bind(meter.to_string()).execute(db).await.unwrap();
-    sqlx::query("INSERT INTO `charge_billing_job` (`charge_order_id`, `status`) VALUES (?, 'pending')")
-        .bind(charge_order_id as i64).execute(db).await.unwrap();
+    sqlx::query(
+        "INSERT INTO `charge_billing_job` (`charge_order_id`, `status`) VALUES (?, 'pending')",
+    )
+    .bind(charge_order_id as i64)
+    .execute(db)
+    .await
+    .unwrap();
     (charge_order_id, payment_id, user_id, rule_id)
 }
 
@@ -136,39 +145,63 @@ async fn seed_completed_charge(
 async fn cleanup(db: &sqlx::MySqlPool, ids: &[(u64, u64, u64, u64)]) {
     for (order_id, payment_id, user_id, rule_id) in ids {
         for table in [
-            "charge_bill", "charge_manual_settlement", "charge_meter_review",
-            "charge_fee_receipt", "charge_billing_job", "charge_end_receipt",
-            "charge_order_pricing", "charge_order",
+            "charge_bill",
+            "charge_manual_settlement",
+            "charge_meter_review",
+            "charge_fee_receipt",
+            "charge_billing_job",
+            "charge_end_receipt",
+            "charge_order_pricing",
+            "charge_order",
         ] {
-            let _ = sqlx::query(&format!("DELETE FROM `{table}` WHERE `charge_order_id` = ?"))
-                .bind(*order_id as i64)
-                .execute(db)
-                .await;
+            let _ = sqlx::query(&format!(
+                "DELETE FROM `{table}` WHERE `charge_order_id` = ?"
+            ))
+            .bind(*order_id as i64)
+            .execute(db)
+            .await;
         }
-        let _ = sqlx::query("DELETE br FROM `charge_bill_read` br \
-             JOIN `charge_bill` b ON b.`id` = br.`bill_id` WHERE b.`charge_order_id` = ?")
-            .bind(*order_id as i64).execute(db).await;
+        let _ = sqlx::query(
+            "DELETE br FROM `charge_bill_read` br \
+             JOIN `charge_bill` b ON b.`id` = br.`bill_id` WHERE b.`charge_order_id` = ?",
+        )
+        .bind(*order_id as i64)
+        .execute(db)
+        .await;
         let _ = sqlx::query("DELETE x FROM `refund_rejection` x \
              JOIN `refund_record` r ON r.`id` = x.`refund_record_id` WHERE r.`payment_order_id` = ?")
             .bind(*payment_id as i64).execute(db).await;
         let _ = sqlx::query("DELETE x FROM `refund_review` x \
              JOIN `refund_record` r ON r.`id` = x.`refund_record_id` WHERE r.`payment_order_id` = ?")
             .bind(*payment_id as i64).execute(db).await;
-        let _ = sqlx::query("DELETE x FROM `manual_refund_request` x \
+        let _ = sqlx::query(
+            "DELETE x FROM `manual_refund_request` x \
              JOIN `refund_record` r ON CAST(r.`refund_no` AS CHAR) = x.`refund_no` \
-             WHERE r.`payment_order_id` = ?")
-            .bind(*payment_id as i64).execute(db).await;
+             WHERE r.`payment_order_id` = ?",
+        )
+        .bind(*payment_id as i64)
+        .execute(db)
+        .await;
         let _ = sqlx::query("DELETE FROM `refund_record` WHERE `payment_order_id` = ?")
-            .bind(*payment_id as i64).execute(db).await;
+            .bind(*payment_id as i64)
+            .execute(db)
+            .await;
         let _ = sqlx::query("DELETE FROM `payment_order` WHERE `id` = ?")
-            .bind(*payment_id as i64).execute(db).await;
+            .bind(*payment_id as i64)
+            .execute(db)
+            .await;
         let _ = sqlx::query("DELETE FROM `user` WHERE `id` = ?")
-            .bind(*user_id as i64).execute(db).await;
+            .bind(*user_id as i64)
+            .execute(db)
+            .await;
         let _ = sqlx::query("DELETE FROM `pricing_rule` WHERE `id` = ?")
-            .bind(*rule_id as i64).execute(db).await;
+            .bind(*rule_id as i64)
+            .execute(db)
+            .await;
     }
     let _ = sqlx::query("DELETE FROM `station` WHERE `name` = '账单测试站'")
-        .execute(db).await;
+        .execute(db)
+        .await;
 }
 
 #[tokio::test]
@@ -204,13 +237,12 @@ async fn bill_issue_and_manual_refund_review() {
         .expect("重复签发应成功")
         .expect("应复用既有账单");
     assert_eq!(again.id, bill.id, "重复签发应复用同一账单");
-    let bill_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM `charge_bill` WHERE `charge_order_id` = ?",
-    )
-    .bind(order_id as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let bill_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM `charge_bill` WHERE `charge_order_id` = ?")
+            .bind(order_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(bill_count, 1);
     let event: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM `charge_event_log` WHERE `charge_order_id` = ? AND `event` = 'bill_issued'",
@@ -225,17 +257,23 @@ async fn bill_issue_and_manual_refund_review() {
         .await
         .expect("已读应成功");
     assert!(read);
-    let other: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM `charge_bill_read` WHERE `bill_id` = ?")
-        .bind(bill.id as i64)
-        .fetch_one(db.as_ref())
-        .await
-        .unwrap();
+    let other: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM `charge_bill_read` WHERE `bill_id` = ?")
+            .bind(bill.id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(other, 1);
 
     // 3. 人工退款登记（订单保持 completed：实费封顶无余款退款在途）。
     let request_id = chargepilot_platform::ids::uuid_v4();
     let (created, refund_no) = chargepilot_mod_settlement::refund_admin::request_manual_refund(
-        db.as_ref(), 9001, order_id, &request_id, 50, "测试人工退款",
+        db.as_ref(),
+        9001,
+        order_id,
+        &request_id,
+        50,
+        "测试人工退款",
     )
     .await
     .expect("人工退款登记应成功");
@@ -243,7 +281,12 @@ async fn bill_issue_and_manual_refund_review() {
     assert!(refund_no.starts_with("MR"));
     // 同请求重放。
     let (replayed, no2) = chargepilot_mod_settlement::refund_admin::request_manual_refund(
-        db.as_ref(), 9001, order_id, &request_id, 50, "测试人工退款",
+        db.as_ref(),
+        9001,
+        order_id,
+        &request_id,
+        50,
+        "测试人工退款",
     )
     .await
     .expect("重放应成功");
@@ -251,39 +294,83 @@ async fn bill_issue_and_manual_refund_review() {
     assert_eq!(no2, refund_no);
     // 内容不同冲突。
     let err = chargepilot_mod_settlement::refund_admin::request_manual_refund(
-        db.as_ref(), 9001, order_id, &request_id, 60, "测试人工退款",
+        db.as_ref(),
+        9001,
+        order_id,
+        &request_id,
+        60,
+        "测试人工退款",
     )
     .await
     .expect_err("内容不同应冲突");
-    assert_eq!(err, chargepilot_mod_settlement::refund_admin::RefundAdminError::Conflict);
+    assert_eq!(
+        err,
+        chargepilot_mod_settlement::refund_admin::RefundAdminError::Conflict
+    );
 
     // 4. 双人审核：第一审 → awaiting_second；第二审（不同人）→ Approved 转 automatic。
     let r1 = chargepilot_mod_settlement::refund_admin::review_manual_refund(
-        db.as_ref(), 9001, &refund_no, true, "同意退款", "", Some(true),
+        db.as_ref(),
+        9001,
+        &refund_no,
+        true,
+        "同意退款",
+        "",
+        Some(true),
     )
     .await
     .expect("首审应成功");
-    assert_eq!(r1, chargepilot_mod_settlement::refund_admin::ReviewOutcome::AwaitingSecond);
+    assert_eq!(
+        r1,
+        chargepilot_mod_settlement::refund_admin::ReviewOutcome::AwaitingSecond
+    );
     // 同人二审冲突。
     let err = chargepilot_mod_settlement::refund_admin::review_manual_refund(
-        db.as_ref(), 9001, &refund_no, true, "再同意", "", Some(true),
+        db.as_ref(),
+        9001,
+        &refund_no,
+        true,
+        "再同意",
+        "",
+        Some(true),
     )
     .await
     .expect_err("同人二审应冲突");
-    assert_eq!(err, chargepilot_mod_settlement::refund_admin::RefundAdminError::Conflict);
+    assert_eq!(
+        err,
+        chargepilot_mod_settlement::refund_admin::RefundAdminError::Conflict
+    );
     // 首审人权限失效冲突。
     let err = chargepilot_mod_settlement::refund_admin::review_manual_refund(
-        db.as_ref(), 9002, &refund_no, true, "同意", "", Some(false),
+        db.as_ref(),
+        9002,
+        &refund_no,
+        true,
+        "同意",
+        "",
+        Some(false),
     )
     .await
     .expect_err("首审人权限失效应冲突");
-    assert_eq!(err, chargepilot_mod_settlement::refund_admin::RefundAdminError::Conflict);
+    assert_eq!(
+        err,
+        chargepilot_mod_settlement::refund_admin::RefundAdminError::Conflict
+    );
     let r2 = chargepilot_mod_settlement::refund_admin::review_manual_refund(
-        db.as_ref(), 9002, &refund_no, true, "复核同意", "", Some(true),
+        db.as_ref(),
+        9002,
+        &refund_no,
+        true,
+        "复核同意",
+        "",
+        Some(true),
     )
     .await
     .expect("二审应成功");
-    assert_eq!(r2, chargepilot_mod_settlement::refund_admin::ReviewOutcome::Approved);
+    assert_eq!(
+        r2,
+        chargepilot_mod_settlement::refund_admin::ReviewOutcome::Approved
+    );
     let (policy, status): (String, String) = sqlx::query_as(
         "SELECT `execution_policy`, `status` FROM `refund_record` WHERE CAST(`refund_no` AS CHAR) = ?",
     )
@@ -291,20 +378,23 @@ async fn bill_issue_and_manual_refund_review() {
     .fetch_one(db.as_ref())
     .await
     .unwrap();
-    assert_eq!((policy, status), ("automatic".to_string(), "pending".to_string()), "双审通过应转 automatic 排队");
+    assert_eq!(
+        (policy, status),
+        ("automatic".to_string(), "pending".to_string()),
+        "双审通过应转 automatic 排队"
+    );
 
     // 5. 退款执行器接手：50 分退清 → 支付单 partial_refunded（100 分消费封顶）。
     let executed = chargepilot_mod_settlement::refund_executor::run_once(db.as_ref(), 50)
         .await
         .expect("执行应成功");
     assert!(executed >= 1);
-    let refunded: i64 = sqlx::query_scalar(
-        "SELECT `refunded_cents` FROM `payment_order` WHERE `id` = ?",
-    )
-    .bind(payment_id as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let refunded: i64 =
+        sqlx::query_scalar("SELECT `refunded_cents` FROM `payment_order` WHERE `id` = ?")
+            .bind(payment_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(refunded, 50);
 
     cleanup(db.as_ref(), &[(order_id, payment_id, user_id, rule_id)]).await;
@@ -344,13 +434,12 @@ async fn meter_review_and_manual_amount() {
         .await
         .expect("异常计量应安全处理");
     assert!(!handled, "应转人工");
-    let job: String = sqlx::query_scalar(
-        "SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ?",
-    )
-    .bind(order_id as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let job: String =
+        sqlx::query_scalar("SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ?")
+            .bind(order_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(job, "manual_review");
 
     // 提案：修正分段守恒（合计 200Wh，与总量一致）。
@@ -380,24 +469,38 @@ async fn meter_review_and_manual_amount() {
     assert!(review_id > 0);
     // 首审人二审冲突。
     let err = chargepilot_mod_settlement::meter_review::review_meter(
-        db.as_ref(), 8001, order_id, review_id, true, "", Some(true),
+        db.as_ref(),
+        8001,
+        order_id,
+        review_id,
+        true,
+        "",
+        Some(true),
     )
     .await
     .expect_err("首审人二审应冲突");
-    assert_eq!(err, chargepilot_mod_settlement::meter_review::ReviewError::Conflict);
+    assert_eq!(
+        err,
+        chargepilot_mod_settlement::meter_review::ReviewError::Conflict
+    );
     // 二审批准 → 任务重排队。
     chargepilot_mod_settlement::meter_review::review_meter(
-        db.as_ref(), 8002, order_id, review_id, true, "", Some(true),
+        db.as_ref(),
+        8002,
+        order_id,
+        review_id,
+        true,
+        "",
+        Some(true),
     )
     .await
     .expect("二审批准应成功");
-    let job: String = sqlx::query_scalar(
-        "SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ?",
-    )
-    .bind(order_id as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let job: String =
+        sqlx::query_scalar("SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ?")
+            .bind(order_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(job, "pending", "批准后应重排队");
     // 重算入账（修正分段 10 分钟 200Wh → 16 分）。
     let handled = chargepilot_mod_settlement::billing::process_job(db.as_ref(), order_id)
@@ -412,7 +515,8 @@ async fn meter_review_and_manual_amount() {
     assert_eq!(total, 16, "修正计量后应按 200Wh 正常入账");
 
     // 场景 B：人工最终金额（新订单转人工后登记 40+10 分 → 入账 50 分）。
-    let (order_b, payment_b, user_b, rule_b) = seed_completed_charge(db.as_ref(), &alloc, 200).await;
+    let (order_b, payment_b, user_b, rule_b) =
+        seed_completed_charge(db.as_ref(), &alloc, 200).await;
     let bad_b = json!({
         "segments": [{"started_at": (chrono::Utc::now() - chrono::Duration::minutes(1)).to_rfc3339(),
                       "ended_at": chrono::Utc::now().to_rfc3339(), "energy_wh": 9999, "peak_w": 1500}],
@@ -426,17 +530,22 @@ async fn meter_review_and_manual_amount() {
         .await
         .unwrap();
     let _ = chargepilot_mod_settlement::billing::process_job(db.as_ref(), order_b).await;
-    let job_b: String = sqlx::query_scalar(
-        "SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ?",
-    )
-    .bind(order_b as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let job_b: String =
+        sqlx::query_scalar("SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ?")
+            .bind(order_b as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(job_b, "manual_review", "异常计量应先转人工");
     // 人工金额合计 50 ≤ 套餐价 100。
     chargepilot_mod_settlement::meter_review::resolve_manual_amount(
-        db.as_ref(), 8003, order_b, &chargepilot_platform::ids::uuid_v4(), 40, 10, "协商金额",
+        db.as_ref(),
+        8003,
+        order_b,
+        &chargepilot_platform::ids::uuid_v4(),
+        40,
+        10,
+        "协商金额",
     )
     .await
     .expect("人工金额应成功");
@@ -451,14 +560,27 @@ async fn meter_review_and_manual_amount() {
     .fetch_one(db.as_ref())
     .await
     .unwrap();
-    assert_eq!((electric_b, service_b, total_b), (40, 10, 50), "人工金额应直接入账");
+    assert_eq!(
+        (electric_b, service_b, total_b),
+        (40, 10, 50),
+        "人工金额应直接入账"
+    );
     // 超套餐价拒绝。
     let err = chargepilot_mod_settlement::meter_review::resolve_manual_amount(
-        db.as_ref(), 8003, order_b, &chargepilot_platform::ids::uuid_v4(), 999, 999, "超限",
+        db.as_ref(),
+        8003,
+        order_b,
+        &chargepilot_platform::ids::uuid_v4(),
+        999,
+        999,
+        "超限",
     )
     .await
     .expect_err("已有人工金额且超限应冲突");
-    assert_eq!(err, chargepilot_mod_settlement::meter_review::ReviewError::Conflict);
+    assert_eq!(
+        err,
+        chargepilot_mod_settlement::meter_review::ReviewError::Conflict
+    );
 
     cleanup(
         db.as_ref(),
@@ -469,4 +591,3 @@ async fn meter_review_and_manual_amount() {
     )
     .await;
 }
-

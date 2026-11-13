@@ -2,7 +2,7 @@
 //! 与退款执行器（支付单推进/订单 refunded/充值退款回账）。
 
 use chargepilot_platform::ids::SegmentAllocator;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 fn env_or_skip(name: &str) -> Option<String> {
@@ -89,7 +89,11 @@ async fn seed_completed_charge(
     let user_id = alloc.next_id().await.unwrap();
     let device_id = format!("dev-s5-{}", rand_suffix());
     let merchant_order_no = format!("P{payment_id}");
-    let order_no = format!("C{}{}01", chrono::Utc::now().format("%Y%m%d%H%M%S"), device_id);
+    let order_no = format!(
+        "C{}{}01",
+        chrono::Utc::now().format("%Y%m%d%H%M%S"),
+        device_id
+    );
     let month = chargepilot_mod_order::month_start_of(chrono::Utc::now());
     let now = chrono::Utc::now();
     sqlx::query("INSERT INTO `user` (`id`, `openid`, `nickname`, `status`) VALUES (?, CAST(? AS BINARY), '结算测试用户', 'active')")
@@ -109,9 +113,10 @@ async fn seed_completed_charge(
     let scheme = snap.scheme.expect("方案存在");
     let package = scheme.package(1).expect("套餐存在");
     let engine_spec = scheme.spec_for(&package);
-    let estimate = chargepilot_domain::payment_intent::intent_estimate(&scheme, &package, paid_cents)
-        .map_err(|e| anyhow::anyhow!(format!("{e:?}")))
-        .expect("预估应成功");
+    let estimate =
+        chargepilot_domain::payment_intent::intent_estimate(&scheme, &package, paid_cents)
+            .map_err(|e| anyhow::anyhow!(format!("{e:?}")))
+            .expect("预估应成功");
     let offer = chargepilot_domain::charging_settle::Offer {
         id: rule_id * 100 + 1,
         station_id,
@@ -148,32 +153,60 @@ async fn seed_completed_charge(
     sqlx::query("INSERT INTO `charge_end_receipt` (`charge_order_id`, `stop_command_id`, `meter_json`) VALUES (?, ?, CAST(? AS JSON))")
         .bind(charge_order_id as i64).bind(format!("stop-{charge_order_id}"))
         .bind(meter.to_string()).execute(db).await.unwrap();
-    sqlx::query("INSERT INTO `charge_billing_job` (`charge_order_id`, `status`) VALUES (?, 'pending')")
-        .bind(charge_order_id as i64).execute(db).await.unwrap();
-    SettledSeed { charge_order_id, payment_id, user_id, device_id }
+    sqlx::query(
+        "INSERT INTO `charge_billing_job` (`charge_order_id`, `status`) VALUES (?, 'pending')",
+    )
+    .bind(charge_order_id as i64)
+    .execute(db)
+    .await
+    .unwrap();
+    SettledSeed {
+        charge_order_id,
+        payment_id,
+        user_id,
+        device_id,
+    }
 }
 
 /// 尾部自清理：按主键删除本批种子（流水与事件保留供追溯）。
 async fn cleanup(db: &sqlx::MySqlPool, seeds: &[SettledSeed]) {
     for s in seeds {
         let _ = sqlx::query("DELETE FROM `charge_fee_receipt` WHERE `charge_order_id` = ?")
-            .bind(s.charge_order_id as i64).execute(db).await;
+            .bind(s.charge_order_id as i64)
+            .execute(db)
+            .await;
         let _ = sqlx::query("DELETE FROM `charge_billing_job` WHERE `charge_order_id` = ?")
-            .bind(s.charge_order_id as i64).execute(db).await;
+            .bind(s.charge_order_id as i64)
+            .execute(db)
+            .await;
         let _ = sqlx::query("DELETE FROM `charge_end_receipt` WHERE `charge_order_id` = ?")
-            .bind(s.charge_order_id as i64).execute(db).await;
+            .bind(s.charge_order_id as i64)
+            .execute(db)
+            .await;
         let _ = sqlx::query("DELETE FROM `charge_order_pricing` WHERE `charge_order_id` = ?")
-            .bind(s.charge_order_id as i64).execute(db).await;
+            .bind(s.charge_order_id as i64)
+            .execute(db)
+            .await;
         let _ = sqlx::query("DELETE FROM `refund_record` WHERE `payment_order_id` = ?")
-            .bind(s.payment_id as i64).execute(db).await;
+            .bind(s.payment_id as i64)
+            .execute(db)
+            .await;
         let _ = sqlx::query("DELETE FROM `charge_order` WHERE `id` = ?")
-            .bind(s.charge_order_id as i64).execute(db).await;
+            .bind(s.charge_order_id as i64)
+            .execute(db)
+            .await;
         let _ = sqlx::query("DELETE FROM `payment_order` WHERE `id` = ?")
-            .bind(s.payment_id as i64).execute(db).await;
+            .bind(s.payment_id as i64)
+            .execute(db)
+            .await;
         let _ = sqlx::query("DELETE FROM `user` WHERE `id` = ?")
-            .bind(s.user_id as i64).execute(db).await;
+            .bind(s.user_id as i64)
+            .execute(db)
+            .await;
         let _ = sqlx::query("DELETE FROM `device_port` WHERE `device_id` = ?")
-            .bind(&s.device_id).execute(db).await;
+            .bind(&s.device_id)
+            .execute(db)
+            .await;
     }
 }
 
@@ -190,9 +223,10 @@ async fn billing_batch_and_refund_executor() {
 
     // 场景 A：预付 100 分，实耗 200Wh（实费 16 分）→ 余款 84 分自动退款。
     let seed_a = seed_completed_charge(db.as_ref(), &alloc, station_id, rule_id, 100, 200).await;
-    let handled = chargepilot_mod_settlement::billing::process_job(db.as_ref(), seed_a.charge_order_id)
-        .await
-        .expect("计费任务应成功");
+    let handled =
+        chargepilot_mod_settlement::billing::process_job(db.as_ref(), seed_a.charge_order_id)
+            .await
+            .expect("计费任务应成功");
     assert!(handled, "任务应完成");
 
     // 库断言：订单费用列 + 回执无缺口 + 余款退款记录 + 订单 refunding + 任务 done。
@@ -203,7 +237,11 @@ async fn billing_batch_and_refund_executor() {
     .fetch_one(db.as_ref())
     .await
     .unwrap();
-    assert_eq!((electric, service, total), (10, 6, 16), "0.2kWh 电费 10 分 + 服务费 6 分");
+    assert_eq!(
+        (electric, service, total),
+        (10, 6, 16),
+        "0.2kWh 电费 10 分 + 服务费 6 分"
+    );
     let shortfall: i64 = sqlx::query_scalar(
         "SELECT `shortfall_cents` FROM `charge_fee_receipt` WHERE `charge_order_id` = ?",
     )
@@ -241,7 +279,10 @@ async fn billing_batch_and_refund_executor() {
     let due: Vec<u64> = chargepilot_mod_settlement::billing::due_jobs(db.as_ref(), 50)
         .await
         .unwrap();
-    assert!(!due.contains(&seed_a.charge_order_id), "done 任务不应再被领取");
+    assert!(
+        !due.contains(&seed_a.charge_order_id),
+        "done 任务不应再被领取"
+    );
 
     // 人工把 done 任务置回 pending 重跑：订单已 refunding，应转人工且不重复退款。
     sqlx::query("UPDATE `charge_billing_job` SET `status` = 'pending' WHERE `charge_order_id` = ?")
@@ -249,9 +290,10 @@ async fn billing_batch_and_refund_executor() {
         .execute(db.as_ref())
         .await
         .unwrap();
-    let rerun = chargepilot_mod_settlement::billing::process_job(db.as_ref(), seed_a.charge_order_id)
-        .await
-        .expect("重跑不应报错");
+    let rerun =
+        chargepilot_mod_settlement::billing::process_job(db.as_ref(), seed_a.charge_order_id)
+            .await
+            .expect("重跑不应报错");
     assert!(!rerun, "非 completed 订单应转人工而非重复入账");
     let job_status: String =
         sqlx::query_scalar("SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ?")
@@ -274,13 +316,12 @@ async fn billing_batch_and_refund_executor() {
         .await
         .expect("退款执行应成功");
     assert!(executed >= 1);
-    let (pay_status, refunded): (String, i64) = sqlx::query_as(
-        "SELECT `status`, `refunded_cents` FROM `payment_order` WHERE `id` = ?",
-    )
-    .bind(seed_a.payment_id as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let (pay_status, refunded): (String, i64) =
+        sqlx::query_as("SELECT `status`, `refunded_cents` FROM `payment_order` WHERE `id` = ?")
+            .bind(seed_a.payment_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(refunded, 84);
     assert_eq!(
         pay_status, "partial_refunded",
@@ -303,20 +344,20 @@ async fn billing_batch_and_refund_executor() {
     assert_eq!(refund_final, "success");
     // 执行器重跑：无重复退款。
     let _ = chargepilot_mod_settlement::refund_executor::run_once(db.as_ref(), 50).await;
-    let refunded_again: i64 = sqlx::query_scalar(
-        "SELECT `refunded_cents` FROM `payment_order` WHERE `id` = ?",
-    )
-    .bind(seed_a.payment_id as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let refunded_again: i64 =
+        sqlx::query_scalar("SELECT `refunded_cents` FROM `payment_order` WHERE `id` = ?")
+            .bind(seed_a.payment_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(refunded_again, 84, "重跑不得重复退款");
 
     // 场景 B：金额封顶——预付 100 分、实耗 5000Wh（理论 400 分）→ 封顶 100 分，缺口 300 分。
     let seed_b = seed_completed_charge(db.as_ref(), &alloc, station_id, rule_id, 100, 5000).await;
-    let handled_b = chargepilot_mod_settlement::billing::process_job(db.as_ref(), seed_b.charge_order_id)
-        .await
-        .expect("封顶计费任务应成功");
+    let handled_b =
+        chargepilot_mod_settlement::billing::process_job(db.as_ref(), seed_b.charge_order_id)
+            .await
+            .expect("封顶计费任务应成功");
     assert!(handled_b);
     let (total_b, shortfall_b, electric_b, service_b): (i64, i64, i64, i64) = sqlx::query_as(
         "SELECT c.`total_cents`, r.`shortfall_cents`, c.`electric_cents`, c.`service_cents` \
@@ -340,17 +381,17 @@ async fn billing_batch_and_refund_executor() {
 
     // 场景 C：实耗 0Wh（实费 0）→ 余款 100 分全额退回，订单 refunding。
     let seed_c = seed_completed_charge(db.as_ref(), &alloc, station_id, rule_id, 100, 0).await;
-    let handled_c = chargepilot_mod_settlement::billing::process_job(db.as_ref(), seed_c.charge_order_id)
-        .await
-        .expect("零电量计费应成功");
+    let handled_c =
+        chargepilot_mod_settlement::billing::process_job(db.as_ref(), seed_c.charge_order_id)
+            .await
+            .expect("零电量计费应成功");
     assert!(handled_c);
-    let (total_c, order_status_c): (i64, String) = sqlx::query_as(
-        "SELECT `total_cents`, `status` FROM `charge_order` WHERE `id` = ?",
-    )
-    .bind(seed_c.charge_order_id as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let (total_c, order_status_c): (i64, String) =
+        sqlx::query_as("SELECT `total_cents`, `status` FROM `charge_order` WHERE `id` = ?")
+            .bind(seed_c.charge_order_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(total_c, 0);
     assert_eq!(order_status_c, "refunding");
     let surplus_c: i64 = sqlx::query_scalar(
@@ -376,9 +417,10 @@ async fn billing_batch_and_refund_executor() {
         .execute(db.as_ref())
         .await
         .unwrap();
-    let handled_d = chargepilot_mod_settlement::billing::process_job(db.as_ref(), seed_d.charge_order_id)
-        .await
-        .expect("异常计量应安全处理");
+    let handled_d =
+        chargepilot_mod_settlement::billing::process_job(db.as_ref(), seed_d.charge_order_id)
+            .await
+            .expect("异常计量应安全处理");
     assert!(!handled_d, "异常计量应转人工");
     let job_d: String =
         sqlx::query_scalar("SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ?")
@@ -387,13 +429,12 @@ async fn billing_batch_and_refund_executor() {
             .await
             .unwrap();
     assert_eq!(job_d, "manual_review");
-    let fee_d: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM `charge_fee_receipt` WHERE `charge_order_id` = ?",
-    )
-    .bind(seed_d.charge_order_id as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let fee_d: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM `charge_fee_receipt` WHERE `charge_order_id` = ?")
+            .bind(seed_d.charge_order_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(fee_d, 0, "转人工不得入账");
 
     cleanup(db.as_ref(), &[seed_a, seed_b, seed_c, seed_d]).await;
@@ -443,13 +484,12 @@ async fn wallet_recharge_refund_returns_balance() {
         .await
         .expect("充值退款应成功");
     assert!(executed >= 1);
-    let balance: i64 = sqlx::query_scalar(
-        "SELECT `balance_cents` FROM `wallet_account` WHERE `user_id` = ?",
-    )
-    .bind(user_id as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let balance: i64 =
+        sqlx::query_scalar("SELECT `balance_cents` FROM `wallet_account` WHERE `user_id` = ?")
+            .bind(user_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert_eq!(balance, 1000, "充值退款应回账 500 分");
     let pay_status: String =
         sqlx::query_scalar("SELECT `status` FROM `payment_order` WHERE `id` = ?")
@@ -458,13 +498,12 @@ async fn wallet_recharge_refund_returns_balance() {
             .await
             .unwrap();
     assert_eq!(pay_status, "refunded");
-    let ledger_rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM `wallet_txn` WHERE `user_id` = ?",
-    )
-    .bind(user_id as i64)
-    .fetch_one(db.as_ref())
-    .await
-    .unwrap();
+    let ledger_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM `wallet_txn` WHERE `user_id` = ?")
+            .bind(user_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
     assert!(ledger_rows >= 1, "退款回账应落钱包流水");
 
     // 尾部自清理（流水保留供追溯）。
