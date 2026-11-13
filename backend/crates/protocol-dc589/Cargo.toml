@@ -8,3 +8,9 @@ chargepilot-protocol = { path = "../protocol" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
+rand = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+chargepilot-gateway-runtime = { path = "../gateway-runtime" }
+tokio = { workspace = true, features = ["full"] }

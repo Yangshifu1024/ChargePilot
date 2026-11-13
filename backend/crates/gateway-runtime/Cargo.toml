@@ -2,3 +2,9 @@
 name = "chargepilot-gateway-runtime"
 version.workspace = true
 edition.workspace = true
+
+[dependencies]
+chargepilot-protocol = { path = "../protocol" }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

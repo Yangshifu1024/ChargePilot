@@ -384,6 +384,12 @@ dependencies = [
 [[package]]
 name = "chargepilot-gateway-runtime"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chargepilot-protocol",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "chargepilot-http-api"
@@ -678,8 +684,11 @@ dependencies = [
 name = "chargepilot-protocol-dc589"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "chargepilot-gateway-runtime",
  "chargepilot-protocol",
  "chrono",
+ "rand 0.9.5",
  "tokio",
  "tracing",
 ]
@@ -2769,6 +2778,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2 0.6.5",

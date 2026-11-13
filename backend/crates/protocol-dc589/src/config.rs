@@ -164,12 +164,12 @@ pub fn config_error_field(code: u8) -> Option<&'static str> {
 }
 
 /// 五档参数表编码后的 33 字节载荷；当前编解码仅接受此布局。
-const CONFIG_ENCODED_5: usize = 33;
+pub const CONFIG_ENCODED_LEN: usize = 33;
 
 /// 把有效五档参数表编码为载荷（C3 下发与 C6 上报共用）。
 pub fn encode_config(table: &ConfigTable) -> Result<Vec<u8>, ConfigError> {
     table.validate()?;
-    let mut data = Vec::with_capacity(CONFIG_ENCODED_5);
+    let mut data = Vec::with_capacity(CONFIG_ENCODED_LEN);
     data.push(table.run_mode);
     data.push(4); // 音量，平台不改动
     data.extend_from_slice(&table.local_coin_time.to_le_bytes());
@@ -197,7 +197,7 @@ pub fn encode_config(table: &ConfigTable) -> Result<Vec<u8>, ConfigError> {
 /// 解码五档参数表（C3 下发与 C6 上报使用相同载荷）。
 pub fn decode_config(command: u8, data: &[u8]) -> Result<ConfigTable, PayloadError> {
     // C3 下发 / C6 上报；载荷固定 33 字节。
-    if (command != 0xC3 && command != 0xC6) || data.len() != CONFIG_ENCODED_5 {
+    if (command != 0xC3 && command != 0xC6) || data.len() != CONFIG_ENCODED_LEN {
         return Err(PayloadError);
     }
     let mut table = ConfigTable {
@@ -266,7 +266,7 @@ mod tests {
             volume: 4,
         };
         let data = encode_config(&table).unwrap();
-        assert_eq!(data.len(), CONFIG_ENCODED_5);
+        assert_eq!(data.len(), CONFIG_ENCODED_LEN);
         // C3 与 C6 载荷相同。
         let decoded = decode_config(0xC6, &data).unwrap();
         assert_eq!(decoded, table);

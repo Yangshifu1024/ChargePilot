@@ -8,6 +8,7 @@
 //! 语义依据：旧仓库 `docs/protocols/dc589.md`（5.8.9）与旧版实现双重对照；
 //! 原文示例帧的 LEN/SUM 勘误按该文档「原始示例帧的机械校验」节修正。
 
+pub mod adapter;
 pub mod cards;
 pub mod commands;
 pub mod config;
