@@ -42,7 +42,7 @@ async fn build_app() -> Option<(axum::Router, String, Arc<SegmentAllocator>)> {
         allocator: allocator.clone(),
         exchanger: Arc::new(exchanger_from_env().unwrap()),
     });
-    let router = chargepilot_http_api::build_router(deps, prometheus_handle());
+    let router = chargepilot_http_api::build_router(deps, prometheus_handle(), None);
     let account = format!("it-{}", rand_suffix());
     Some((router, account, allocator))
 }

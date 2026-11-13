@@ -37,3 +37,7 @@
 ## 被否掉的替代方案
 
 - **保留三库（单实例三 database、三连接池）**：迁移 SQL 零改动、最保守；但永久保留两份无意义的事务边界，流程塌缩（P7）做不彻底，且「数据兼容」前提不成立（从未部署）。作为新版稳定后的可选优化重新评估，不作为起点。
+
+## 修订记录
+
+- **2026-11-14（阶段 03）**：设备导入与开通（provision）塌缩为同一业务事务。原「device 域受理 → HTTP → gateway 开通」在单体中跨进程消失，`device_provision`/`device`/`device_port` 的导入写入并入 device 模块事务；gateway-runtime 保留连接会话/遥测/命令表的独占写。表归属清单中这三张表的「gateway-runtime 独占写」标注据此修订为「device 域导入事务写，gateway-runtime 运行时读」。

@@ -6,6 +6,7 @@ pub mod admin_guard;
 pub mod admin_management;
 pub mod admin_pricing_device;
 pub mod deps;
+pub mod device_and_user;
 pub mod user_auth;
 pub mod user_ops;
 
@@ -13,15 +14,18 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use chargepilot_platform::error::{ApiError, Code};
 
-/// 业务路由 + 健康检查 + 指标（app 的 serve 只负责监听与停机）。
+/// 业务路由 + 健康检查 + 指标 + /admin 静态资源（SPA fallback）。
+/// `admin_static_dir` 为 None 时（开发未构建前端）静态路由不挂载。
 pub fn build_router(
     deps: std::sync::Arc<deps::ApiDeps>,
     prometheus: metrics_exporter_prometheus::PrometheusHandle,
+    admin_static_dir: Option<&str>,
 ) -> axum::Router {
-    axum::Router::new()
+    let mut app = axum::Router::new()
         .merge(admin_auth::router())
         .merge(admin_management::router())
         .merge(admin_pricing_device::router())
+        .merge(device_and_user::router())
         .merge(user_ops::router())
         .merge(user_auth::router())
         .route("/health/live", axum::routing::get(|| async { "ok" }))
@@ -34,7 +38,15 @@ pub fn build_router(
             }),
         )
         .fallback(not_found)
-        .with_state(deps)
+        .with_state(deps);
+    if let Some(dir) = admin_static_dir {
+        // SPA：资源存在则直出，其余 /admin/* 回落 index.html（history 路由）
+        let serve = tower_http::services::ServeDir::new(dir).not_found_service(
+            tower_http::services::ServeFile::new(format!("{dir}/index.html")),
+        );
+        app = app.nest_service("/admin", serve);
+    }
+    app
 }
 
 async fn readiness(State(state): State<std::sync::Arc<deps::ApiDeps>>) -> &'static str {

@@ -88,7 +88,11 @@ async fn serve() -> anyhow::Result<()> {
         allocator: Arc::new(allocator),
         exchanger: Arc::new(chargepilot_http_api::deps::exchanger_from_env()?),
     });
-    let app = chargepilot_http_api::build_router(deps, prometheus);
+    let app = chargepilot_http_api::build_router(
+        deps,
+        prometheus,
+        std::env::var("ADMIN_STATIC_DIR").ok().as_deref(),
+    );
     let listener = tokio::net::TcpListener::bind(&cfg.http_addr).await?;
     tracing::info!(addr = %cfg.http_addr, "HTTP 服务启动");
 

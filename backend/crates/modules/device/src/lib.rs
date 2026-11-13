@@ -33,3 +33,10 @@ impl From<serde_json::Error> for DeviceError {
 
 pub type StationResult<T> = Result<T, DeviceError>;
 pub type VendorResult<T> = Result<T, DeviceError>;
+
+pub mod alert;
+pub mod fault;
+pub mod import;
+pub mod management;
+pub mod provision;
+pub mod user_station;
