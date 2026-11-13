@@ -1,0 +1,4 @@
+[package]
+name = "chargepilot-http-api"
+version.workspace = true
+edition.workspace = true

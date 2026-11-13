@@ -27,6 +27,7 @@ Status: ready-for-agent
 - 路由收敛：8080 单端口承载 `/api/v1/user|admin|public` + `/admin/*` + `/h5/*` + `/health` + `/metrics`；9100 独立暴露给设备。
 - 环境变量冻结清单（约 15 个）：数据库 DSN、Redis URL、监听地址、JWT_SECRET、微信凭据组、PAYMENT_MODE、LOGIN_MODE、引导账号组、导出目录、默认费率 JSON——超出清单的变量一律在启动时报错提醒而非静默忽略。
 - compose：app + mysql:8.4 + redis:8；caddy 为可选 profile；设备端口 9100 映射；数据卷与备份说明进运行手册。
+- **镜像加速约定**（用户提供，2026-11-14）：所有容器镜像经 gh-proxy 前缀拉取，写作 `gh-proxy.org/docker/<原始镜像>`（如 `gh-proxy.org/docker/mysql:8.4`）；该平台不支持 daemon.json 的 registry-mirrors 方式，一律用镜像名前缀，Dockerfile 的 FROM 与 compose 的 image 全部遵守。
 - 前端请求封装改动点：admin-web 与 H5 的 `VITE_API_BASE` / `TARO_APP_API_BASE` 同源化；契约修剪（字段消费审计表执行结果）在本阶段随前端一次性回归。
 - `simulator-batch` 随镜像交付（排障用），默认不自动运行。
 

@@ -1,0 +1,5 @@
+error[E0599]: no method named `activate` found for struct `ChargingOrder` in the current scope
+ --> tests/compile_fail/charging_on_paid_only.rs:7:22
+  |
+7 |     let _ = charging.activate(); //~ERROR no method named `activate`
+  |                      ^^^^^^^^ method not found in `ChargingOrder`

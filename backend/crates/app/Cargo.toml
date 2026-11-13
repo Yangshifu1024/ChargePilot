@@ -1,0 +1,16 @@
+[package]
+name = "chargepilot-app"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "chargepilot"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+chargepilot-storage.workspace = true

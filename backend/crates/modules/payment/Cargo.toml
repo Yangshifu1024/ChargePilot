@@ -1,0 +1,4 @@
+[package]
+name = "chargepilot-mod-payment"
+version.workspace = true
+edition.workspace = true

@@ -1,0 +1,73 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/app",
+    "crates/domain",
+    "crates/events",
+    "crates/gateway-runtime",
+    "crates/http-api",
+    "crates/platform",
+    "crates/protocol",
+    "crates/protocol-dc589",
+    "crates/storage",
+    "crates/modules/card",
+    "crates/modules/charging",
+    "crates/modules/device",
+    "crates/modules/export",
+    "crates/modules/identity",
+    "crates/modules/marketing",
+    "crates/modules/ops",
+    "crates/modules/order",
+    "crates/modules/payment",
+    "crates/modules/pricing",
+    "crates/modules/settlement",
+    "crates/modules/wallet",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+# 异步运行时与 HTTP
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
+# 数据库（手写 SQL，不开编译期校验宏）
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "mysql", "chrono", "migrate"] }
+# 序列化与错误
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+# 可观测
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# CLI 与配置
+clap = { version = "4", features = ["derive"] }
+# 时间
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+# 内部 crate
+chargepilot-domain = { path = "crates/domain" }
+chargepilot-events = { path = "crates/events" }
+chargepilot-gateway-runtime = { path = "crates/gateway-runtime" }
+chargepilot-http-api = { path = "crates/http-api" }
+chargepilot-platform = { path = "crates/platform" }
+chargepilot-protocol = { path = "crates/protocol" }
+chargepilot-protocol-dc589 = { path = "crates/protocol-dc589" }
+chargepilot-storage = { path = "crates/storage" }
+chargepilot-mod-card = { path = "crates/modules/card" }
+chargepilot-mod-charging = { path = "crates/modules/charging" }
+chargepilot-mod-device = { path = "crates/modules/device" }
+chargepilot-mod-export = { path = "crates/modules/export" }
+chargepilot-mod-identity = { path = "crates/modules/identity" }
+chargepilot-mod-marketing = { path = "crates/modules/marketing" }
+chargepilot-mod-ops = { path = "crates/modules/ops" }
+chargepilot-mod-order = { path = "crates/modules/order" }
+chargepilot-mod-payment = { path = "crates/modules/payment" }
+chargepilot-mod-pricing = { path = "crates/modules/pricing" }
+chargepilot-mod-settlement = { path = "crates/modules/settlement" }
+chargepilot-mod-wallet = { path = "crates/modules/wallet" }
+
+[profile.release]
+lto = "thin"
+strip = "debuginfo"

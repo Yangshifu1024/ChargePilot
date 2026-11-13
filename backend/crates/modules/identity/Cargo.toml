@@ -1,0 +1,4 @@
+[package]
+name = "chargepilot-mod-identity"
+version.workspace = true
+edition.workspace = true

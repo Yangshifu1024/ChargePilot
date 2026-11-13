@@ -1,0 +1,17 @@
+# Rust
+backend/target/
+
+# 前端
+node_modules/
+frontend/admin-web/dist/
+frontend/miniprogram/dist/
+
+# 环境与本地
+.env
+*.local
+
+# 导出文件
+export-files/
+
+# 系统
+.DS_Store

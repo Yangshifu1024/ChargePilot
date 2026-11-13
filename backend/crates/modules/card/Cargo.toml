@@ -1,0 +1,4 @@
+[package]
+name = "chargepilot-mod-card"
+version.workspace = true
+edition.workspace = true

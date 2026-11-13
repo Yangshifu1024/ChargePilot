@@ -1,0 +1,4 @@
+[package]
+name = "chargepilot-platform"
+version.workspace = true
+edition.workspace = true

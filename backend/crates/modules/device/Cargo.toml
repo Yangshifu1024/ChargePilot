@@ -1,0 +1,4 @@
+[package]
+name = "chargepilot-mod-device"
+version.workspace = true
+edition.workspace = true

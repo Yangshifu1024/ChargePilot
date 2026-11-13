@@ -1,0 +1,4 @@
+[package]
+name = "chargepilot-gateway-runtime"
+version.workspace = true
+edition.workspace = true
