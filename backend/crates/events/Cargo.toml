@@ -8,3 +8,6 @@ serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 anyhow.workspace = true
+metrics.workspace = true
+tracing.workspace = true
+chargepilot-platform.workspace = true

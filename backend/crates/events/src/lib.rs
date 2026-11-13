@@ -1,7 +1,7 @@
 //! 领域事件层：事务性写入 + 进程内投递 + 失败退避（ADR 002）。
 //!
-//! 骨架阶段锁定契约：事件源、类别词表、投递器 trait、表访问函数签名；
-//! 投递器运行时与兜底扫描在阶段 01 实现。
+//! 契约见 docs/design/events.md；事件源、类别词表、投递器 trait 在此定义，
+//! 表访问在 repo，投递循环在 runtime，事务内入队在 enqueue。
 
 use serde::{Deserialize, Serialize};
 
@@ -38,34 +38,15 @@ pub struct EnqueuedEvent {
 
 /// 事件投递器：把入队事件送达对应处理器。
 /// 实现要求：处理器幂等（ADR 002 红线——事件 at-least-once，重放不得重复扣款）。
+/// 返回装箱 Future（dyn 兼容，登记表按 kind 分发）。
 pub trait EventDispatcher: Send + Sync {
     /// 投递单个事件。返回 Err 视为投递失败，由运行时按 `1 << min(retry, 8)` 秒退避重排。
     fn dispatch(
         &self,
         event: &EnqueuedEvent,
-    ) -> impl std::future::Future<Output = Result<(), anyhow::Error>> + Send;
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send + '_>>;
 }
 
-/// 事务内入队：在既有业务事务上写 `domain_event` 行（status=pending）。
-/// 与业务写入同事务提交是可靠投递的根基（ADR 002）；阶段 01 实现函数体。
-pub mod enqueue {
-    use sqlx::MySqlConnection;
-
-    use super::{EventSource, kind};
-
-    /// 阶段 01 实现事务内写入。当前仅锁定签名供各域评审引用。
-    pub fn in_tx(
-        _conn: &mut MySqlConnection,
-        _source: EventSource,
-        _kind: &str,
-        _payload: &serde_json::Value,
-    ) -> Result<(), anyhow::Error> {
-        anyhow::bail!("阶段 01 实现：domain_event 事务内写入")
-    }
-
-    /// 编译期锁定首批事件类别常量与来源枚举可见性。
-    #[allow(dead_code)]
-    fn smoke() {
-        let _ = (kind::CHARGE_ENDED, EventSource::Gateway);
-    }
-}
+pub mod enqueue;
+pub mod repo;
+pub mod runtime;

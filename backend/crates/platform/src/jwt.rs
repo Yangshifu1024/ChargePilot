@@ -1,0 +1,86 @@
+//! JWT（HS256，双 kind：user 15min / admin 8h，语义对齐旧版）。
+
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    User,
+    Admin,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Claims {
+    /// kind：user / admin
+    pub kind: String,
+    /// 用户或管理员 ID
+    pub sub: u64,
+    /// 过期时间（Unix 秒）
+    pub exp: u64,
+    /// 签发时间
+    pub iat: u64,
+}
+
+pub const USER_TTL_SECS: u64 = 15 * 60;
+pub const ADMIN_TTL_SECS: u64 = 8 * 60 * 60;
+
+/// 签发访问令牌。
+pub fn sign(secret: &str, kind: Kind, sub: u64) -> anyhow::Result<String> {
+    let now = chrono::Utc::now().timestamp() as u64;
+    let claims = Claims {
+        kind: kind_str(kind).into(),
+        sub,
+        exp: now + ttl(kind),
+        iat: now,
+    };
+    Ok(encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )?)
+}
+
+/// 校验并返回声明；kind 不符视为无效。
+pub fn verify(secret: &str, kind: Kind, token: &str) -> anyhow::Result<Claims> {
+    let data = decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &Validation::default(),
+    )
+    .map_err(|e| anyhow::anyhow!("令牌无效: {e}"))?;
+    if data.claims.kind != kind_str(kind) {
+        anyhow::bail!("令牌种类不符");
+    }
+    Ok(data.claims)
+}
+
+fn kind_str(k: Kind) -> &'static str {
+    match k {
+        Kind::User => "user",
+        Kind::Admin => "admin",
+    }
+}
+
+fn ttl(k: Kind) -> u64 {
+    match k {
+        Kind::User => USER_TTL_SECS,
+        Kind::Admin => ADMIN_TTL_SECS,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_trip_and_kind_isolation() {
+        let secret = "0123456789abcdef0123456789abcdef";
+        let t = sign(secret, Kind::User, 42).unwrap();
+        let claims = verify(secret, Kind::User, &t).unwrap();
+        assert_eq!(claims.sub, 42);
+        // admin kind 不能用 user 令牌
+        assert!(verify(secret, Kind::Admin, &t).is_err());
+        // 错误密钥拒绝
+        assert!(verify("ffffffffffffffffffffffffffffffff", Kind::User, &t).is_err());
+    }
+}

@@ -83,9 +83,10 @@ mod tests {
             let quotes = s.matches('\'').count();
             assert_eq!(quotes % 2, 0, "引号不平衡的语句: {s:.}");
         }
+        // 段首可能带前导注释行，用包含匹配统计建表语句
         let creates = stmts
             .iter()
-            .filter(|s| s.to_uppercase().starts_with("CREATE TABLE"))
+            .filter(|s| s.to_uppercase().contains("CREATE TABLE `"))
             .count();
         assert_eq!(
             creates, 84,

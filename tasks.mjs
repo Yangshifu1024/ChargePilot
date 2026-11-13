@@ -45,8 +45,14 @@ const tasks = {
     console.log('MySQL 已启动：127.0.0.1:3307（chargepilot_dev / chargepilot）');
   },
   'db-down'() { spawnSync('docker', ['rm', '-f', 'chargepilot-dev-mysql'], { stdio: 'inherit' }); },
+  // 开发 Redis（会话/MFA/频次，gh-proxy 镜像前缀；宿主 6380 避开默认实例）
+  'redis-up'() {
+    run('docker', ['run', '-d', '--name', 'chargepilot-dev-redis', '-p', '6380:6379', 'gh-proxy.org/docker/redis:8-alpine'], { cwd: '.' });
+    console.log('Redis 已启动：127.0.0.1:6380');
+  },
+  'redis-down'() { spawnSync('docker', ['rm', '-f', 'chargepilot-dev-redis'], { stdio: 'inherit' }); },
   help() {
-    console.log('任务：build | test | fmt | fmt-check | check | migrate | db-up | db-down');
+    console.log('任务：build | test | fmt | fmt-check | check | migrate | db-up | db-down | redis-up | redis-down');
   },
 };
 

@@ -32,16 +32,31 @@ license = "MIT"
 [workspace.dependencies]
 # 异步运行时与 HTTP
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
+axum = { version = "0.8", features = ["json"] }
 # 数据库（手写 SQL，不开编译期校验宏）
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "mysql", "chrono", "migrate"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "mysql", "chrono", "migrate", "json"] }
+# Redis（会话/MFA/频次/锁）
+redis = { version = "0.31", features = ["tokio-comp"] }
+deadpool-redis = "0.21"
 # 序列化与错误
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 anyhow = "1"
+# 平台能力
+jsonwebtoken = "9"
+bcrypt = "0.17"
+hmac = "0.12"
+sha1 = "0.10"
+sha2 = "0.10"
+base32 = "0.5"
+rand = "0.9"
+subtle = "2"
 # 可观测
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.17", default-features = false }
 # CLI 与配置
 clap = { version = "4", features = ["derive"] }
 # 时间
@@ -55,6 +70,7 @@ chargepilot-platform = { path = "crates/platform" }
 chargepilot-protocol = { path = "crates/protocol" }
 chargepilot-protocol-dc589 = { path = "crates/protocol-dc589" }
 chargepilot-storage = { path = "crates/storage" }
+# 内部 crate
 chargepilot-mod-card = { path = "crates/modules/card" }
 chargepilot-mod-charging = { path = "crates/modules/charging" }
 chargepilot-mod-device = { path = "crates/modules/device" }

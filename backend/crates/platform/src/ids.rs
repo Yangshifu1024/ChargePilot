@@ -1,0 +1,202 @@
+//! 号段模式 ID 分配器（ADR 003）：内存号段 + 水位 CAS 持久化 + 资金强一致选项。
+//!
+//! 复用 `snowflake_state` 表（id=1 行）：`last_millisecond` 列语义从旧版「毫秒时间戳」
+//! 变更为「已分配上界水位」（表结构不变；旧版雪花实现废弃，列 COMMENT 的历史语义
+//! 在下一次 DDL 修订时更新）。水位 CAS：`UPDATE ... WHERE last_millisecond = 旧值`，
+//! 号段耗尽且水位未落库时阻塞等待，不静默重用。
+
+use sqlx::MySqlPool;
+use std::sync::Mutex;
+
+const WATERMARK_ROW_ID: i64 = 1;
+
+#[derive(Debug)]
+struct Segment {
+    next: u64,
+    max: u64, // 含义：当前号段上界（可分配的最大值）
+}
+
+/// 号段分配器。clone 共享同一实例（内部 Mutex）。
+#[derive(Clone)]
+pub struct SegmentAllocator {
+    pool: MySqlPool,
+    segment_size: i64,
+    seg: std::sync::Arc<Mutex<Option<Segment>>>,
+}
+
+impl SegmentAllocator {
+    pub fn new(pool: MySqlPool, segment_size: i64) -> Self {
+        Self {
+            pool,
+            segment_size,
+            seg: std::sync::Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// 从 DB 读取当前水位并预取首个号段（启动时调用，校验水位行存在）。
+    pub async fn warm_up(&self) -> anyhow::Result<()> {
+        let watermark: u64 =
+            sqlx::query_scalar("SELECT `last_millisecond` FROM `snowflake_state` WHERE `id` = ?")
+                .bind(WATERMARK_ROW_ID)
+                .fetch_optional(&self.pool)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("snowflake_state 水位行缺失"))?;
+        let new_max = watermark + self.segment_size as u64;
+        self.cas_watermark(watermark, new_max).await?;
+        *self.seg.lock().unwrap() = Some(Segment {
+            next: watermark + 1,
+            max: new_max,
+        });
+        Ok(())
+    }
+
+    /// 进程内发号：纯内存操作；号段耗尽时异步补号段（阻塞等待，不静默重用）。
+    pub async fn next_id(&self) -> anyhow::Result<u64> {
+        loop {
+            {
+                let mut guard = self.seg.lock().unwrap();
+                if let Some(seg) = guard.as_mut() {
+                    if seg.next <= seg.max {
+                        let id = seg.next;
+                        seg.next += 1;
+                        return Ok(id as u64);
+                    }
+                }
+            }
+            // 号段耗尽：补号段（锁外执行 IO）
+            self.refill().await?;
+        }
+    }
+
+    /// 补号段：CAS 推进水位。CAS 冲突（并发写者）自动重读重试。
+    async fn refill(&self) -> anyhow::Result<()> {
+        let watermark: u64 =
+            sqlx::query_scalar("SELECT `last_millisecond` FROM `snowflake_state` WHERE `id` = ?")
+                .bind(WATERMARK_ROW_ID)
+                .fetch_one(&self.pool)
+                .await?;
+        let new_max = watermark + self.segment_size as u64;
+        let rows = self.cas_watermark(watermark, new_max).await?;
+        if rows == 0 {
+            // 有并发写者已推进水位：重读重试（正常仅单实例，此为防御路径）
+            return Ok(());
+        }
+        let mut guard = self.seg.lock().unwrap();
+        let start = guard.as_ref().map(|s| s.next).unwrap_or(watermark + 1);
+        let new_next = start.max(watermark + 1);
+        *guard = Some(Segment {
+            next: new_next,
+            max: new_max.max(new_next - 1),
+        });
+        Ok(())
+    }
+
+    async fn cas_watermark(&self, old: u64, new: u64) -> anyhow::Result<u64> {
+        let result = sqlx::query(
+            "UPDATE `snowflake_state` SET `last_millisecond` = ? WHERE `id` = ? AND `last_millisecond` = ?",
+        )
+        .bind(new)
+        .bind(WATERMARK_ROW_ID)
+        .bind(old)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// 资金强一致路径：在业务事务内取下一个号段并推进水位（同事务提交，崩溃回滚则号段未发）。
+    /// 调用方把返回的 tx 交给后续资金写入，保证「ID 与记录同事务」。
+    pub async fn next_id_in_tx(&self, tx: &mut sqlx::MySqlConnection) -> anyhow::Result<u64> {
+        let watermark: u64 = sqlx::query_scalar(
+            "SELECT `last_millisecond` FROM `snowflake_state` WHERE `id` = ? FOR UPDATE",
+        )
+        .bind(WATERMARK_ROW_ID)
+        .fetch_one(&mut *tx)
+        .await?;
+        let new_max = watermark + self.segment_size as u64;
+        sqlx::query("UPDATE `snowflake_state` SET `last_millisecond` = ? WHERE `id` = ?")
+            .bind(new_max)
+            .bind(WATERMARK_ROW_ID)
+            .execute(&mut *tx)
+            .await?;
+        Ok((watermark + 1) as u64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// 号段测试共享 snowflake_state 水位行，必须串行执行（进程级互斥）。
+    static ID_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn test_pool_url() -> String {
+        std::env::var("TEST_MYSQL_URL").unwrap_or_default()
+    }
+
+    async fn fresh_pool() -> Option<MySqlPool> {
+        let url = test_pool_url();
+        if url.is_empty() {
+            return None;
+        }
+        let pool = MySqlPool::connect(&url).await.ok()?;
+        // 重置水位（测试自清理）
+        sqlx::query("UPDATE `snowflake_state` SET `last_millisecond` = 0 WHERE `id` = 1")
+            .execute(&pool)
+            .await
+            .ok()?;
+        Some(pool)
+    }
+
+    #[tokio::test]
+    async fn concurrent_ids_unique_and_monotonic() {
+        let _guard = ID_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(pool) = fresh_pool().await else {
+            return;
+        };
+        let alloc = SegmentAllocator::new(pool.clone(), 100);
+        alloc.warm_up().await.unwrap();
+        let alloc = std::sync::Arc::new(alloc);
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let a = alloc.clone();
+            handles.push(tokio::spawn(async move {
+                let mut got = Vec::new();
+                for _ in 0..50 {
+                    got.push(a.next_id().await.unwrap());
+                }
+                got
+            }));
+        }
+        let mut all = Vec::new();
+        for h in handles {
+            all.extend(h.await.unwrap());
+        }
+        all.sort();
+        let uniq = all.iter().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(all.len(), 400);
+        assert_eq!(uniq.len(), 400, "并发取号必须全库唯一");
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn watermark_survives_restart() {
+        let _guard = ID_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(pool) = fresh_pool().await else {
+            return;
+        };
+        let a1 = SegmentAllocator::new(pool.clone(), 10);
+        a1.warm_up().await.unwrap();
+        let first = a1.next_id().await.unwrap();
+        drop(a1);
+        // 新实例（模拟重启）：不得复用已分配区间
+        let a2 = SegmentAllocator::new(pool.clone(), 10);
+        a2.warm_up().await.unwrap();
+        let second = a2.next_id().await.unwrap();
+        assert!(
+            second > first,
+            "重启后不得回拨: first={first} second={second}"
+        );
+        pool.close().await;
+    }
+}
