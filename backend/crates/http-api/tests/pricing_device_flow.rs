@@ -46,7 +46,7 @@ async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAlloc
         exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
     });
     Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle()),
+        chargepilot_http_api::build_router(deps, prometheus_handle(), None),
         Arc::new(db),
         allocator,
     ))

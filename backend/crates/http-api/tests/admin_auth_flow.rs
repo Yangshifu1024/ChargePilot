@@ -50,6 +50,7 @@ async fn build_app() -> Option<axum::Router> {
     Some(chargepilot_http_api::build_router(
         deps,
         prometheus_handle(),
+        None,
     ))
 }
 

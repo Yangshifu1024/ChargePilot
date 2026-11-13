@@ -1,0 +1,5587 @@
+{
+ "generated_at": "2026-11-13T19:45:16Z",
+ "cases": [
+  {
+   "id": "cost-energy-single",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T12:00:00Z",
+     "energy_wh": 2000,
+     "samples": null
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T10:00:00Z",
+      "ended_at": "2026-06-01T12:00:00Z",
+      "power_w": 0,
+      "quantity": "2.000000",
+      "unit": "度",
+      "electric_rate": 45,
+      "service_rate": 25,
+      "electric_cents": "90.000000",
+      "service_cents": "50.000000"
+     }
+    ],
+    "basis": "energy",
+    "electric_cents": 90,
+    "service_cents": 50,
+    "total_cents": 140,
+    "billable_wh": 2000
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cost-energy-cross-boundary",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-02T02:00:00Z",
+     "energy_wh": 16000,
+     "samples": null
+    }
+   },
+   "want": {
+    "basis": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "billable_wh": 0
+   },
+   "want_err": "meter_review"
+  },
+  {
+   "id": "cost-energy-segments",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T13:00:00Z",
+     "energy_wh": 3000,
+     "samples": [
+      {
+       "power_known": false,
+       "start": "2026-06-01T10:00:00Z",
+       "end": "2026-06-01T11:00:00Z",
+       "energy_wh": 800,
+       "power_w": 0
+      },
+      {
+       "power_known": false,
+       "start": "2026-06-01T11:00:00Z",
+       "end": "2026-06-01T13:00:00Z",
+       "energy_wh": 2200,
+       "power_w": 0
+      }
+     ]
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T10:00:00Z",
+      "ended_at": "2026-06-01T11:00:00Z",
+      "power_w": 0,
+      "quantity": "0.800000",
+      "unit": "度",
+      "electric_rate": 45,
+      "service_rate": 25,
+      "electric_cents": "36.000000",
+      "service_cents": "20.000000"
+     },
+     {
+      "started_at": "2026-06-01T11:00:00Z",
+      "ended_at": "2026-06-01T13:00:00Z",
+      "power_w": 0,
+      "quantity": "2.200000",
+      "unit": "度",
+      "electric_rate": 45,
+      "service_rate": 25,
+      "electric_cents": "99.000000",
+      "service_cents": "55.000000"
+     }
+    ],
+    "basis": "energy",
+    "electric_cents": 135,
+    "service_cents": 75,
+    "total_cents": 210,
+    "billable_wh": 3000
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cost-energy-zero",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T12:00:00Z",
+     "energy_wh": 0,
+     "samples": null
+    }
+   },
+   "want": {
+    "basis": "energy",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "billable_wh": 0
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cost-energy-total-mismatch",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T12:00:00Z",
+     "energy_wh": 2000,
+     "samples": [
+      {
+       "power_known": false,
+       "start": "2026-06-01T10:00:00Z",
+       "end": "2026-06-01T12:00:00Z",
+       "energy_wh": 1500,
+       "power_w": 0
+      }
+     ]
+    }
+   },
+   "want": {
+    "basis": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "billable_wh": 0
+   },
+   "want_err": "meter_review"
+  },
+  {
+   "id": "cost-realtime-basic",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_realtime_power",
+     "electric": {
+      "basis": "realtime_power",
+      "periods": [
+       {
+        "end_minute": 480,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 30,
+          "service_cents": 10
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 50,
+          "service_cents": 20
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 80,
+          "service_cents": 30
+         }
+        ]
+       },
+       {
+        "end_minute": 1440,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 40,
+          "service_cents": 15
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 60,
+          "service_cents": 25
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 90,
+          "service_cents": 35
+         }
+        ]
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T11:00:00Z",
+     "energy_wh": 1000,
+     "samples": [
+      {
+       "power_known": true,
+       "start": "2026-06-01T10:00:00Z",
+       "end": "2026-06-01T11:00:00Z",
+       "energy_wh": 1000,
+       "power_w": 300
+      }
+     ]
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T10:00:00Z",
+      "ended_at": "2026-06-01T11:00:00Z",
+      "power_w": 300,
+      "quantity": "1.000000",
+      "unit": "小时",
+      "electric_rate": 60,
+      "service_rate": 25,
+      "electric_cents": "60.000000",
+      "service_cents": "25.000000"
+     }
+    ],
+    "basis": "realtime_power",
+    "electric_cents": 60,
+    "service_cents": 25,
+    "total_cents": 85,
+    "billable_wh": 1000
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cost-realtime-odd-minutes",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_realtime_power",
+     "electric": {
+      "basis": "realtime_power",
+      "periods": [
+       {
+        "end_minute": 480,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 30,
+          "service_cents": 10
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 50,
+          "service_cents": 20
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 80,
+          "service_cents": 30
+         }
+        ]
+       },
+       {
+        "end_minute": 1440,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 40,
+          "service_cents": 15
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 60,
+          "service_cents": 25
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 90,
+          "service_cents": 35
+         }
+        ]
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T11:31:00Z",
+     "energy_wh": 1520,
+     "samples": [
+      {
+       "power_known": true,
+       "start": "2026-06-01T10:00:00Z",
+       "end": "2026-06-01T11:31:00Z",
+       "energy_wh": 1520,
+       "power_w": 180
+      }
+     ]
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T10:00:00Z",
+      "ended_at": "2026-06-01T11:31:00Z",
+      "power_w": 180,
+      "quantity": "1.516667",
+      "unit": "小时",
+      "electric_rate": 40,
+      "service_rate": 15,
+      "electric_cents": "60.666667",
+      "service_cents": "22.750000"
+     }
+    ],
+    "basis": "realtime_power",
+    "electric_cents": 61,
+    "service_cents": 23,
+    "total_cents": 84,
+    "billable_wh": 1520
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cost-realtime-partial-minute",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_realtime_power",
+     "electric": {
+      "basis": "realtime_power",
+      "periods": [
+       {
+        "end_minute": 480,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 30,
+          "service_cents": 10
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 50,
+          "service_cents": 20
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 80,
+          "service_cents": 30
+         }
+        ]
+       },
+       {
+        "end_minute": 1440,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 40,
+          "service_cents": 15
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 60,
+          "service_cents": 25
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 90,
+          "service_cents": 35
+         }
+        ]
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T11:31:30Z",
+     "energy_wh": 1600,
+     "samples": [
+      {
+       "power_known": true,
+       "start": "2026-06-01T10:00:00Z",
+       "end": "2026-06-01T11:31:30Z",
+       "energy_wh": 1600,
+       "power_w": 180
+      }
+     ]
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T10:00:00Z",
+      "ended_at": "2026-06-01T11:31:00Z",
+      "power_w": 180,
+      "quantity": "1.516667",
+      "unit": "小时",
+      "electric_rate": 40,
+      "service_rate": 15,
+      "electric_cents": "60.666667",
+      "service_cents": "22.750000"
+     }
+    ],
+    "basis": "realtime_power",
+    "electric_cents": 61,
+    "service_cents": 23,
+    "total_cents": 84,
+    "billable_wh": 1600
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cost-realtime-cross-boundary",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_realtime_power",
+     "electric": {
+      "basis": "realtime_power",
+      "periods": [
+       {
+        "end_minute": 480,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 30,
+          "service_cents": 10
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 50,
+          "service_cents": 20
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 80,
+          "service_cents": 30
+         }
+        ]
+       },
+       {
+        "end_minute": 1440,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 40,
+          "service_cents": 15
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 60,
+          "service_cents": 25
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 90,
+          "service_cents": 35
+         }
+        ]
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T19:00:00Z",
+     "energy_wh": 8100,
+     "samples": [
+      {
+       "power_known": true,
+       "start": "2026-06-01T10:00:00Z",
+       "end": "2026-06-01T16:00:00Z",
+       "energy_wh": 5000,
+       "power_w": 300
+      },
+      {
+       "power_known": true,
+       "start": "2026-06-01T16:00:00Z",
+       "end": "2026-06-01T19:00:00Z",
+       "energy_wh": 3100,
+       "power_w": 100
+      }
+     ]
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T10:00:00Z",
+      "ended_at": "2026-06-01T16:00:00Z",
+      "power_w": 300,
+      "quantity": "6.000000",
+      "unit": "小时",
+      "electric_rate": 60,
+      "service_rate": 25,
+      "electric_cents": "360.000000",
+      "service_cents": "150.000000"
+     },
+     {
+      "started_at": "2026-06-01T16:00:00Z",
+      "ended_at": "2026-06-01T19:00:00Z",
+      "power_w": 100,
+      "quantity": "3.000000",
+      "unit": "小时",
+      "electric_rate": 30,
+      "service_rate": 10,
+      "electric_cents": "90.000000",
+      "service_cents": "30.000000"
+     }
+    ],
+    "basis": "realtime_power",
+    "electric_cents": 450,
+    "service_cents": 180,
+    "total_cents": 630,
+    "billable_wh": 8100
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cost-realtime-power-missing",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_realtime_power",
+     "electric": {
+      "basis": "realtime_power",
+      "periods": [
+       {
+        "end_minute": 480,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 30,
+          "service_cents": 10
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 50,
+          "service_cents": 20
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 80,
+          "service_cents": 30
+         }
+        ]
+       },
+       {
+        "end_minute": 1440,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 40,
+          "service_cents": 15
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 60,
+          "service_cents": 25
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 90,
+          "service_cents": 35
+         }
+        ]
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T11:00:00Z",
+     "energy_wh": 1000,
+     "samples": [
+      {
+       "power_known": false,
+       "start": "2026-06-01T10:00:00Z",
+       "end": "2026-06-01T11:00:00Z",
+       "energy_wh": 1000,
+       "power_w": 0
+      }
+     ]
+    }
+   },
+   "want": {
+    "basis": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "billable_wh": 0
+   },
+   "want_err": "meter_review"
+  },
+  {
+   "id": "cost-realtime-zero-power",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_realtime_power",
+     "electric": {
+      "basis": "realtime_power",
+      "periods": [
+       {
+        "end_minute": 480,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 30,
+          "service_cents": 10
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 50,
+          "service_cents": 20
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 80,
+          "service_cents": 30
+         }
+        ]
+       },
+       {
+        "end_minute": 1440,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 40,
+          "service_cents": 15
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 60,
+          "service_cents": 25
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 90,
+          "service_cents": 35
+         }
+        ]
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T11:00:00Z",
+     "energy_wh": 1000,
+     "samples": [
+      {
+       "power_known": true,
+       "start": "2026-06-01T10:00:00Z",
+       "end": "2026-06-01T11:00:00Z",
+       "energy_wh": 1000,
+       "power_w": 0
+      }
+     ]
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T10:00:00Z",
+      "ended_at": "2026-06-01T11:00:00Z",
+      "power_w": 0,
+      "quantity": "1.000000",
+      "unit": "小时",
+      "electric_rate": 40,
+      "service_rate": 15,
+      "electric_cents": "40.000000",
+      "service_cents": "15.000000"
+     }
+    ],
+    "basis": "realtime_power",
+    "electric_cents": 40,
+    "service_cents": 15,
+    "total_cents": 55,
+    "billable_wh": 1000
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cost-realtime-midnight-cross",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_realtime_power",
+     "electric": {
+      "basis": "realtime_power",
+      "periods": [
+       {
+        "end_minute": 480,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 30,
+          "service_cents": 10
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 50,
+          "service_cents": 20
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 80,
+          "service_cents": 30
+         }
+        ]
+       },
+       {
+        "end_minute": 1440,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 40,
+          "service_cents": 15
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 60,
+          "service_cents": 25
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 90,
+          "service_cents": 35
+         }
+        ]
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T14:00:00Z",
+     "end": "2026-06-01T18:00:00Z",
+     "energy_wh": 4000,
+     "samples": [
+      {
+       "power_known": true,
+       "start": "2026-06-01T14:00:00Z",
+       "end": "2026-06-01T18:00:00Z",
+       "energy_wh": 4000,
+       "power_w": 400
+      }
+     ]
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T14:00:00Z",
+      "ended_at": "2026-06-02T00:00:00+08:00",
+      "power_w": 400,
+      "quantity": "2.000000",
+      "unit": "小时",
+      "electric_rate": 60,
+      "service_rate": 25,
+      "electric_cents": "120.000000",
+      "service_cents": "50.000000"
+     },
+     {
+      "started_at": "2026-06-02T00:00:00+08:00",
+      "ended_at": "2026-06-01T18:00:00Z",
+      "power_w": 400,
+      "quantity": "2.000000",
+      "unit": "小时",
+      "electric_rate": 50,
+      "service_rate": 20,
+      "electric_cents": "100.000000",
+      "service_cents": "40.000000"
+     }
+    ],
+    "basis": "realtime_power",
+    "electric_cents": 220,
+    "service_cents": 90,
+    "total_cents": 310,
+    "billable_wh": 4000
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cost-maxpower-single",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_max_power",
+     "electric": {
+      "basis": "max_power",
+      "periods": [
+       {
+        "end_minute": 480,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 30,
+          "service_cents": 10
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 50,
+          "service_cents": 20
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 80,
+          "service_cents": 30
+         }
+        ]
+       },
+       {
+        "end_minute": 1440,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 40,
+          "service_cents": 15
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 60,
+          "service_cents": 25
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 90,
+          "service_cents": 35
+         }
+        ]
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T12:00:00Z",
+     "energy_wh": 2000,
+     "samples": [
+      {
+       "power_known": true,
+       "start": "2026-06-01T10:00:00Z",
+       "end": "2026-06-01T11:00:00Z",
+       "energy_wh": 800,
+       "power_w": 250
+      },
+      {
+       "power_known": true,
+       "start": "2026-06-01T11:00:00Z",
+       "end": "2026-06-01T12:00:00Z",
+       "energy_wh": 1200,
+       "power_w": 450
+      }
+     ]
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T10:00:00Z",
+      "ended_at": "2026-06-01T12:00:00Z",
+      "power_w": 450,
+      "quantity": "2.000000",
+      "unit": "小时",
+      "electric_rate": 60,
+      "service_rate": 25,
+      "electric_cents": "120.000000",
+      "service_cents": "50.000000"
+     }
+    ],
+    "basis": "max_power",
+    "electric_cents": 120,
+    "service_cents": 50,
+    "total_cents": 170,
+    "billable_wh": 2000
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cost-maxpower-peak-agg",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_max_power",
+     "electric": {
+      "basis": "max_power",
+      "periods": [
+       {
+        "end_minute": 480,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 30,
+          "service_cents": 10
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 50,
+          "service_cents": 20
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 80,
+          "service_cents": 30
+         }
+        ]
+       },
+       {
+        "end_minute": 1440,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 40,
+          "service_cents": 15
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 60,
+          "service_cents": 25
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 90,
+          "service_cents": 35
+         }
+        ]
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T13:00:00Z",
+     "energy_wh": 3000,
+     "samples": [
+      {
+       "power_known": true,
+       "start": "2026-06-01T10:00:00Z",
+       "end": "2026-06-01T11:00:00Z",
+       "energy_wh": 1000,
+       "power_w": 150
+      },
+      {
+       "power_known": true,
+       "start": "2026-06-01T11:00:00Z",
+       "end": "2026-06-01T12:00:00Z",
+       "energy_wh": 1000,
+       "power_w": 500
+      },
+      {
+       "power_known": true,
+       "start": "2026-06-01T12:00:00Z",
+       "end": "2026-06-01T13:00:00Z",
+       "energy_wh": 1000,
+       "power_w": 260
+      }
+     ]
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T10:00:00Z",
+      "ended_at": "2026-06-01T13:00:00Z",
+      "power_w": 500,
+      "quantity": "3.000000",
+      "unit": "小时",
+      "electric_rate": 60,
+      "service_rate": 25,
+      "electric_cents": "180.000000",
+      "service_cents": "75.000000"
+     }
+    ],
+    "basis": "max_power",
+    "electric_cents": 180,
+    "service_cents": 75,
+    "total_cents": 255,
+    "billable_wh": 3000
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cost-free-minutes-hit",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "free_minutes": 30,
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T10:30:00Z",
+     "energy_wh": 500,
+     "samples": null
+    }
+   },
+   "want": {
+    "basis": "energy",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "billable_wh": 0
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cost-free-minutes-exceed",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "free_minutes": 30,
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T10:45:00Z",
+     "energy_wh": 750,
+     "samples": null
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T10:00:00Z",
+      "ended_at": "2026-06-01T10:45:00Z",
+      "power_w": 0,
+      "quantity": "0.750000",
+      "unit": "度",
+      "electric_rate": 45,
+      "service_rate": 25,
+      "electric_cents": "33.750000",
+      "service_cents": "18.750000"
+     }
+    ],
+    "basis": "energy",
+    "electric_cents": 34,
+    "service_cents": 19,
+    "total_cents": 53,
+    "billable_wh": 750
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cost-min-electric-apply",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "min_electric_cents": 500,
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T11:00:00Z",
+     "energy_wh": 1000,
+     "samples": null
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T10:00:00Z",
+      "ended_at": "2026-06-01T11:00:00Z",
+      "power_w": 0,
+      "quantity": "1.000000",
+      "unit": "度",
+      "electric_rate": 45,
+      "service_rate": 25,
+      "electric_cents": "45.000000",
+      "service_cents": "25.000000"
+     }
+    ],
+    "basis": "energy",
+    "electric_cents": 500,
+    "service_cents": 25,
+    "total_cents": 525,
+    "billable_wh": 1000
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cost-span-over-7d",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-09T10:00:00Z",
+     "energy_wh": 1,
+     "samples": null
+    }
+   },
+   "want": {
+    "basis": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "billable_wh": 0
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "cost-end-before-start",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T09:00:00Z",
+     "energy_wh": 1000,
+     "samples": null
+    }
+   },
+   "want": {
+    "basis": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "billable_wh": 0
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "cost-device-mode",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "device_duration",
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T11:00:00Z",
+     "energy_wh": 1000,
+     "samples": null
+    }
+   },
+   "want": {
+    "basis": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "billable_wh": 0
+   },
+   "want_err": "not_server_billed"
+  },
+  {
+   "id": "cost-gap-between-samples",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T13:00:00Z",
+     "energy_wh": 3000,
+     "samples": [
+      {
+       "power_known": false,
+       "start": "2026-06-01T10:10:00Z",
+       "end": "2026-06-01T13:00:00Z",
+       "energy_wh": 3000,
+       "power_w": 0
+      }
+     ]
+    }
+   },
+   "want": {
+    "basis": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "billable_wh": 0
+   },
+   "want_err": "meter_review"
+  },
+  {
+   "id": "cost-realtime-min-electric",
+   "kind": "cost",
+   "input": {
+    "spec": {
+     "mode": "server_realtime_power",
+     "electric": {
+      "basis": "realtime_power",
+      "periods": [
+       {
+        "end_minute": 480,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 30,
+          "service_cents": 10
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 50,
+          "service_cents": 20
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 80,
+          "service_cents": 30
+         }
+        ]
+       },
+       {
+        "end_minute": 1440,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 40,
+          "service_cents": 15
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 60,
+          "service_cents": 25
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 90,
+          "service_cents": 35
+         }
+        ]
+       }
+      ]
+     },
+     "min_electric_cents": 123,
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T10:00:00Z",
+     "end": "2026-06-01T13:00:00Z",
+     "energy_wh": 2500,
+     "samples": [
+      {
+       "power_known": true,
+       "start": "2026-06-01T10:00:00Z",
+       "end": "2026-06-01T13:00:00Z",
+       "energy_wh": 2500,
+       "power_w": 170
+      }
+     ]
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T10:00:00Z",
+      "ended_at": "2026-06-01T13:00:00Z",
+      "power_w": 170,
+      "quantity": "3.000000",
+      "unit": "小时",
+      "electric_rate": 40,
+      "service_rate": 15,
+      "electric_cents": "120.000000",
+      "service_cents": "45.000000"
+     }
+    ],
+    "basis": "realtime_power",
+    "electric_cents": 123,
+    "service_cents": 45,
+    "total_cents": 168,
+    "billable_wh": 2500
+   },
+   "want_err": ""
+  },
+  {
+   "id": "actual-energy-ok",
+   "kind": "price_actual",
+   "input": {
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_wh": 2000,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T02:00:00Z",
+      "ended_at": "2026-06-01T04:00:00Z",
+      "power_w": 0,
+      "quantity": "2.000000",
+      "unit": "度",
+      "electric_rate": 45,
+      "service_rate": 25,
+      "electric_cents": "90.000000",
+      "service_cents": "50.000000"
+     }
+    ],
+    "basis": "energy",
+    "electric_cents": 90,
+    "service_cents": 50,
+    "total_cents": 140,
+    "billable_wh": 2000
+   },
+   "want_err": ""
+  },
+  {
+   "id": "actual-review-required",
+   "kind": "price_actual",
+   "input": {
+    "meter": {
+     "review_required": true,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_wh": 2000,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    }
+   },
+   "want": {
+    "basis": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "billable_wh": 0
+   },
+   "want_err": "meter_review"
+  },
+  {
+   "id": "actual-zero-rule-id",
+   "kind": "price_actual",
+   "input": {
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_wh": 2000,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "rule": {
+     "rule_id": 0,
+     "station_id": 0,
+     "version": 3,
+     "spec": {
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    }
+   },
+   "want": {
+    "basis": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "billable_wh": 0
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "actual-seconds-overrun",
+   "kind": "price_actual",
+   "input": {
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_wh": 2000,
+     "charged_seconds": 8000,
+     "segments": null
+    },
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    }
+   },
+   "want": {
+    "basis": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "billable_wh": 0
+   },
+   "want_err": "meter_review"
+  },
+  {
+   "id": "actual-noseg-cross-rate",
+   "kind": "price_actual",
+   "input": {
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T15:00:00Z",
+     "ended_at": "2026-06-01T18:00:00Z",
+     "charged_wh": 3000,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    }
+   },
+   "want": {
+    "basis": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "billable_wh": 0
+   },
+   "want_err": "meter_review"
+  },
+  {
+   "id": "actual-zero-length-seg",
+   "kind": "price_actual",
+   "input": {
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_wh": 1500,
+     "charged_seconds": 0,
+     "segments": [
+      {
+       "started_at": "2026-06-01T02:00:00Z",
+       "ended_at": "2026-06-01T02:00:00Z",
+       "energy_wh": 0,
+       "peak_w": 0,
+       "power_w": null
+      },
+      {
+       "started_at": "2026-06-01T02:00:00Z",
+       "ended_at": "2026-06-01T04:00:00Z",
+       "energy_wh": 1500,
+       "peak_w": 0,
+       "power_w": null
+      }
+     ]
+    },
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T02:00:00Z",
+      "ended_at": "2026-06-01T02:00:00Z",
+      "power_w": 0,
+      "quantity": "0.000000",
+      "unit": "度",
+      "electric_rate": 45,
+      "service_rate": 25,
+      "electric_cents": "0.000000",
+      "service_cents": "0.000000"
+     },
+     {
+      "started_at": "2026-06-01T02:00:00Z",
+      "ended_at": "2026-06-01T04:00:00Z",
+      "power_w": 0,
+      "quantity": "1.500000",
+      "unit": "度",
+      "electric_rate": 45,
+      "service_rate": 25,
+      "electric_cents": "67.500000",
+      "service_cents": "37.500000"
+     }
+    ],
+    "basis": "energy",
+    "electric_cents": 68,
+    "service_cents": 38,
+    "total_cents": 106,
+    "billable_wh": 1500
+   },
+   "want_err": ""
+  },
+  {
+   "id": "actual-realtime-nil-power",
+   "kind": "price_actual",
+   "input": {
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T03:00:00Z",
+     "charged_wh": 1000,
+     "charged_seconds": 0,
+     "segments": [
+      {
+       "started_at": "2026-06-01T02:00:00Z",
+       "ended_at": "2026-06-01T03:00:00Z",
+       "energy_wh": 1000,
+       "peak_w": 300,
+       "power_w": null
+      }
+     ]
+    },
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "mode": "server_realtime_power",
+      "electric": {
+       "basis": "realtime_power",
+       "periods": [
+        {
+         "end_minute": 480,
+         "tiers": [
+          {
+           "max_watts": 200,
+           "electric_cents": 30,
+           "service_cents": 10
+          },
+          {
+           "max_watts": 500,
+           "electric_cents": 50,
+           "service_cents": 20
+          },
+          {
+           "max_watts": 9990,
+           "electric_cents": 80,
+           "service_cents": 30
+          }
+         ]
+        },
+        {
+         "end_minute": 1440,
+         "tiers": [
+          {
+           "max_watts": 200,
+           "electric_cents": 40,
+           "service_cents": 15
+          },
+          {
+           "max_watts": 500,
+           "electric_cents": 60,
+           "service_cents": 25
+          },
+          {
+           "max_watts": 9990,
+           "electric_cents": 90,
+           "service_cents": 35
+          }
+         ]
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    }
+   },
+   "want": {
+    "basis": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "billable_wh": 0
+   },
+   "want_err": "meter_review"
+  },
+  {
+   "id": "actual-maxpower-zero-peak-known",
+   "kind": "price_actual",
+   "input": {
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T03:00:00Z",
+     "charged_wh": 1000,
+     "charged_seconds": 0,
+     "segments": [
+      {
+       "started_at": "2026-06-01T02:00:00Z",
+       "ended_at": "2026-06-01T03:00:00Z",
+       "energy_wh": 1000,
+       "peak_w": 0,
+       "power_w": 0
+      }
+     ]
+    },
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "mode": "server_max_power",
+      "electric": {
+       "basis": "max_power",
+       "periods": [
+        {
+         "end_minute": 480,
+         "tiers": [
+          {
+           "max_watts": 200,
+           "electric_cents": 30,
+           "service_cents": 10
+          },
+          {
+           "max_watts": 500,
+           "electric_cents": 50,
+           "service_cents": 20
+          },
+          {
+           "max_watts": 9990,
+           "electric_cents": 80,
+           "service_cents": 30
+          }
+         ]
+        },
+        {
+         "end_minute": 1440,
+         "tiers": [
+          {
+           "max_watts": 200,
+           "electric_cents": 40,
+           "service_cents": 15
+          },
+          {
+           "max_watts": 500,
+           "electric_cents": 60,
+           "service_cents": 25
+          },
+          {
+           "max_watts": 9990,
+           "electric_cents": 90,
+           "service_cents": 35
+          }
+         ]
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    }
+   },
+   "want": {
+    "fragments": [
+     {
+      "started_at": "2026-06-01T02:00:00Z",
+      "ended_at": "2026-06-01T03:00:00Z",
+      "power_w": 0,
+      "quantity": "1.000000",
+      "unit": "小时",
+      "electric_rate": 40,
+      "service_rate": 15,
+      "electric_cents": "40.000000",
+      "service_cents": "15.000000"
+     }
+    ],
+    "basis": "max_power",
+    "electric_cents": 40,
+    "service_cents": 15,
+    "total_cents": 55,
+    "billable_wh": 1000
+   },
+   "want_err": ""
+  },
+  {
+   "id": "settle-duration-early",
+   "kind": "settle",
+   "input": {
+    "actual": null,
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T02:50:00Z",
+     "charged_wh": 0,
+     "charged_seconds": 3000,
+     "segments": null
+    },
+    "offer": {
+     "id": 101,
+     "station_id": 1,
+     "name": "2小时",
+     "mode": "duration",
+     "price_cents": 300,
+     "duration_minutes": 120
+    },
+    "spec": {
+     "scheme": {
+      "name": "时长方案",
+      "remark": "",
+      "packages": [
+       {
+        "id": 1,
+        "name": "2小时",
+        "mode": "duration",
+        "price_cents": 300,
+        "minutes": 120
+       }
+      ],
+      "policy": {
+       "free_minutes": 0,
+       "min_electric_cents": 0,
+       "max_minutes": 600,
+       "loss_rate_bp": 0,
+       "channel_bp": 10000
+      },
+      "stop": {
+       "stop_when_full": false
+      },
+      "card": {
+       "package_id": 0,
+       "max_minutes": 600
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     },
+     "mode": "device_duration",
+     "time_charge": {
+      "stop_when_full": false
+     },
+     "card_max_minutes": 600,
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": {
+    "mode": "",
+    "executor": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "estimated": false
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "settle-duration-overtime",
+   "kind": "settle",
+   "input": {
+    "actual": {
+     "stop_reason": "",
+     "used_seconds": 9000,
+     "used_milli_wh": 0,
+     "peak_watts": 0,
+     "spent_cents": 0,
+     "reported": true
+    },
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:30:00Z",
+     "charged_wh": 0,
+     "charged_seconds": 9000,
+     "segments": null
+    },
+    "offer": {
+     "id": 101,
+     "station_id": 1,
+     "name": "2小时",
+     "mode": "duration",
+     "price_cents": 300,
+     "duration_minutes": 120
+    },
+    "spec": {
+     "scheme": {
+      "name": "时长方案",
+      "remark": "",
+      "packages": [
+       {
+        "id": 1,
+        "name": "2小时",
+        "mode": "duration",
+        "price_cents": 300,
+        "minutes": 120
+       }
+      ],
+      "policy": {
+       "free_minutes": 0,
+       "min_electric_cents": 0,
+       "max_minutes": 600,
+       "loss_rate_bp": 0,
+       "channel_bp": 10000
+      },
+      "stop": {
+       "stop_when_full": false
+      },
+      "card": {
+       "package_id": 0,
+       "max_minutes": 600
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     },
+     "mode": "device_duration",
+     "time_charge": {
+      "stop_when_full": false
+     },
+     "card_max_minutes": 600,
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": {
+    "mode": "",
+    "executor": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "estimated": false
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "settle-energy-partial",
+   "kind": "settle",
+   "input": {
+    "actual": null,
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T03:00:00Z",
+     "charged_wh": 3200,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "offer": {
+     "energy_wh": 5000,
+     "id": 102,
+     "station_id": 1,
+     "name": "5度",
+     "mode": "energy",
+     "price_cents": 300,
+     "duration_minutes": 0
+    },
+    "spec": {
+     "scheme": {
+      "name": "电量方案",
+      "remark": "",
+      "energy": {
+       "electric_cents": 40,
+       "service_cents": 20
+      },
+      "packages": [
+       {
+        "id": 1,
+        "name": "5度",
+        "mode": "energy",
+        "price_cents": 300,
+        "kwh": 5
+       }
+      ],
+      "policy": {
+       "free_minutes": 0,
+       "min_electric_cents": 0,
+       "max_minutes": 600,
+       "loss_rate_bp": 0,
+       "channel_bp": 10000
+      },
+      "stop": {
+       "stop_when_full": false
+      },
+      "card": {
+       "package_id": 0,
+       "max_minutes": 600
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     },
+     "mode": "device_energy",
+     "time_charge": {
+      "stop_when_full": false
+     },
+     "card_max_minutes": 600,
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": {
+    "mode": "",
+    "executor": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "estimated": false
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "settle-energy-capped",
+   "kind": "settle",
+   "input": {
+    "actual": null,
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_wh": 6000,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "offer": {
+     "energy_wh": 5000,
+     "id": 102,
+     "station_id": 1,
+     "name": "5度",
+     "mode": "energy",
+     "price_cents": 300,
+     "duration_minutes": 0
+    },
+    "spec": {
+     "scheme": {
+      "name": "电量方案",
+      "remark": "",
+      "energy": {
+       "electric_cents": 40,
+       "service_cents": 20
+      },
+      "packages": [
+       {
+        "id": 1,
+        "name": "5度",
+        "mode": "energy",
+        "price_cents": 300,
+        "kwh": 5
+       }
+      ],
+      "policy": {
+       "free_minutes": 0,
+       "min_electric_cents": 0,
+       "max_minutes": 600,
+       "loss_rate_bp": 0,
+       "channel_bp": 10000
+      },
+      "stop": {
+       "stop_when_full": false
+      },
+      "card": {
+       "package_id": 0,
+       "max_minutes": 600
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     },
+     "mode": "device_energy",
+     "time_charge": {
+      "stop_when_full": false
+     },
+     "card_max_minutes": 600,
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": {
+    "mode": "",
+    "executor": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "estimated": false
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "settle-amount-capped",
+   "kind": "settle",
+   "input": {
+    "actual": null,
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T06:00:00Z",
+     "charged_wh": 6000,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "offer": {
+     "id": 103,
+     "station_id": 1,
+     "name": "3元",
+     "mode": "amount",
+     "price_cents": 300,
+     "duration_minutes": 0
+    },
+    "spec": {
+     "scheme": {
+      "name": "金额方案",
+      "remark": "",
+      "amount": {
+       "algorithm": "server_energy",
+       "periods": [
+        {
+         "service_cents": 20,
+         "end_minute": 1440,
+         "electric_cents": 40
+        }
+       ]
+      },
+      "packages": [
+       {
+        "id": 1,
+        "name": "3元",
+        "mode": "amount",
+        "price_cents": 300
+       }
+      ],
+      "policy": {
+       "free_minutes": 0,
+       "min_electric_cents": 0,
+       "max_minutes": 600,
+       "loss_rate_bp": 0,
+       "channel_bp": 10000
+      },
+      "stop": {
+       "stop_when_full": false
+      },
+      "card": {
+       "package_id": 0,
+       "max_minutes": 600
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     },
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 20,
+        "end_minute": 1440,
+        "electric_cents": 40
+       }
+      ]
+     },
+     "time_charge": {
+      "stop_when_full": false,
+      "max_minutes": 600
+     },
+     "card_max_minutes": 600,
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": {
+    "mode": "",
+    "executor": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "estimated": false
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "settle-amount-under",
+   "kind": "settle",
+   "input": {
+    "actual": null,
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T03:00:00Z",
+     "charged_wh": 800,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "offer": {
+     "id": 103,
+     "station_id": 1,
+     "name": "3元",
+     "mode": "amount",
+     "price_cents": 300,
+     "duration_minutes": 0
+    },
+    "spec": {
+     "scheme": {
+      "name": "金额方案",
+      "remark": "",
+      "amount": {
+       "algorithm": "server_energy",
+       "periods": [
+        {
+         "service_cents": 20,
+         "end_minute": 1440,
+         "electric_cents": 40
+        }
+       ]
+      },
+      "packages": [
+       {
+        "id": 1,
+        "name": "3元",
+        "mode": "amount",
+        "price_cents": 300
+       }
+      ],
+      "policy": {
+       "free_minutes": 0,
+       "min_electric_cents": 0,
+       "max_minutes": 600,
+       "loss_rate_bp": 0,
+       "channel_bp": 10000
+      },
+      "stop": {
+       "stop_when_full": false
+      },
+      "card": {
+       "package_id": 0,
+       "max_minutes": 600
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     },
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 20,
+        "end_minute": 1440,
+        "electric_cents": 40
+       }
+      ]
+     },
+     "time_charge": {
+      "stop_when_full": false,
+      "max_minutes": 600
+     },
+     "card_max_minutes": 600,
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": {
+    "mode": "",
+    "executor": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "estimated": false
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "settle-device-power",
+   "kind": "settle",
+   "input": {
+    "actual": {
+     "stop_reason": "",
+     "used_seconds": 3600,
+     "used_milli_wh": 1000000,
+     "peak_watts": 0,
+     "spent_cents": 380,
+     "reported": true
+    },
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T03:00:00Z",
+     "charged_wh": 1000,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "offer": {
+     "id": 104,
+     "station_id": 1,
+     "name": "档位",
+     "mode": "power",
+     "price_cents": 500,
+     "duration_minutes": 0
+    },
+    "spec": {
+     "mode": "device_power",
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": {
+    "mode": "",
+    "executor": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "estimated": false
+   },
+   "want_err": "no_paid_amount"
+  },
+  {
+   "id": "settle-device-duration-unreported",
+   "kind": "settle",
+   "input": {
+    "actual": null,
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T03:00:00Z",
+     "charged_wh": 0,
+     "charged_seconds": 3600,
+     "segments": null
+    },
+    "offer": {
+     "id": 105,
+     "station_id": 1,
+     "name": "1小时",
+     "mode": "duration",
+     "price_cents": 100,
+     "duration_minutes": 60
+    },
+    "spec": {
+     "mode": "device_duration",
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": {
+    "mode": "device_duration",
+    "executor": "device",
+    "electric_cents": 0,
+    "service_cents": 100,
+    "total_cents": 100,
+    "estimated": true
+   },
+   "want_err": ""
+  },
+  {
+   "id": "settle-meter-review",
+   "kind": "settle",
+   "input": {
+    "actual": null,
+    "meter": {
+     "review_required": true,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T03:00:00Z",
+     "charged_wh": 1000,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "offer": {
+     "id": 103,
+     "station_id": 1,
+     "name": "3元",
+     "mode": "amount",
+     "price_cents": 300,
+     "duration_minutes": 0
+    },
+    "spec": {
+     "scheme": {
+      "name": "金额方案",
+      "remark": "",
+      "amount": {
+       "algorithm": "server_energy",
+       "periods": [
+        {
+         "service_cents": 20,
+         "end_minute": 1440,
+         "electric_cents": 40
+        }
+       ]
+      },
+      "packages": [
+       {
+        "id": 1,
+        "name": "3元",
+        "mode": "amount",
+        "price_cents": 300
+       }
+      ],
+      "policy": {
+       "free_minutes": 0,
+       "min_electric_cents": 0,
+       "max_minutes": 600,
+       "loss_rate_bp": 0,
+       "channel_bp": 10000
+      },
+      "stop": {
+       "stop_when_full": false
+      },
+      "card": {
+       "package_id": 0,
+       "max_minutes": 600
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     },
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 20,
+        "end_minute": 1440,
+        "electric_cents": 40
+       }
+      ]
+     },
+     "time_charge": {
+      "stop_when_full": false,
+      "max_minutes": 600
+     },
+     "card_max_minutes": 600,
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": {
+    "mode": "",
+    "executor": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "estimated": false
+   },
+   "want_err": "meter_review"
+  },
+  {
+   "id": "settle-price-mismatch",
+   "kind": "settle",
+   "input": {
+    "actual": null,
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T03:00:00Z",
+     "charged_wh": 1000,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "offer": {
+     "id": 103,
+     "station_id": 1,
+     "name": "3元",
+     "mode": "amount",
+     "price_cents": 999,
+     "duration_minutes": 0
+    },
+    "spec": {
+     "scheme": {
+      "name": "金额方案",
+      "remark": "",
+      "amount": {
+       "algorithm": "server_energy",
+       "periods": [
+        {
+         "service_cents": 20,
+         "end_minute": 1440,
+         "electric_cents": 40
+        }
+       ]
+      },
+      "packages": [
+       {
+        "id": 1,
+        "name": "3元",
+        "mode": "amount",
+        "price_cents": 300
+       }
+      ],
+      "policy": {
+       "free_minutes": 0,
+       "min_electric_cents": 0,
+       "max_minutes": 600,
+       "loss_rate_bp": 0,
+       "channel_bp": 10000
+      },
+      "stop": {
+       "stop_when_full": false
+      },
+      "card": {
+       "package_id": 0,
+       "max_minutes": 600
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     },
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 20,
+        "end_minute": 1440,
+        "electric_cents": 40
+       }
+      ]
+     },
+     "time_charge": {
+      "stop_when_full": false,
+      "max_minutes": 600
+     },
+     "card_max_minutes": 600,
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": {
+    "mode": "",
+    "executor": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "estimated": false
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "measured-basic",
+   "kind": "measured",
+   "input": {
+    "samples": [
+     {
+      "device_id": "DC001",
+      "received_at": "2026-06-01T03:00:00Z",
+      "readings": [
+       {
+        "port": 1,
+        "charged_seconds": 3600,
+        "charged_mwh": 900000,
+        "power_w": 250
+       }
+      ]
+     },
+     {
+      "device_id": "DC001",
+      "received_at": "2026-06-01T04:00:00Z",
+      "readings": [
+       {
+        "port": 1,
+        "charged_seconds": 7200,
+        "charged_mwh": 1800000,
+        "power_w": 300
+       }
+      ]
+     }
+    ],
+    "span": {
+     "device_id": "DC001",
+     "port": 1,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T05:00:00Z",
+     "charged_seconds": 10800,
+     "energy_wh": 3000
+    },
+    "start": "2026-06-01T02:00:00Z"
+   },
+   "want": [
+    {
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T03:00:00Z",
+     "energy_wh": 900
+    },
+    {
+     "started_at": "2026-06-01T03:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "energy_wh": 900
+    },
+    {
+     "started_at": "2026-06-01T04:00:00Z",
+     "ended_at": "2026-06-01T05:00:00Z",
+     "energy_wh": 1200
+    }
+   ],
+   "want_err": ""
+  },
+  {
+   "id": "measured-tail",
+   "kind": "measured",
+   "input": {
+    "samples": [
+     {
+      "device_id": "DC001",
+      "received_at": "2026-06-01T03:10:00Z",
+      "readings": [
+       {
+        "port": 2,
+        "charged_seconds": 4200,
+        "charged_mwh": 1200000,
+        "power_w": 350
+       }
+      ]
+     }
+    ],
+    "span": {
+     "device_id": "DC001",
+     "port": 2,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_seconds": 7200,
+     "energy_wh": 2000
+    },
+    "start": "2026-06-01T02:00:00Z"
+   },
+   "want": [
+    {
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T03:10:00Z",
+     "energy_wh": 1200
+    },
+    {
+     "started_at": "2026-06-01T03:10:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "energy_wh": 800
+    }
+   ],
+   "want_err": ""
+  },
+  {
+   "id": "measured-preskip",
+   "kind": "measured",
+   "input": {
+    "samples": [
+     {
+      "device_id": "DC001",
+      "received_at": "2026-06-01T01:59:55Z",
+      "readings": [
+       {
+        "port": 1,
+        "charged_seconds": 0,
+        "charged_mwh": 0,
+        "power_w": 220
+       }
+      ]
+     }
+    ],
+    "span": {
+     "device_id": "DC001",
+     "port": 1,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_seconds": 7200,
+     "energy_wh": 2000
+    },
+    "start": "2026-06-01T02:00:00Z"
+   },
+   "want": null,
+   "want_err": ""
+  },
+  {
+   "id": "measured-clock-skew",
+   "kind": "measured",
+   "input": {
+    "samples": [],
+    "span": {
+     "device_id": "DC001",
+     "port": 1,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_seconds": 7200,
+     "energy_wh": 2000
+    },
+    "start": "2026-06-01T02:00:30Z"
+   },
+   "want": null,
+   "want_err": ""
+  },
+  {
+   "id": "measured-mwh-not-k",
+   "kind": "measured",
+   "input": {
+    "samples": [
+     {
+      "device_id": "DC001",
+      "received_at": "2026-06-01T03:00:00Z",
+      "readings": [
+       {
+        "port": 1,
+        "charged_seconds": 3600,
+        "charged_mwh": 900500,
+        "power_w": 250
+       }
+      ]
+     }
+    ],
+    "span": {
+     "device_id": "DC001",
+     "port": 1,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_seconds": 7200,
+     "energy_wh": 2000
+    },
+    "start": "2026-06-01T02:00:00Z"
+   },
+   "want": null,
+   "want_err": ""
+  },
+  {
+   "id": "measured-time-back",
+   "kind": "measured",
+   "input": {
+    "samples": [
+     {
+      "device_id": "DC001",
+      "received_at": "2026-06-01T03:30:00Z",
+      "readings": [
+       {
+        "port": 1,
+        "charged_seconds": 5400,
+        "charged_mwh": 1500000,
+        "power_w": 250
+       },
+       {
+        "port": 1,
+        "charged_seconds": 1800,
+        "charged_mwh": 1400000,
+        "power_w": 250
+       }
+      ]
+     }
+    ],
+    "span": {
+     "device_id": "DC001",
+     "port": 1,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_seconds": 7200,
+     "energy_wh": 2000
+    },
+    "start": "2026-06-01T02:00:00Z"
+   },
+   "want": null,
+   "want_err": ""
+  },
+  {
+   "id": "measured-total-mismatch",
+   "kind": "measured",
+   "input": {
+    "samples": [
+     {
+      "device_id": "DC001",
+      "received_at": "2026-06-01T04:00:00Z",
+      "readings": [
+       {
+        "port": 1,
+        "charged_seconds": 7200,
+        "charged_mwh": 1800000,
+        "power_w": 250
+       }
+      ]
+     }
+    ],
+    "span": {
+     "device_id": "DC001",
+     "port": 1,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_seconds": 7200,
+     "energy_wh": 2000
+    },
+    "start": "2026-06-01T02:00:00Z"
+   },
+   "want": null,
+   "want_err": ""
+  },
+  {
+   "id": "measured-span-mismatch",
+   "kind": "measured",
+   "input": {
+    "samples": [],
+    "span": {
+     "device_id": "DC001",
+     "port": 1,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_seconds": 7000,
+     "energy_wh": 2000
+    },
+    "start": "2026-06-01T02:00:00Z"
+   },
+   "want": null,
+   "want_err": ""
+  },
+  {
+   "id": "measured-no-samples",
+   "kind": "measured",
+   "input": {
+    "samples": [],
+    "span": {
+     "device_id": "DC001",
+     "port": 1,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_seconds": 7200,
+     "energy_wh": 2000
+    },
+    "start": "2026-06-01T02:00:00Z"
+   },
+   "want": null,
+   "want_err": ""
+  },
+  {
+   "id": "measured-join-window-out",
+   "kind": "measured",
+   "input": {
+    "samples": [
+     {
+      "device_id": "DC001",
+      "received_at": "2026-06-01T02:30:00Z",
+      "readings": [
+       {
+        "port": 1,
+        "charged_seconds": 1800,
+        "charged_mwh": 500000,
+        "power_w": 250
+       }
+      ]
+     }
+    ],
+    "span": {
+     "device_id": "DC001",
+     "port": 1,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_seconds": 7200,
+     "energy_wh": 2000
+    },
+    "start": "2026-06-01T02:00:00Z"
+   },
+   "want": [
+    {
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T02:30:00Z",
+     "energy_wh": 500
+    },
+    {
+     "started_at": "2026-06-01T02:30:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "energy_wh": 1500
+    }
+   ],
+   "want_err": ""
+  },
+  {
+   "id": "estimate-energy-ok",
+   "kind": "estimate",
+   "input": {
+    "energy": "3.5",
+    "minutes": 120,
+    "prepaid_cents": 0,
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    },
+    "start": "2026-06-01T02:00:00Z"
+   },
+   "want": {
+    "estimated_kwh": "3.500",
+    "estimated_minutes": 120,
+    "mode": "server_energy",
+    "basis": "energy",
+    "electric_cents": 158,
+    "service_cents": 88,
+    "total_cents": 246,
+    "charge_mode": 0,
+    "charge_quantity": 120
+   },
+   "want_err": ""
+  },
+  {
+   "id": "estimate-energy-remainder",
+   "kind": "estimate",
+   "input": {
+    "energy": "0.333",
+    "minutes": 60,
+    "prepaid_cents": 0,
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    },
+    "start": "2026-06-01T02:00:00Z"
+   },
+   "want": {
+    "estimated_kwh": "0.333",
+    "estimated_minutes": 60,
+    "mode": "server_energy",
+    "basis": "energy",
+    "electric_cents": 15,
+    "service_cents": 8,
+    "total_cents": 23,
+    "charge_mode": 0,
+    "charge_quantity": 60
+   },
+   "want_err": ""
+  },
+  {
+   "id": "estimate-format-bad",
+   "kind": "estimate",
+   "input": {
+    "energy": "3.5555",
+    "minutes": 60,
+    "prepaid_cents": 0,
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    },
+    "start": "2026-06-01T02:00:00Z"
+   },
+   "want": {
+    "estimated_kwh": "",
+    "estimated_minutes": 0,
+    "mode": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "charge_mode": 0,
+    "charge_quantity": 0
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "estimate-over-range",
+   "kind": "estimate",
+   "input": {
+    "energy": "100.001",
+    "minutes": 60,
+    "prepaid_cents": 0,
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    },
+    "start": "2026-06-01T02:00:00Z"
+   },
+   "want": {
+    "estimated_kwh": "",
+    "estimated_minutes": 0,
+    "mode": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "charge_mode": 0,
+    "charge_quantity": 0
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "estimate-minutes-over",
+   "kind": "estimate",
+   "input": {
+    "energy": "3",
+    "minutes": 601,
+    "prepaid_cents": 0,
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    },
+    "start": "2026-06-01T02:00:00Z"
+   },
+   "want": {
+    "estimated_kwh": "",
+    "estimated_minutes": 0,
+    "mode": "",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 0,
+    "charge_mode": 0,
+    "charge_quantity": 0
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "estimate-device-prepaid",
+   "kind": "estimate",
+   "input": {
+    "energy": "3",
+    "minutes": 120,
+    "prepaid_cents": 300,
+    "rule": {
+     "rule_id": 8,
+     "station_id": 1,
+     "version": 1,
+     "spec": {
+      "mode": "device_duration",
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    },
+    "start": "2026-06-01T02:00:00Z"
+   },
+   "want": {
+    "estimated_kwh": "3.000",
+    "estimated_minutes": 120,
+    "mode": "device_duration",
+    "electric_cents": 0,
+    "service_cents": 0,
+    "total_cents": 300,
+    "prepaid_cents": 300,
+    "charge_mode": 0,
+    "charge_quantity": 120
+   },
+   "want_err": ""
+  },
+  {
+   "id": "budget-exact-stop",
+   "kind": "budget",
+   "input": {
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T10:00:00Z",
+     "ended_at": "2026-06-01T12:00:00Z",
+     "charged_wh": 3600,
+     "charged_seconds": 0,
+     "segments": [
+      {
+       "started_at": "2026-06-01T10:00:00Z",
+       "ended_at": "2026-06-01T11:00:00Z",
+       "energy_wh": 1500,
+       "peak_w": 0,
+       "power_w": null
+      },
+      {
+       "started_at": "2026-06-01T11:00:00Z",
+       "ended_at": "2026-06-01T12:00:00Z",
+       "energy_wh": 2100,
+       "peak_w": 0,
+       "power_w": null
+      }
+     ]
+    },
+    "offer": {
+     "id": 101,
+     "station_id": 1,
+     "name": "3元",
+     "mode": "amount",
+     "price_cents": 300,
+     "duration_minutes": 0
+    },
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "scheme": {
+       "name": "预算方案",
+       "remark": "",
+       "amount": {
+        "algorithm": "server_energy",
+        "periods": [
+         {
+          "service_cents": 17,
+          "end_minute": 480,
+          "electric_cents": 33
+         },
+         {
+          "service_cents": 25,
+          "end_minute": 1440,
+          "electric_cents": 45
+         }
+        ]
+       },
+       "packages": [
+        {
+         "id": 1,
+         "name": "3元",
+         "mode": "amount",
+         "price_cents": 300
+        }
+       ],
+       "policy": {
+        "free_minutes": 0,
+        "min_electric_cents": 0,
+        "max_minutes": 600,
+        "loss_rate_bp": 0,
+        "channel_bp": 10000
+       },
+       "stop": {
+        "stop_when_full": false
+       },
+       "card": {
+        "package_id": 0,
+        "max_minutes": 0
+       },
+       "display": {
+        "show_energy": false,
+        "show_power": false,
+        "show_tariff": false,
+        "show_fee_split": false,
+        "fee_split_inline": false,
+        "show_fee_on_end": false,
+        "show_method": false,
+        "show_rule": false,
+        "hide_unit": false
+       }
+      },
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    }
+   },
+   "want": {
+    "fee": null,
+    "plan": {
+     "ShouldStop": false,
+     "Reason": "",
+     "AccruedCents": 0,
+     "GraceSeconds": 0
+    }
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "budget-exact-run",
+   "kind": "budget",
+   "input": {
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T10:00:00Z",
+     "ended_at": "2026-06-01T11:00:00Z",
+     "charged_wh": 1200,
+     "charged_seconds": 0,
+     "segments": [
+      {
+       "started_at": "2026-06-01T10:00:00Z",
+       "ended_at": "2026-06-01T11:00:00Z",
+       "energy_wh": 1200,
+       "peak_w": 0,
+       "power_w": null
+      }
+     ]
+    },
+    "offer": {
+     "id": 101,
+     "station_id": 1,
+     "name": "3元",
+     "mode": "amount",
+     "price_cents": 300,
+     "duration_minutes": 0
+    },
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "scheme": {
+       "name": "预算方案",
+       "remark": "",
+       "amount": {
+        "algorithm": "server_energy",
+        "periods": [
+         {
+          "service_cents": 17,
+          "end_minute": 480,
+          "electric_cents": 33
+         },
+         {
+          "service_cents": 25,
+          "end_minute": 1440,
+          "electric_cents": 45
+         }
+        ]
+       },
+       "packages": [
+        {
+         "id": 1,
+         "name": "3元",
+         "mode": "amount",
+         "price_cents": 300
+        }
+       ],
+       "policy": {
+        "free_minutes": 0,
+        "min_electric_cents": 0,
+        "max_minutes": 600,
+        "loss_rate_bp": 0,
+        "channel_bp": 10000
+       },
+       "stop": {
+        "stop_when_full": false
+       },
+       "card": {
+        "package_id": 0,
+        "max_minutes": 0
+       },
+       "display": {
+        "show_energy": false,
+        "show_power": false,
+        "show_tariff": false,
+        "show_fee_split": false,
+        "fee_split_inline": false,
+        "show_fee_on_end": false,
+        "show_method": false,
+        "show_rule": false,
+        "hide_unit": false
+       }
+      },
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    }
+   },
+   "want": {
+    "fee": null,
+    "plan": {
+     "ShouldStop": false,
+     "Reason": "",
+     "AccruedCents": 0,
+     "GraceSeconds": 0
+    }
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "budget-lower-bound-stop",
+   "kind": "budget",
+   "input": {
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T10:00:00Z",
+     "ended_at": "2026-06-01T12:00:00Z",
+     "charged_wh": 3600,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "offer": {
+     "id": 101,
+     "station_id": 1,
+     "name": "3元",
+     "mode": "amount",
+     "price_cents": 300,
+     "duration_minutes": 0
+    },
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "scheme": {
+       "name": "预算方案",
+       "remark": "",
+       "amount": {
+        "algorithm": "server_energy",
+        "periods": [
+         {
+          "service_cents": 17,
+          "end_minute": 480,
+          "electric_cents": 33
+         },
+         {
+          "service_cents": 25,
+          "end_minute": 1440,
+          "electric_cents": 45
+         }
+        ]
+       },
+       "packages": [
+        {
+         "id": 1,
+         "name": "3元",
+         "mode": "amount",
+         "price_cents": 300
+        }
+       ],
+       "policy": {
+        "free_minutes": 0,
+        "min_electric_cents": 0,
+        "max_minutes": 600,
+        "loss_rate_bp": 0,
+        "channel_bp": 10000
+       },
+       "stop": {
+        "stop_when_full": false
+       },
+       "card": {
+        "package_id": 0,
+        "max_minutes": 0
+       },
+       "display": {
+        "show_energy": false,
+        "show_power": false,
+        "show_tariff": false,
+        "show_fee_split": false,
+        "fee_split_inline": false,
+        "show_fee_on_end": false,
+        "show_method": false,
+        "show_rule": false,
+        "hide_unit": false
+       }
+      },
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    }
+   },
+   "want": {
+    "fee": null,
+    "plan": {
+     "ShouldStop": false,
+     "Reason": "",
+     "AccruedCents": 0,
+     "GraceSeconds": 0
+    }
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "budget-lower-bound-run",
+   "kind": "budget",
+   "input": {
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T10:00:00Z",
+     "ended_at": "2026-06-01T11:00:00Z",
+     "charged_wh": 700,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "offer": {
+     "id": 101,
+     "station_id": 1,
+     "name": "3元",
+     "mode": "amount",
+     "price_cents": 300,
+     "duration_minutes": 0
+    },
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "scheme": {
+       "name": "预算方案",
+       "remark": "",
+       "amount": {
+        "algorithm": "server_energy",
+        "periods": [
+         {
+          "service_cents": 17,
+          "end_minute": 480,
+          "electric_cents": 33
+         },
+         {
+          "service_cents": 25,
+          "end_minute": 1440,
+          "electric_cents": 45
+         }
+        ]
+       },
+       "packages": [
+        {
+         "id": 1,
+         "name": "3元",
+         "mode": "amount",
+         "price_cents": 300
+        }
+       ],
+       "policy": {
+        "free_minutes": 0,
+        "min_electric_cents": 0,
+        "max_minutes": 600,
+        "loss_rate_bp": 0,
+        "channel_bp": 10000
+       },
+       "stop": {
+        "stop_when_full": false
+       },
+       "card": {
+        "package_id": 0,
+        "max_minutes": 0
+       },
+       "display": {
+        "show_energy": false,
+        "show_power": false,
+        "show_tariff": false,
+        "show_fee_split": false,
+        "fee_split_inline": false,
+        "show_fee_on_end": false,
+        "show_method": false,
+        "show_rule": false,
+        "hide_unit": false
+       }
+      },
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    }
+   },
+   "want": {
+    "fee": null,
+    "plan": {
+     "ShouldStop": false,
+     "Reason": "",
+     "AccruedCents": 0,
+     "GraceSeconds": 0
+    }
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "budget-bad-offer",
+   "kind": "budget",
+   "input": {
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T10:00:00Z",
+     "ended_at": "2026-06-01T11:00:00Z",
+     "charged_wh": 1000,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "offer": {
+     "energy_wh": 5000,
+     "id": 101,
+     "station_id": 1,
+     "name": "x",
+     "mode": "energy",
+     "price_cents": 300,
+     "duration_minutes": 0
+    },
+    "rule": {
+     "rule_id": 7,
+     "station_id": 1,
+     "version": 3,
+     "spec": {
+      "scheme": {
+       "name": "预算方案",
+       "remark": "",
+       "amount": {
+        "algorithm": "server_energy",
+        "periods": [
+         {
+          "service_cents": 17,
+          "end_minute": 480,
+          "electric_cents": 33
+         },
+         {
+          "service_cents": 25,
+          "end_minute": 1440,
+          "electric_cents": 45
+         }
+        ]
+       },
+       "packages": [
+        {
+         "id": 1,
+         "name": "3元",
+         "mode": "amount",
+         "price_cents": 300
+        }
+       ],
+       "policy": {
+        "free_minutes": 0,
+        "min_electric_cents": 0,
+        "max_minutes": 600,
+        "loss_rate_bp": 0,
+        "channel_bp": 10000
+       },
+       "stop": {
+        "stop_when_full": false
+       },
+       "card": {
+        "package_id": 0,
+        "max_minutes": 0
+       },
+       "display": {
+        "show_energy": false,
+        "show_power": false,
+        "show_tariff": false,
+        "show_fee_split": false,
+        "fee_split_inline": false,
+        "show_fee_on_end": false,
+        "show_method": false,
+        "show_rule": false,
+        "hide_unit": false
+       }
+      },
+      "mode": "server_energy",
+      "electric": {
+       "basis": "energy",
+       "periods": [
+        {
+         "service_cents": 17,
+         "end_minute": 480,
+         "electric_cents": 33
+        },
+        {
+         "service_cents": 25,
+         "end_minute": 1440,
+         "electric_cents": 45
+        }
+       ]
+      },
+      "display": {
+       "show_energy": false,
+       "show_power": false,
+       "show_tariff": false,
+       "show_fee_split": false,
+       "fee_split_inline": false,
+       "show_fee_on_end": false,
+       "show_method": false,
+       "show_rule": false,
+       "hide_unit": false
+      }
+     }
+    }
+   },
+   "want": {
+    "fee": null,
+    "plan": {
+     "ShouldStop": false,
+     "Reason": "",
+     "AccruedCents": 0,
+     "GraceSeconds": 0
+    }
+   },
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "cutoff-duration",
+   "kind": "cutoff",
+   "input": {
+    "cutoff": "2026-06-01T02:50:00Z",
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_wh": 0,
+     "charged_seconds": 7200,
+     "segments": null
+    },
+    "spec": {
+     "mode": "device_duration",
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": {
+    "review_required": false,
+    "started_at": "2026-06-01T02:00:00Z",
+    "ended_at": "2026-06-01T02:50:00Z",
+    "charged_wh": 0,
+    "charged_seconds": 3000,
+    "segments": null
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cutoff-energy-cross-seg",
+   "kind": "cutoff",
+   "input": {
+    "cutoff": "2026-06-01T04:30:00Z",
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T05:00:00Z",
+     "charged_wh": 3000,
+     "charged_seconds": 0,
+     "segments": [
+      {
+       "started_at": "2026-06-01T02:00:00Z",
+       "ended_at": "2026-06-01T04:00:00Z",
+       "energy_wh": 2000,
+       "peak_w": 0,
+       "power_w": null
+      },
+      {
+       "started_at": "2026-06-01T04:00:00Z",
+       "ended_at": "2026-06-01T05:00:00Z",
+       "energy_wh": 1000,
+       "peak_w": 0,
+       "power_w": null
+      }
+     ]
+    },
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": null,
+   "want_err": "meter_review"
+  },
+  {
+   "id": "cutoff-realtime-shrink",
+   "kind": "cutoff",
+   "input": {
+    "cutoff": "2026-06-01T04:30:00Z",
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T05:00:00Z",
+     "charged_wh": 3000,
+     "charged_seconds": 0,
+     "segments": [
+      {
+       "started_at": "2026-06-01T02:00:00Z",
+       "ended_at": "2026-06-01T04:00:00Z",
+       "energy_wh": 2000,
+       "peak_w": 300,
+       "power_w": 300
+      },
+      {
+       "started_at": "2026-06-01T04:00:00Z",
+       "ended_at": "2026-06-01T05:00:00Z",
+       "energy_wh": 1000,
+       "peak_w": 250,
+       "power_w": 250
+      }
+     ]
+    },
+    "spec": {
+     "mode": "server_realtime_power",
+     "electric": {
+      "basis": "realtime_power",
+      "periods": [
+       {
+        "end_minute": 480,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 30,
+          "service_cents": 10
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 50,
+          "service_cents": 20
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 80,
+          "service_cents": 30
+         }
+        ]
+       },
+       {
+        "end_minute": 1440,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 40,
+          "service_cents": 15
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 60,
+          "service_cents": 25
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 90,
+          "service_cents": 35
+         }
+        ]
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": {
+    "review_required": false,
+    "started_at": "2026-06-01T02:00:00Z",
+    "ended_at": "2026-06-01T04:30:00Z",
+    "charged_wh": 3000,
+    "charged_seconds": 9000,
+    "segments": [
+     {
+      "started_at": "2026-06-01T02:00:00Z",
+      "ended_at": "2026-06-01T04:00:00Z",
+      "energy_wh": 2000,
+      "peak_w": 300,
+      "power_w": 300
+     },
+     {
+      "started_at": "2026-06-01T04:00:00Z",
+      "ended_at": "2026-06-01T04:30:00Z",
+      "energy_wh": 1000,
+      "peak_w": 250,
+      "power_w": 250
+     }
+    ]
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cutoff-at-end",
+   "kind": "cutoff",
+   "input": {
+    "cutoff": "2026-06-01T04:00:00Z",
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_wh": 2000,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": {
+    "review_required": false,
+    "started_at": "2026-06-01T02:00:00Z",
+    "ended_at": "2026-06-01T04:00:00Z",
+    "charged_wh": 2000,
+    "charged_seconds": 0,
+    "segments": null
+   },
+   "want_err": ""
+  },
+  {
+   "id": "cutoff-before-start",
+   "kind": "cutoff",
+   "input": {
+    "cutoff": "2026-06-01T01:59:00Z",
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T04:00:00Z",
+     "charged_wh": 2000,
+     "charged_seconds": 0,
+     "segments": null
+    },
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": null,
+   "want_err": "meter_review"
+  },
+  {
+   "id": "cutoff-on-boundary",
+   "kind": "cutoff",
+   "input": {
+    "cutoff": "2026-06-01T04:00:00Z",
+    "meter": {
+     "review_required": false,
+     "started_at": "2026-06-01T02:00:00Z",
+     "ended_at": "2026-06-01T05:00:00Z",
+     "charged_wh": 3000,
+     "charged_seconds": 0,
+     "segments": [
+      {
+       "started_at": "2026-06-01T02:00:00Z",
+       "ended_at": "2026-06-01T04:00:00Z",
+       "energy_wh": 2000,
+       "peak_w": 0,
+       "power_w": null
+      },
+      {
+       "started_at": "2026-06-01T04:00:00Z",
+       "ended_at": "2026-06-01T05:00:00Z",
+       "energy_wh": 1000,
+       "peak_w": 0,
+       "power_w": null
+      }
+     ]
+    },
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": {
+    "review_required": false,
+    "started_at": "2026-06-01T02:00:00Z",
+    "ended_at": "2026-06-01T04:00:00Z",
+    "charged_wh": 2000,
+    "charged_seconds": 7200,
+    "segments": [
+     {
+      "started_at": "2026-06-01T02:00:00Z",
+      "ended_at": "2026-06-01T04:00:00Z",
+      "energy_wh": 2000,
+      "peak_w": 0,
+      "power_w": null
+     }
+    ]
+   },
+   "want_err": ""
+  },
+  {
+   "id": "stop-cap-hit",
+   "kind": "decide_stop",
+   "input": {
+    "elapsed_seconds": 7200,
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "spend_cap_cents": 200,
+     "stop_grace_seconds": 60,
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T02:00:00Z",
+     "end": "2026-06-01T05:00:00Z",
+     "energy_wh": 3000,
+     "samples": null
+    }
+   },
+   "want": {
+    "ShouldStop": true,
+    "Reason": "已达到消费封顶",
+    "AccruedCents": 210,
+    "GraceSeconds": 60
+   },
+   "want_err": ""
+  },
+  {
+   "id": "stop-cap-not-hit",
+   "kind": "decide_stop",
+   "input": {
+    "elapsed_seconds": 3600,
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "spend_cap_cents": 200,
+     "stop_grace_seconds": 60,
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T02:00:00Z",
+     "end": "2026-06-01T03:00:00Z",
+     "energy_wh": 1000,
+     "samples": null
+    }
+   },
+   "want": {
+    "ShouldStop": false,
+    "Reason": "",
+    "AccruedCents": 70,
+    "GraceSeconds": 0
+   },
+   "want_err": ""
+  },
+  {
+   "id": "stop-max-minutes",
+   "kind": "decide_stop",
+   "input": {
+    "elapsed_seconds": 3660,
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "time_charge": {
+      "stop_when_full": false,
+      "max_minutes": 60
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T02:00:00Z",
+     "end": "2026-06-01T04:00:00Z",
+     "energy_wh": 2000,
+     "samples": null
+    }
+   },
+   "want": {
+    "ShouldStop": true,
+    "Reason": "达到最长时长",
+    "AccruedCents": 0,
+    "GraceSeconds": 0
+   },
+   "want_err": ""
+  },
+  {
+   "id": "stop-device-mode",
+   "kind": "decide_stop",
+   "input": {
+    "elapsed_seconds": 3600,
+    "spec": {
+     "mode": "device_duration",
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    },
+    "usage": {
+     "start": "2026-06-01T02:00:00Z",
+     "end": "2026-06-01T03:00:00Z",
+     "energy_wh": 1000,
+     "samples": null
+    }
+   },
+   "want": {
+    "ShouldStop": false,
+    "Reason": "设备计费由设备到量自行停止",
+    "AccruedCents": 0,
+    "GraceSeconds": 0
+   },
+   "want_err": ""
+  },
+  {
+   "id": "validate-spec-energy-ok",
+   "kind": "validate_spec",
+   "input": {
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": null,
+   "want_err": ""
+  },
+  {
+   "id": "validate-spec-tier-ok",
+   "kind": "validate_spec",
+   "input": {
+    "spec": {
+     "mode": "server_realtime_power",
+     "electric": {
+      "basis": "realtime_power",
+      "periods": [
+       {
+        "end_minute": 480,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 30,
+          "service_cents": 10
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 50,
+          "service_cents": 20
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 80,
+          "service_cents": 30
+         }
+        ]
+       },
+       {
+        "end_minute": 1440,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 40,
+          "service_cents": 15
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 60,
+          "service_cents": 25
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 90,
+          "service_cents": 35
+         }
+        ]
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": null,
+   "want_err": ""
+  },
+  {
+   "id": "validate-spec-basis-mismatch",
+   "kind": "validate_spec",
+   "input": {
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "realtime_power",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": null,
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "validate-spec-gap",
+   "kind": "validate_spec",
+   "input": {
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1400,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": null,
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "validate-spec-tier-flat",
+   "kind": "validate_spec",
+   "input": {
+    "spec": {
+     "mode": "server_realtime_power",
+     "electric": {
+      "basis": "realtime_power",
+      "periods": [
+       {
+        "end_minute": 480,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 30,
+          "service_cents": 10
+         },
+         {
+          "max_watts": 200,
+          "electric_cents": 50,
+          "service_cents": 20
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 80,
+          "service_cents": 30
+         }
+        ]
+       },
+       {
+        "end_minute": 1440,
+        "tiers": [
+         {
+          "max_watts": 200,
+          "electric_cents": 40,
+          "service_cents": 15
+         },
+         {
+          "max_watts": 500,
+          "electric_cents": 60,
+          "service_cents": 25
+         },
+         {
+          "max_watts": 9990,
+          "electric_cents": 90,
+          "service_cents": 35
+         }
+        ]
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": null,
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "validate-spec-device-with-rates",
+   "kind": "validate_spec",
+   "input": {
+    "spec": {
+     "mode": "device_duration",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": null,
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "validate-spec-cap-over",
+   "kind": "validate_spec",
+   "input": {
+    "spec": {
+     "mode": "server_energy",
+     "electric": {
+      "basis": "energy",
+      "periods": [
+       {
+        "service_cents": 17,
+        "end_minute": 480,
+        "electric_cents": 33
+       },
+       {
+        "service_cents": 25,
+        "end_minute": 1440,
+        "electric_cents": 45
+       }
+      ]
+     },
+     "spend_cap_cents": 1000001,
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": null,
+   "want_err": "invalid_pricing"
+  },
+  {
+   "id": "validate-scheme-ok",
+   "kind": "validate_scheme",
+   "input": {
+    "scheme": {
+     "name": "完整方案",
+     "remark": "备注",
+     "amount": {
+      "algorithm": "server_energy",
+      "periods": [
+       {
+        "service_cents": 20,
+        "end_minute": 1440,
+        "electric_cents": 40
+       }
+      ]
+     },
+     "energy": {
+      "electric_cents": 40,
+      "service_cents": 20
+     },
+     "packages": [
+      {
+       "id": 1,
+       "name": "3元",
+       "mode": "amount",
+       "price_cents": 300
+      },
+      {
+       "id": 2,
+       "name": "2小时",
+       "mode": "duration",
+       "price_cents": 200,
+       "minutes": 120
+      },
+      {
+       "id": 3,
+       "name": "5度",
+       "mode": "energy",
+       "price_cents": 300,
+       "kwh": 5
+      }
+     ],
+     "policy": {
+      "free_minutes": 10,
+      "min_electric_cents": 50,
+      "max_minutes": 600,
+      "loss_rate_bp": 0,
+      "channel_bp": 10000
+     },
+     "stop": {
+      "stop_when_full": true,
+      "max_minutes": 600
+     },
+     "card": {
+      "package_id": 2,
+      "max_minutes": 300
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": "",
+   "want_err": ""
+  },
+  {
+   "id": "validate-scheme-price-below-min",
+   "kind": "validate_scheme",
+   "input": {
+    "scheme": {
+     "name": "低均价",
+     "remark": "",
+     "amount": {
+      "algorithm": "server_energy",
+      "periods": [
+       {
+        "service_cents": 20,
+        "end_minute": 1440,
+        "electric_cents": 40
+       }
+      ]
+     },
+     "packages": [
+      {
+       "id": 1,
+       "name": "3元",
+       "mode": "amount",
+       "price_cents": 30
+      }
+     ],
+     "policy": {
+      "free_minutes": 0,
+      "min_electric_cents": 50,
+      "max_minutes": 600,
+      "loss_rate_bp": 0,
+      "channel_bp": 10000
+     },
+     "stop": {
+      "stop_when_full": false
+     },
+     "card": {
+      "package_id": 0,
+      "max_minutes": 0
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": "金额套餐须绑定金额算法，价格不能低于最低电费",
+   "want_err": "scheme_err"
+  },
+  {
+   "id": "validate-scheme-card-wrong-mode",
+   "kind": "validate_scheme",
+   "input": {
+    "scheme": {
+     "name": "刷卡方案",
+     "remark": "",
+     "amount": {
+      "algorithm": "server_energy",
+      "periods": [
+       {
+        "service_cents": 20,
+        "end_minute": 1440,
+        "electric_cents": 40
+       }
+      ]
+     },
+     "packages": [
+      {
+       "id": 1,
+       "name": "3元",
+       "mode": "amount",
+       "price_cents": 300
+      }
+     ],
+     "policy": {
+      "free_minutes": 0,
+      "min_electric_cents": 0,
+      "max_minutes": 600,
+      "loss_rate_bp": 0,
+      "channel_bp": 10000
+     },
+     "stop": {
+      "stop_when_full": false
+     },
+     "card": {
+      "package_id": 1,
+      "max_minutes": 300
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": "刷卡须明确选择一个已有时长套餐",
+   "want_err": "scheme_err"
+  },
+  {
+   "id": "validate-scheme-name-long",
+   "kind": "validate_scheme",
+   "input": {
+    "scheme": {
+     "name": "名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名名",
+     "remark": "",
+     "packages": [
+      {
+       "id": 1,
+       "name": "a",
+       "mode": "duration",
+       "price_cents": 100,
+       "minutes": 60
+      }
+     ],
+     "policy": {
+      "free_minutes": 0,
+      "min_electric_cents": 0,
+      "max_minutes": 600,
+      "loss_rate_bp": 0,
+      "channel_bp": 10000
+     },
+     "stop": {
+      "stop_when_full": false
+     },
+     "card": {
+      "package_id": 1,
+      "max_minutes": 300
+     },
+     "display": {
+      "show_energy": false,
+      "show_power": false,
+      "show_tariff": false,
+      "show_fee_split": false,
+      "fee_split_inline": false,
+      "show_fee_on_end": false,
+      "show_method": false,
+      "show_rule": false,
+      "hide_unit": false
+     }
+    }
+   },
+   "want": "请填写方案名称（最多64字）及有效说明",
+   "want_err": "scheme_err"
+  }
+ ]
+}

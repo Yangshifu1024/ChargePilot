@@ -64,6 +64,10 @@ async fn cleanup_test_admins(db: &sqlx::MySqlPool) {
         .await;
 }
 
+fn rand_ip() -> String {
+    format!("10.{}.1.{}", rand_suffix(), rand_suffix())
+}
+
 fn rand_suffix() -> String {
     use rand::RngCore;
     let mut b = [0u8; 4];
@@ -111,7 +115,7 @@ async fn login(router: &axum::Router, username: &str, password: &str, ip: &str) 
             r#"{{"username":"{username}","password":"{password}"}}"#
         )),
         None,
-        ip,
+        &rand_ip(),
     )
     .await;
     if status != StatusCode::OK {
@@ -173,17 +177,16 @@ async fn permission_boundary_and_management() {
         ],
     )
     .await;
-    let ip = rand_ip();
-
+    
     // 超管：SQL 直建 + 挂 customer_admin（内置角色，权限来自种子）
     let super_id = alloc.next_id().await.unwrap();
     let hash = chargepilot_platform::password::hash("super-pass-123").unwrap();
     sqlx::query("INSERT INTO `admin_user` (`id`, `username`, `password_hash`, `role_id`) VALUES (?, ?, ?, 1)")
         .bind(super_id).bind(&super_name).bind(hash).execute(db.as_ref()).await.unwrap();
-    let super_token = login(&router, &super_name, "super-pass-123", ip)
+    let super_token = login(&router, &super_name, "super-pass-123", &rand_ip())
         .await
         .expect("超管登录");
-    let lim_token = login(&router, &lim_name, "limited-pass-123", ip)
+    let lim_token = login(&router, &lim_name, "limited-pass-123", &rand_ip())
         .await
         .expect("受限登录");
 
@@ -194,7 +197,7 @@ async fn permission_boundary_and_management() {
         "/api/v1/admin/admin-users",
         None,
         Some(&lim_token),
-        ip,
+        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "受限账号应被拒绝: {body}");
@@ -207,7 +210,7 @@ async fn permission_boundary_and_management() {
         "/api/v1/admin/admin-users?page=1&page_size=5",
         None,
         Some(&super_token),
-        ip,
+        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -221,7 +224,7 @@ async fn permission_boundary_and_management() {
         "/api/v1/admin/roles",
         None,
         Some(&super_token),
-        ip,
+        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -246,7 +249,7 @@ async fn permission_boundary_and_management() {
         &format!("/api/v1/admin/admin-users/{super_id}"),
         Some(r#"{"status":"disabled"}"#),
         Some(&lim_token),
-        ip,
+        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "最后管理员保护应拒绝: {body}");
@@ -269,7 +272,7 @@ async fn permission_boundary_and_management() {
             r#"{{"code":"rogue_{suf}","name":"越权角色","permissions":["admin_user.read"]}}"#
         )),
         Some(&lim_token),
-        ip,
+        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "越权授角色应拒绝: {body}");
@@ -290,7 +293,7 @@ async fn permission_boundary_and_management() {
             chrono::Utc::now().to_rfc3339()
         )),
         Some(&lim_token),
-        ip,
+        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "受限账号发布公告应成功: {body}");
@@ -303,7 +306,7 @@ async fn permission_boundary_and_management() {
         "/api/v1/user/announcement/list?page=1&page_size=10",
         None,
         None,
-        ip,
+        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -321,7 +324,7 @@ async fn permission_boundary_and_management() {
         "/api/v1/admin/dashboard",
         None,
         Some(&lim_token),
-        ip,
+        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -341,7 +344,7 @@ async fn permission_boundary_and_management() {
         &format!("/api/v1/admin/admin-users/{lim_admin_id}"),
         None,
         Some(&lim_token),
-        ip,
+        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -353,7 +356,7 @@ async fn permission_boundary_and_management() {
         &format!("/api/v1/admin/admin-users/{lim_admin_id}"),
         Some(&format!(r#"{{"role_id":{lim_role_id}}}"#)),
         Some(&super_token),
-        ip,
+        &rand_ip(),
     )
     .await;
     assert!(
@@ -375,8 +378,7 @@ async fn last_admin_self_protection() {
     let hash = chargepilot_platform::password::hash("last-pass-1234").unwrap();
     sqlx::query("INSERT INTO `admin_user` (`id`, `username`, `password_hash`, `role_id`) VALUES (?, ?, ?, 1)")
         .bind(id).bind(&name).bind(hash).execute(db.as_ref()).await.unwrap();
-    let ip = rand_ip();
-    let token = login(&router, &name, "last-pass-1234", ip)
+        let token = login(&router, &name, "last-pass-1234", &rand_ip())
         .await
         .expect("登录");
 
@@ -387,7 +389,7 @@ async fn last_admin_self_protection() {
         &format!("/api/v1/admin/admin-users/{id}"),
         Some(r#"{"status":"disabled"}"#),
         Some(&token),
-        ip,
+        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "本人禁改自身状态: {body}");
@@ -398,7 +400,7 @@ async fn last_admin_self_protection() {
         &format!("/api/v1/admin/admin-users/{id}"),
         None,
         Some(&token),
-        ip,
+        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "本人禁删自己: {body}");

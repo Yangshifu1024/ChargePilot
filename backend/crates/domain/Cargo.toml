@@ -7,6 +7,8 @@ edition.workspace = true
 # serde 是序列化原语（domain 不依赖任何实现层，旧版 domain 同样使用 encoding/json）
 serde.workspace = true
 serde_json.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
