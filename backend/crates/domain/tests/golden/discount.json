@@ -1,0 +1,496 @@
+{
+ "generated_at": "2026-11-13T21:06:19Z",
+ "cases": [
+  {
+   "id": "d001",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "amount",
+     "min_charge": 100,
+     "amount": 50
+    },
+    "total": 99
+   },
+   "want_err": "未达到该优惠券的使用门槛"
+  },
+  {
+   "id": "d002",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "amount",
+     "min_charge": 100,
+     "amount": 50
+    },
+    "total": 100
+   },
+   "want": 50
+  },
+  {
+   "id": "d003",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "amount",
+     "min_charge": 0,
+     "amount": 50
+    },
+    "total": 1
+   },
+   "want": 1
+  },
+  {
+   "id": "d004",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 500,
+     "percent": 10
+    },
+    "total": 499
+   },
+   "want_err": "未达到该优惠券的使用门槛"
+  },
+  {
+   "id": "d005",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 500,
+     "percent": 10
+    },
+    "total": 500
+   },
+   "want": 450
+  },
+  {
+   "id": "d006",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "time_free",
+     "min_charge": 10,
+     "free_minutes": 30
+    },
+    "total": 9
+   },
+   "want_err": "未达到该优惠券的使用门槛"
+  },
+  {
+   "id": "d007",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "amount",
+     "min_charge": 0,
+     "amount": 50
+    },
+    "total": 0
+   },
+   "want_err": "未达到该优惠券的使用门槛"
+  },
+  {
+   "id": "d008",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "amount",
+     "min_charge": 0,
+     "amount": 50
+    },
+    "total": -5
+   },
+   "want_err": "未达到该优惠券的使用门槛"
+  },
+  {
+   "id": "d009",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "amount",
+     "min_charge": 0,
+     "amount": 1
+    },
+    "total": 100
+   },
+   "want": 1
+  },
+  {
+   "id": "d010",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "amount",
+     "min_charge": 0,
+     "amount": 50
+    },
+    "total": 100
+   },
+   "want": 50
+  },
+  {
+   "id": "d011",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "amount",
+     "min_charge": 0,
+     "amount": 99
+    },
+    "total": 100
+   },
+   "want": 99
+  },
+  {
+   "id": "d012",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "amount",
+     "min_charge": 0,
+     "amount": 100
+    },
+    "total": 100
+   },
+   "want": 100
+  },
+  {
+   "id": "d013",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "amount",
+     "min_charge": 0,
+     "amount": 120
+    },
+    "total": 100
+   },
+   "want": 100
+  },
+  {
+   "id": "d014",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "amount",
+     "min_charge": 0,
+     "amount": 0
+    },
+    "total": 100
+   },
+   "want_err": "优惠券不存在或未发放给该账号"
+  },
+  {
+   "id": "d015",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "amount",
+     "min_charge": 0,
+     "amount": -5
+    },
+    "total": 100
+   },
+   "want_err": "优惠券不存在或未发放给该账号"
+  },
+  {
+   "id": "d016",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "amount",
+     "min_charge": 50
+    },
+    "total": 100
+   },
+   "want_err": "优惠券不存在或未发放给该账号"
+  },
+  {
+   "id": "d017",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 0,
+     "percent": 0.01
+    },
+    "total": 99
+   },
+   "want": 99
+  },
+  {
+   "id": "d018",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 0,
+     "percent": 0.01
+    },
+    "total": 100
+   },
+   "want": 100
+  },
+  {
+   "id": "d019",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 0,
+     "percent": 5
+    },
+    "total": 100
+   },
+   "want": 95
+  },
+  {
+   "id": "d020",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 0,
+     "percent": 33.33
+    },
+    "total": 1000
+   },
+   "want": 667
+  },
+  {
+   "id": "d021",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 0,
+     "percent": 33.33
+    },
+    "total": 3
+   },
+   "want": 2
+  },
+  {
+   "id": "d022",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 0,
+     "percent": 50
+    },
+    "total": 100
+   },
+   "want": 50
+  },
+  {
+   "id": "d023",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 0,
+     "percent": 50.5
+    },
+    "total": 100
+   },
+   "want": 49
+  },
+  {
+   "id": "d024",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 0,
+     "percent": 50.5
+    },
+    "total": 10
+   },
+   "want": 5
+  },
+  {
+   "id": "d025",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 0,
+     "percent": 66.66
+    },
+    "total": 999
+   },
+   "want": 333
+  },
+  {
+   "id": "d026",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 0,
+     "percent": 99.99
+    },
+    "total": 100000
+   },
+   "want": 10
+  },
+  {
+   "id": "d027",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 0,
+     "percent": 99.99
+    },
+    "total": 1
+   },
+   "want": 0
+  },
+  {
+   "id": "d028",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 0,
+     "percent": 0
+    },
+    "total": 100
+   },
+   "want_err": "优惠券不存在或未发放给该账号"
+  },
+  {
+   "id": "d029",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 0,
+     "percent": -10
+    },
+    "total": 100
+   },
+   "want_err": "优惠券不存在或未发放给该账号"
+  },
+  {
+   "id": "d030",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 0,
+     "percent": 100
+    },
+    "total": 100
+   },
+   "want_err": "优惠券不存在或未发放给该账号"
+  },
+  {
+   "id": "d031",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 0,
+     "percent": 150
+    },
+    "total": 100
+   },
+   "want_err": "优惠券不存在或未发放给该账号"
+  },
+  {
+   "id": "d032",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "percentage",
+     "min_charge": 10
+    },
+    "total": 100
+   },
+   "want_err": "优惠券不存在或未发放给该账号"
+  },
+  {
+   "id": "d033",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "time_free",
+     "min_charge": 0,
+     "free_minutes": 1
+    },
+    "total": 100
+   },
+   "want": 0
+  },
+  {
+   "id": "d034",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "time_free",
+     "min_charge": 0,
+     "free_minutes": 30
+    },
+    "total": 100
+   },
+   "want": 0
+  },
+  {
+   "id": "d035",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "time_free",
+     "min_charge": 0,
+     "free_minutes": 65535
+    },
+    "total": 100
+   },
+   "want": 0
+  },
+  {
+   "id": "d036",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "time_free",
+     "min_charge": 0
+    },
+    "total": 100
+   },
+   "want_err": "优惠券不存在或未发放给该账号"
+  },
+  {
+   "id": "d037",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "cashback",
+     "min_charge": 0,
+     "amount": 10
+    },
+    "total": 100
+   },
+   "want_err": "优惠券不存在或未发放给该账号"
+  },
+  {
+   "id": "d038",
+   "kind": "discount",
+   "input": {
+    "grant": {
+     "type": "",
+     "min_charge": 0,
+     "amount": 10
+    },
+    "total": 100
+   },
+   "want_err": "优惠券不存在或未发放给该账号"
+  }
+ ]
+}
