@@ -21,6 +21,7 @@ chargepilot-mod-identity.workspace = true
 chargepilot-mod-settlement.workspace = true
 chargepilot-mod-payment.workspace = true
 chargepilot-mod-device.workspace = true
+chargepilot-mod-marketing.workspace = true
 chargepilot-mod-ops.workspace = true
 chargepilot-mod-pricing.workspace = true
 chargepilot-mod-wallet.workspace = true

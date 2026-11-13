@@ -4,8 +4,8 @@
 //! 应付金额四舍五入到分），与旧版差分对照验收（tests/golden/discount.json）。
 
 use chrono::{DateTime, Utc};
-use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive;
 use serde::{Deserialize, Serialize};
 
 /// coupon.status 列的券模板启停状态（active/disabled）。
@@ -198,7 +198,6 @@ trait ToI64Round {
 }
 impl ToI64Round for Decimal {
     fn to_i64(self) -> Option<i64> {
-        use rust_decimal::prelude::ToPrimitive;
         rust_decimal::prelude::ToPrimitive::to_i64(&self)
     }
 }
@@ -290,7 +289,13 @@ pub fn replay_grant(
 mod tests {
     use super::*;
 
-    fn rule(kind: &str, min: i64, value: Option<i64>, percent: Option<f64>, free: u32) -> GrantRule {
+    fn rule(
+        kind: &str,
+        min: i64,
+        value: Option<i64>,
+        percent: Option<f64>,
+        free: u32,
+    ) -> GrantRule {
         GrantRule {
             discount_type: kind.into(),
             min_charge_cents: min,
@@ -306,9 +311,19 @@ mod tests {
             discount_for(&rule("amount", 100, Some(50), None, 0), 99),
             Err(DiscountError::Threshold)
         );
-        assert_eq!(discount_for(&rule("amount", 100, Some(50), None, 0), 100).unwrap(), 50);
-        assert_eq!(discount_for(&rule("amount", 0, Some(50), None, 0), 100).unwrap(), 50);
-        assert_eq!(discount_for(&rule("amount", 0, Some(120), None, 0), 100).unwrap(), 100, "减免封顶为原价");
+        assert_eq!(
+            discount_for(&rule("amount", 100, Some(50), None, 0), 100).unwrap(),
+            50
+        );
+        assert_eq!(
+            discount_for(&rule("amount", 0, Some(50), None, 0), 100).unwrap(),
+            50
+        );
+        assert_eq!(
+            discount_for(&rule("amount", 0, Some(120), None, 0), 100).unwrap(),
+            100,
+            "减免封顶为原价"
+        );
         assert!(discount_for(&rule("amount", 0, Some(0), None, 0), 100).is_err());
         assert!(discount_for(&rule("amount", 0, None, None, 0), 100).is_err());
     }
@@ -316,13 +331,25 @@ mod tests {
     #[test]
     fn percentage_discount_rounding() {
         // 50% → 应付 50 → 优惠 50。
-        assert_eq!(discount_for(&rule("percentage", 0, None, Some(50.0), 0), 100).unwrap(), 50);
+        assert_eq!(
+            discount_for(&rule("percentage", 0, None, Some(50.0), 0), 100).unwrap(),
+            50
+        );
         // 50.5% → 应付 50.5 四舍五入 51 → 优惠 49（half away from zero）。
-        assert_eq!(discount_for(&rule("percentage", 0, None, Some(50.5), 0), 100).unwrap(), 49);
+        assert_eq!(
+            discount_for(&rule("percentage", 0, None, Some(50.5), 0), 100).unwrap(),
+            49
+        );
         // 33.33% of 1000 → 应付 333.3 → 333 → 优惠 667。
-        assert_eq!(discount_for(&rule("percentage", 0, None, Some(33.33), 0), 1000).unwrap(), 667);
+        assert_eq!(
+            discount_for(&rule("percentage", 0, None, Some(33.33), 0), 1000).unwrap(),
+            667
+        );
         // 0.01% of 99 → 应付 0.0099 → 0 → 优惠 99。
-        assert_eq!(discount_for(&rule("percentage", 0, None, Some(0.01), 0), 99).unwrap(), 99);
+        assert_eq!(
+            discount_for(&rule("percentage", 0, None, Some(0.01), 0), 99).unwrap(),
+            99
+        );
         assert!(discount_for(&rule("percentage", 0, None, Some(0.0), 0), 100).is_err());
         assert!(discount_for(&rule("percentage", 0, None, Some(100.0), 0), 100).is_err());
         assert!(discount_for(&rule("percentage", 0, None, Some(150.0), 0), 100).is_err());
@@ -331,11 +358,23 @@ mod tests {
     #[test]
     fn time_free_and_unknown() {
         // 时长券固定零费率：优惠恒 0（仍要过门槛）。
-        assert_eq!(discount_for(&rule("time_free", 10, None, None, 30), 100).unwrap(), 0);
+        assert_eq!(
+            discount_for(&rule("time_free", 10, None, None, 30), 100).unwrap(),
+            0
+        );
         assert!(discount_for(&rule("time_free", 10, None, None, 0), 100).is_err());
-        assert_eq!(discount_for(&rule("cashback", 0, Some(10), None, 0), 100), Err(DiscountError::NotFound));
-        assert_eq!(discount_for(&rule("time_free", 10, None, None, 30), 9), Err(DiscountError::Threshold));
-        assert_eq!(discount_for(&rule("amount", 0, Some(10), None, 0), 0), Err(DiscountError::Threshold));
+        assert_eq!(
+            discount_for(&rule("cashback", 0, Some(10), None, 0), 100),
+            Err(DiscountError::NotFound)
+        );
+        assert_eq!(
+            discount_for(&rule("time_free", 10, None, None, 30), 9),
+            Err(DiscountError::Threshold)
+        );
+        assert_eq!(
+            discount_for(&rule("amount", 0, Some(10), None, 0), 0),
+            Err(DiscountError::Threshold)
+        );
     }
 
     #[test]
@@ -350,18 +389,72 @@ mod tests {
             end_at: None,
         };
         let now = Utc::now();
-        assert!(check_grantable(now, &tpl, CouponUsage { total_granted: 1, user_granted: 0 }).is_ok());
-        assert!(check_grantable(now, &tpl, CouponUsage { total_granted: 2, user_granted: 0 }).is_err());
-        assert!(check_grantable(now, &tpl, CouponUsage { total_granted: 0, user_granted: 1 }).is_err());
-        let disabled = CouponTemplate { status: "disabled".into(), ..tpl.clone() };
-        assert!(check_grantable(now, &disabled, CouponUsage { total_granted: 0, user_granted: 0 }).is_err());
+        assert!(
+            check_grantable(
+                now,
+                &tpl,
+                CouponUsage {
+                    total_granted: 1,
+                    user_granted: 0
+                }
+            )
+            .is_ok()
+        );
+        assert!(
+            check_grantable(
+                now,
+                &tpl,
+                CouponUsage {
+                    total_granted: 2,
+                    user_granted: 0
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            check_grantable(
+                now,
+                &tpl,
+                CouponUsage {
+                    total_granted: 0,
+                    user_granted: 1
+                }
+            )
+            .is_err()
+        );
+        let disabled = CouponTemplate {
+            status: "disabled".into(),
+            ..tpl.clone()
+        };
+        assert!(
+            check_grantable(
+                now,
+                &disabled,
+                CouponUsage {
+                    total_granted: 0,
+                    user_granted: 0
+                }
+            )
+            .is_err()
+        );
         // 到期 = now + 24h。
         assert_eq!(grant_expiry(now, &tpl), now + chrono::Duration::hours(24));
         // 模板结束早于有效时长 → 以结束为上限。
-        let bounded = CouponTemplate { end_at: Some(now + chrono::Duration::hours(2)), ..tpl.clone() };
-        assert_eq!(grant_expiry(now, &bounded), now + chrono::Duration::hours(2));
+        let bounded = CouponTemplate {
+            end_at: Some(now + chrono::Duration::hours(2)),
+            ..tpl.clone()
+        };
+        assert_eq!(
+            grant_expiry(now, &bounded),
+            now + chrono::Duration::hours(2)
+        );
         // 重放：同请求同券同人复用；内容不同冲突。
-        let receipt = GrantReceipt { request_id: "r1".into(), coupon_id: 1, user_id: 2, coupon_grant_id: 9 };
+        let receipt = GrantReceipt {
+            request_id: "r1".into(),
+            coupon_id: 1,
+            user_id: 2,
+            coupon_grant_id: 9,
+        };
         assert_eq!(replay_grant(&receipt, "r1", 1, 2).unwrap(), 9);
         assert!(replay_grant(&receipt, "r2", 1, 2).is_err());
         assert!(replay_grant(&receipt, "r1", 3, 2).is_err());

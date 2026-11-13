@@ -5,11 +5,13 @@ pub mod admin_auth;
 pub mod admin_finance;
 pub mod admin_guard;
 pub mod admin_management;
+pub mod admin_marketing;
 pub mod admin_pricing_device;
 pub mod deps;
 pub mod device_and_user;
 pub mod user_auth;
 pub mod user_charging;
+pub mod user_marketing;
 pub mod user_ops;
 pub mod user_payment;
 pub mod user_wallet;
@@ -28,9 +30,11 @@ pub fn build_router(
     let mut app = axum::Router::new()
         .merge(admin_auth::router())
         .merge(admin_management::router())
+        .merge(admin_marketing::router())
         .merge(admin_finance::router())
         .merge(admin_pricing_device::router())
         .merge(device_and_user::router())
+        .merge(user_marketing::router())
         .merge(user_ops::router())
         .merge(user_wallet::router())
         .merge(user_payment::router())

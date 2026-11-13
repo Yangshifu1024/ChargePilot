@@ -3,7 +3,7 @@
 //! 生成器即删），本测试只读快照。覆盖：三种优惠类型、阈值边界、
 //! percentage 小数取整边界、减免封顶与参数缺失。
 
-use chargepilot_domain::marketing::{discount_for, DiscountError, GrantRule};
+use chargepilot_domain::marketing::{DiscountError, GrantRule, discount_for};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -18,16 +18,6 @@ struct GrantIn {
     percent: Option<f64>,
     #[serde(default)]
     free_minutes: u32,
-}
-
-#[derive(Deserialize)]
-struct GoldenCase {
-    id: String,
-    input: Value,
-    #[serde(default)]
-    want: Option<i64>,
-    #[serde(default)]
-    want_err: String,
 }
 
 fn grant_of(input: &Value) -> GrantRule {
@@ -54,7 +44,11 @@ fn discount_golden_matches_legacy() {
     let raw = include_str!("golden/discount.json");
     let file: serde_json::Value = serde_json::from_str(raw).expect("黄金样本 JSON 合法");
     let cases = file["cases"].as_array().expect("cases 数组");
-    assert!(cases.len() >= 30, "样本应覆盖足够分支：实际 {}", cases.len());
+    assert!(
+        cases.len() >= 30,
+        "样本应覆盖足够分支：实际 {}",
+        cases.len()
+    );
     let mut checked = 0;
     for case in cases {
         let id = case["id"].as_str().unwrap();
@@ -69,8 +63,15 @@ fn discount_golden_matches_legacy() {
                 assert_eq!(got, want, "{id}: 优惠金额与旧版不一致");
             }
             Err(e) => {
-                assert!(!case["want_err"].as_str().unwrap_or("").is_empty(), "{id}: 意外成功");
-                assert_eq!(e, want_err_of(case["want_err"].as_str().unwrap()), "{id}: 错误类别不一致");
+                assert!(
+                    !case["want_err"].as_str().unwrap_or("").is_empty(),
+                    "{id}: 意外成功"
+                );
+                assert_eq!(
+                    e,
+                    want_err_of(case["want_err"].as_str().unwrap()),
+                    "{id}: 错误类别不一致"
+                );
             }
         }
         checked += 1;

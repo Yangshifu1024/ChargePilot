@@ -90,7 +90,7 @@ pub async fn load(pool: &MySqlPool) -> anyhow::Result<Dashboard> {
     // 7 日趋势：按东八区日分组，缺数补 0
     let rows = sqlx::query_as::<_, (String, i64, i64)>(
         "SELECT DATE_FORMAT(DATE_ADD(`ended_at`, INTERVAL 8 HOUR), '%Y-%m-%d') AS `day`, \
-                COUNT(*) AS `completed_orders`, COALESCE(SUM(`total_cents`), 0) AS `settled_cents` \
+                COUNT(*) AS `completed_orders`, COALESCE(CAST(SUM(`total_cents`) AS SIGNED), 0) AS `settled_cents` \
          FROM `charge_order` \
          WHERE `ended_at` >= ? AND `ended_at` < ? AND `total_cents` IS NOT NULL AND `deleted_at` IS NULL \
          GROUP BY `day`",
