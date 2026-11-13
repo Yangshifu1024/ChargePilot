@@ -9,6 +9,7 @@
 //! 不同属不同事务路径，评审时逐条核对不得混用。
 
 pub mod apply;
+pub mod card_funding;
 pub mod channel;
 pub mod checkout;
 pub mod recharge_bridge;

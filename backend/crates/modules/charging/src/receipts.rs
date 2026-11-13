@@ -151,6 +151,8 @@ pub async fn apply_start_receipt(
     if input.success {
         // paid → charging + 启动时间；命令 acked。
         chargepilot_mod_order::mark_charging_tx(&mut *c, id, &order_no, occurred_at).await?;
+        // 刷卡首购操作确认（非刷卡订单无行，天然幂等）。
+        chargepilot_mod_card::confirm_start_operation_tx(&mut *c, id).await?;
         sqlx::query("UPDATE `charge_command` SET `status` = 'acked', `result_code` = 0, `ack_at` = ?, `result_reported` = 1 WHERE `charge_order_id` = ?")
             .bind(occurred_at)
             .bind(id as i64)
@@ -173,6 +175,7 @@ pub async fn apply_start_receipt(
     // 失败：订单 failed + 登记自动渠道退款 + 出站事件（退款执行随批 5）。
     let reason = format!("设备启动失败（结果码 {}）", input.result_code);
     chargepilot_mod_order::mark_failed_tx(&mut *c, id, &order_no, &reason).await?;
+    chargepilot_mod_card::fail_start_operation_tx(&mut *c, id).await?;
     let payment_order_id: u64 = sqlx::query_scalar(
         "SELECT `payment_order_id` FROM `charge_payment_intent` WHERE `charge_order_id` = ?",
     )
@@ -202,8 +205,9 @@ pub async fn apply_start_receipt(
         .bind(id as i64)
         .execute(&mut *c)
         .await?;
-    // 释放端口预占（active_port_charge 与意图释放同事务）。
+    // 释放端口预占（active_port_charge 与意图释放同事务）；刷卡会话占用一并释放。
     chargepilot_mod_order::release_port_tx(&mut *c, &device_id, port_no, id).await?;
+    chargepilot_mod_card::card_charge_port_release_tx(&mut *c, id).await?;
     sqlx::query(
         "UPDATE `charge_payment_intent` SET `status` = ? WHERE `charge_order_id` = ? AND `status` = ?",
     )
@@ -353,6 +357,8 @@ pub async fn apply_end_receipt(
     if !released {
         return Err(ReceiptError::Conflict);
     }
+    // 刷卡会话释放端口占用（非刷卡订单无行，天然幂等）。
+    chargepilot_mod_card::card_charge_port_release_tx(&mut *c, input.charge_order_id).await?;
     // 订单事件 + 计费任务 + 出站事件（批 5 的结算批次消费）。
     chargepilot_mod_order::append_event_in_tx(
         &mut *c,

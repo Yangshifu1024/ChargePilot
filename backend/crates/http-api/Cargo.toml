@@ -30,6 +30,7 @@ tokio.workspace = true
 chargepilot-domain.workspace = true
 chargepilot-events.workspace = true
 chargepilot-mod-charging.workspace = true
+chargepilot-mod-card.workspace = true
 chargepilot-mod-order.workspace = true
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
