@@ -545,3 +545,30 @@ async fn wallet_recharge_full_chain() {
     assert_eq!(status, StatusCode::OK, "余额查询应成功: {body}");
     assert_eq!(body["data"]["balance_cents"], 500);
 }
+
+/// 批 4 互斥约束：套餐下单带券返回冲突（旧版 Reserve 的
+/// "当前套餐不允许使用优惠券"）；无券字段正常下单不受影响。
+#[tokio::test]
+async fn checkout_rejects_coupon_with_offer() {
+    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((router, db, alloc)) = build().await else {
+        return;
+    };
+    let (_station_id, device_id, port_code, rule_id) = seed_station_device_rule(&db, &alloc).await;
+    let openid = format!("pay-mk-{}", rand_suffix());
+    let (token, _uid) = dev_login(&router, &openid).await;
+    // 带 coupon_grant_id 的下单：互斥冲突（校验在扫码读取之前，端口不存在也不影响）。
+    let (status, body) = req(
+        router.clone(),
+        "POST",
+        "/api/v1/user/scan/start",
+        Some(json!({
+            "client_request_id": rand_uuid(), "port_code": port_code,
+            "offer_id": rule_id * 100 + 1, "coupon_grant_id": "12345"
+        })),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "套餐+券应互斥: {body}");
+    cleanup(&db, &device_id).await;
+}

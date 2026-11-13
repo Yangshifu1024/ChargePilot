@@ -537,6 +537,7 @@ dependencies = [
  "anyhow",
  "base64",
  "chargepilot-domain",
+ "chargepilot-mod-marketing",
  "chargepilot-mod-order",
  "chargepilot-mod-pricing",
  "chargepilot-mod-wallet",

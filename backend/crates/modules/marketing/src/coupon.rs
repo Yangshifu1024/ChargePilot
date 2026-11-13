@@ -5,6 +5,7 @@
 //! 模板锁之后不得反向等待用户或钱包。coupon 主键沿用 AUTO_INCREMENT
 //! （旧版 CreateCoupon 由库自增并回填响应），不走号段分配器。
 
+use chargepilot_domain::marketing::GrantStatus;
 use chargepilot_mod_identity::repo as identity_repo;
 use chargepilot_mod_ops::{Profile, repo as ops_repo};
 use chrono::{DateTime, Utc};
@@ -671,4 +672,296 @@ mod tests {
         assert!(!valid_text(&"长".repeat(129), 128));
         assert!(valid_text(&"长".repeat(128), 128));
     }
+}
+
+// ---------- 报价与核销（旧版 Quote / RedeemInTx + coupon_redeem_repo.go） ----------
+
+/// 券域错误的营销专用变体：HTTP 下单链路按旧版码值映射
+/// （NotFound→400、Exhausted→409/2001、Threshold→400），与通用 Conflict 区分。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CouponRedeemError {
+    /// 券不存在、不属于该用户或模板不可用。
+    NotFound,
+    /// 券已使用、已到期或状态不再为 unused。
+    Exhausted,
+    /// 原价非正或低于使用门槛。
+    Threshold,
+    /// 核销参数或冻结优惠与首次不一致。
+    Mismatch,
+    /// 存储错误。
+    Storage(String),
+}
+
+impl std::fmt::Display for CouponRedeemError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CouponRedeemError::NotFound => f.write_str("优惠券不存在或未发放给该账号"),
+            CouponRedeemError::Exhausted => f.write_str("优惠券已过期或已使用"),
+            CouponRedeemError::Threshold => f.write_str("未达到该优惠券的使用门槛"),
+            CouponRedeemError::Mismatch => f.write_str("优惠券核销信息不一致"),
+            CouponRedeemError::Storage(m) => write!(f, "优惠券存储错误: {m}"),
+        }
+    }
+}
+
+impl std::error::Error for CouponRedeemError {}
+
+impl From<sqlx::Error> for CouponRedeemError {
+    fn from(e: sqlx::Error) -> Self {
+        CouponRedeemError::Storage(e.to_string())
+    }
+}
+
+/// 发放券组合模板规则（旧版 CouponGrant 组合行）；percent 经 CAST AS CHAR。
+#[derive(Debug, Clone)]
+pub struct GrantWithRule {
+    pub grant_id: u64,
+    pub coupon_id: u64,
+    pub status: String,
+    pub expires_at: DateTime<Utc>,
+    pub used_payment_order_id: Option<u64>,
+    pub discount_type: String,
+    pub discount_value_cents: Option<i64>,
+    pub discount_percent: Option<f64>,
+    pub free_minutes: u32,
+    pub min_charge_cents: i64,
+}
+
+type GrantTup = (
+    u64,
+    u64,
+    String,
+    DateTime<Utc>,
+    Option<u64>,
+    String,
+    Option<i64>,
+    Option<String>,
+    i64,
+    i64,
+);
+
+/// 按用户和发放 ID 读取启用模板的券（旧版 loadGrant）；locked=true 时先锁
+/// 模板再锁发放（模板→发放锁序，与活动发放兼容）。
+async fn load_grant(
+    c: &mut sqlx::MySqlConnection,
+    user_id: u64,
+    grant_id: u64,
+    locked: bool,
+) -> Result<Option<GrantWithRule>, CouponRedeemError> {
+    if locked {
+        // 先按发放行定位不可变模板 ID，再锁模板行（旧版两段锁序）。
+        let coupon_id: Option<u64> = sqlx::query_scalar(
+            "SELECT `coupon_id` FROM `coupon_grant` \
+             WHERE `id` = ? AND `user_id` = ? AND `deleted_at` IS NULL",
+        )
+        .bind(grant_id as i64)
+        .bind(user_id as i64)
+        .fetch_optional(&mut *c)
+        .await?;
+        let Some(coupon_id) = coupon_id else {
+            return Ok(None);
+        };
+        let template: Option<u64> = sqlx::query_scalar(
+            "SELECT `id` FROM `coupon` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
+        )
+        .bind(coupon_id as i64)
+        .fetch_optional(&mut *c)
+        .await?;
+        if template.is_none() {
+            return Ok(None);
+        }
+    }
+    let lock_clause = if locked { " FOR UPDATE" } else { "" };
+    let sql = format!(
+        "SELECT g.`id`, g.`coupon_id`, g.`status`, g.`expired_at`, g.`used_payment_order_id`, \
+         c.`discount_type`, c.`discount_value_cents`, CAST(c.`discount_percent` AS CHAR), \
+         COALESCE(c.`free_minutes`, 0), c.`min_charge_cents` \
+         FROM `coupon_grant` AS g \
+         JOIN `coupon` AS c ON c.`id` = g.`coupon_id` AND c.`deleted_at` IS NULL AND c.`status` = 'active' \
+         WHERE g.`id` = ? AND g.`user_id` = ? AND g.`deleted_at` IS NULL{lock_clause}"
+    );
+    let row: Option<GrantTup> = sqlx::query_as(&sql)
+        .bind(grant_id as i64)
+        .bind(user_id as i64)
+        .fetch_optional(&mut *c)
+        .await?;
+    Ok(row.map(
+        |(
+            grant_id,
+            coupon_id,
+            status,
+            expires_at,
+            used_payment_order_id,
+            discount_type,
+            discount_value_cents,
+            percent_raw,
+            free_minutes,
+            min_charge_cents,
+        )| GrantWithRule {
+            grant_id,
+            coupon_id,
+            status,
+            expires_at,
+            used_payment_order_id,
+            discount_type,
+            discount_value_cents,
+            discount_percent: percent_raw.and_then(|s| s.parse().ok()),
+            // COALESCE(NULL 兜底 0) 把 INT UNSIGNED 提升为 SIGNED BIGINT，
+            // i64 解码后收窄（列值 1–1440）。
+            free_minutes: free_minutes as u32,
+            min_charge_cents,
+        },
+    ))
+}
+
+/// 发放行的优惠计算输入（domain GrantRule）。
+fn grant_rule(g: &GrantWithRule) -> chargepilot_domain::marketing::GrantRule {
+    chargepilot_domain::marketing::GrantRule {
+        discount_type: g.discount_type.clone(),
+        min_charge_cents: g.min_charge_cents,
+        discount_value_cents: g.discount_value_cents,
+        discount_percent: g.discount_percent,
+        free_minutes: g.free_minutes,
+    }
+}
+
+/// 计算本人未用、未到期券对原价的优惠，单位分，不核销券（旧版 Quote）。
+pub async fn quote(
+    pool: &MySqlPool,
+    user_id: u64,
+    grant_id: u64,
+    total_cents: i64,
+) -> Result<i64, CouponRedeemError> {
+    let mut conn = pool.acquire().await?;
+    let mut tx = conn.begin().await?;
+    let c = tx.acquire().await?;
+    let Some(grant) = load_grant(&mut *c, user_id, grant_id, false).await? else {
+        return Err(CouponRedeemError::NotFound);
+    };
+    if grant.status != GrantStatus::UNUSED || grant.expires_at <= Utc::now() {
+        return Err(CouponRedeemError::Exhausted);
+    }
+    tx.commit().await?;
+    chargepilot_domain::marketing::discount_for(&grant_rule(&grant), total_cents).map_err(|e| {
+        match e {
+            chargepilot_domain::marketing::DiscountError::Threshold => CouponRedeemError::Threshold,
+            chargepilot_domain::marketing::DiscountError::NotFound => CouponRedeemError::NotFound,
+        }
+    })
+}
+
+/// 核销回执（旧版 redemptionReceipt）：重试比对首次结果。
+struct RedemptionReceipt {
+    coupon_id: u64,
+    reference: String,
+    discount_cents: i64,
+}
+
+/// 在券锁内读取支付对应的充电核销记录（旧版 findRedemption；当前读 FOR UPDATE）。
+async fn find_redemption(
+    c: &mut sqlx::MySqlConnection,
+    payment_order_id: u64,
+) -> Result<Option<RedemptionReceipt>, CouponRedeemError> {
+    let row: Option<(Option<u64>, Option<String>, i64)> = sqlx::query_as(
+        "SELECT `coupon_id`, CAST(`order_no` AS CHAR), `discount_cents` FROM `coupon_redemption` \
+         WHERE `biz_type` = 'charge' AND `biz_id` = ? FOR UPDATE",
+    )
+    .bind(payment_order_id as i64)
+    .fetch_optional(&mut *c)
+    .await?;
+    Ok(
+        row.map(|(coupon_id, order_no, discount_cents)| RedemptionReceipt {
+            coupon_id: coupon_id.unwrap_or(0),
+            reference: order_no.unwrap_or_default(),
+            discount_cents,
+        }),
+    )
+}
+
+/// 在资金事务内锁定并核销券（旧版 RedeemInTx）：同一券和支付记录重放沿用
+/// 首次结果；优惠须等于支付时保存的冻结额，不能按实付额再算；核销随调用方
+/// 资金事务一起提交或回滚。reference 为核销单号（订单号或 PENDING- 派生）。
+pub async fn redeem_in_tx(
+    c: &mut sqlx::MySqlConnection,
+    user_id: u64,
+    grant_id: u64,
+    payment_order_id: u64,
+    total_cents: i64,
+    discount_cents: i64,
+    reference: &str,
+) -> Result<(), CouponRedeemError> {
+    if user_id == 0
+        || grant_id == 0
+        || payment_order_id == 0
+        || reference.is_empty()
+        || discount_cents < 0
+        || discount_cents > total_cents
+    {
+        return Err(CouponRedeemError::Mismatch);
+    }
+    let Some(grant) = load_grant(c, user_id, grant_id, true).await? else {
+        return Err(CouponRedeemError::NotFound);
+    };
+    // 已用：仅同一支付的同额核销视为重放成功。
+    if grant.status == GrantStatus::USED {
+        if grant.used_payment_order_id != Some(payment_order_id) {
+            return Err(CouponRedeemError::Exhausted);
+        }
+        let Some(receipt) = find_redemption(c, payment_order_id).await? else {
+            return Err(CouponRedeemError::Mismatch);
+        };
+        if receipt.coupon_id != grant.coupon_id
+            || receipt.discount_cents != discount_cents
+            || receipt.reference != reference
+        {
+            return Err(CouponRedeemError::Mismatch);
+        }
+        return Ok(());
+    }
+    if grant.status != GrantStatus::UNUSED || grant.expires_at <= Utc::now() {
+        return Err(CouponRedeemError::Exhausted);
+    }
+    // 冻结优惠必须与当前规则计算一致。
+    let discount = chargepilot_domain::marketing::discount_for(&grant_rule(&grant), total_cents)
+        .map_err(|e| match e {
+            chargepilot_domain::marketing::DiscountError::Threshold => CouponRedeemError::Threshold,
+            chargepilot_domain::marketing::DiscountError::NotFound => CouponRedeemError::NotFound,
+        })?;
+    if discount != discount_cents {
+        return Err(CouponRedeemError::Mismatch);
+    }
+    // 条件更新到 used：并发竞争失败按已用处理（旧版 RowsAffected == 1）。
+    let updated = sqlx::query(
+        "UPDATE `coupon_grant` SET `status` = ?, `used_payment_order_id` = ?, `used_at` = ? \
+         WHERE `id` = ? AND `user_id` = ? AND `status` = ?",
+    )
+    .bind(GrantStatus::USED)
+    .bind(payment_order_id as i64)
+    .bind(Utc::now())
+    .bind(grant_id as i64)
+    .bind(user_id as i64)
+    .bind(GrantStatus::UNUSED)
+    .execute(&mut *c)
+    .await?
+    .rows_affected();
+    if updated != 1 {
+        return Err(CouponRedeemError::Exhausted);
+    }
+    sqlx::query(
+        "INSERT INTO `coupon_redemption` (`coupon_id`, `user_id`, `biz_type`, `biz_id`, \
+         `discount_cents`, `order_no`) VALUES (?, ?, 'charge', ?, ?, ?)",
+    )
+    .bind(grant.coupon_id as i64)
+    .bind(user_id as i64)
+    .bind(payment_order_id as i64)
+    .bind(discount_cents)
+    .bind(reference)
+    .execute(&mut *c)
+    .await?;
+    Ok(())
+}
+
+/// 充电行尚不存在时的稳定核销单号（旧版 pendingChargeNoFor）。
+pub fn pending_charge_no_for(payment_order_id: u64) -> String {
+    format!("PENDING-{payment_order_id}")
 }

@@ -100,6 +100,10 @@ pub struct CheckoutInput {
     pub port_code: String,
     /// 在售套餐 ID（rule.id*100+package.id）。
     pub offer_id: u64,
+    /// 券发放 ID。当前套餐下单不支持优惠券（旧版 Reserve 互斥约束：
+    /// "当前套餐不允许使用优惠券"，非 0 返回冲突）；报价与核销见
+    /// chargepilot-mod-marketing 的 quote/redeem_in_tx。
+    pub coupon_grant_id: u64,
 }
 
 /// 支付准备响应（旧版 CheckoutResult；不含内部支付主键与 openid）。
@@ -197,6 +201,11 @@ impl CheckoutService {
         {
             return Err(CheckoutError::InvalidInput);
         }
+        // 套餐下单不支持优惠券（旧版 Reserve 的互斥约束）；quote/redeem 服务
+        // 已在 marketing 模块就位，非套餐支付路径开放时接入。
+        if input.coupon_grant_id != 0 {
+            return Err(CheckoutError::Conflict);
+        }
         // 同请求幂等恢复：已存在意图则直接重放预支付。
         if let Some(intent) = self.replay(user_id, input).await? {
             return self.prepare(intent).await;
@@ -273,13 +282,15 @@ impl CheckoutService {
             u16,
             u16,
             u64,
+            u64,
             chrono::DateTime<chrono::Utc>,
             serde_json::Value,
         )> = sqlx::query_as(
             "SELECT CAST(i.`intent_id` AS CHAR), i.`merchant_order_no`, i.`station_id`, i.`device_id`, \
                     i.`port_no`, i.`offer_id`, i.`discount_cents`, i.`electric_cents`, \
                     i.`service_cents`, i.`total_cents`, i.`estimated_minutes`, \
-                    i.`charge_quantity`, i.`payment_order_id`, i.`expires_at`, i.`pricing_snapshot` \
+                    i.`charge_quantity`, i.`payment_order_id`, CAST(COALESCE(i.`coupon_grant_id`, 0) AS UNSIGNED), \
+                    i.`expires_at`, i.`pricing_snapshot` \
              FROM `charge_payment_intent` i \
              WHERE i.`user_id` = ? AND i.`client_request_id` = ? AND i.`status` = ? LIMIT 1",
         )
@@ -305,12 +316,17 @@ impl CheckoutService {
             estimated_minutes,
             charge_quantity,
             payment_order_id,
+            intent_coupon_id,
             expires_at,
             snapshot_value,
         ) = row;
-        // 重放必须与请求同端口同套餐（旧版逐项核对；不使用当前规则替换快照）。
+        // 重放必须与请求同端口同套餐同券（旧版逐项核对；不使用当前规则替换快照）。
         let port = self.scan_port(&input.port_code).await?;
         if port.device_id != device_id || offer_id != input.offer_id {
+            return Err(CheckoutError::Conflict);
+        }
+        // 重放必须使用首次意图绑定的优惠券（旧版 CouponGrantID 核对）。
+        if intent_coupon_id != input.coupon_grant_id {
             return Err(CheckoutError::Conflict);
         }
         let snapshot: PricingSnapshot = serde_json::from_value(snapshot_value)
@@ -425,7 +441,8 @@ impl CheckoutService {
         let Some(openid) = openid else {
             return Err(CheckoutError::Conflict);
         };
-        // 本阶段无券，优惠额恒 0；阶段 05 在此之前核销并计算减免。
+        // 套餐下单不支持优惠券（旧版互斥约束，start 已拦截）：优惠额恒 0；
+        // 报价与到账核销见 marketing::coupon 的 quote/redeem_in_tx。
         let discount_cents = 0i64;
         let payable = estimate.total_cents - discount_cents;
         let month = chargepilot_mod_order::month_start_of(chrono::Utc::now());

@@ -235,10 +235,13 @@ pub async fn apply_payment(
         String,
         Option<u64>,
         chrono::DateTime<chrono::Utc>,
+        u64,
+        i64,
     )> = sqlx::query_as(
         "SELECT CAST(`intent_id` AS CHAR), `user_id`, `payment_order_id`, CAST(`openid` AS CHAR), \
                     `electric_cents`, `service_cents`, `charge_mode`, `charge_quantity`, \
-                    `total_cents`, `port_code`, `charge_order_id`, `expires_at` \
+                    `total_cents`, `port_code`, `charge_order_id`, `expires_at`, \
+                    CAST(COALESCE(`coupon_grant_id`, 0) AS UNSIGNED), `discount_cents` \
              FROM `charge_payment_intent` WHERE `merchant_order_no` = ? FOR UPDATE",
     )
     .bind(&payment.merchant_order_no)
@@ -257,6 +260,8 @@ pub async fn apply_payment(
         port_code,
         intent_order_id,
         expires_at,
+        intent_coupon_grant_id,
+        intent_discount_cents,
     )) = intent
     else {
         return Err(ApplyError::Conflict);
@@ -421,7 +426,23 @@ pub async fn apply_payment(
         });
     }
 
-    // 支付确认到账：创建充电订单（paid）并冻结快照（旧版首段；券核销阶段 05 接入）。
+    // 支付确认到账后才核销优惠券（旧版 RedeemInTx：随资金事务一起提交或回滚；
+    // 核销单号在充电行尚不存在时用 PENDING- 派生，重放沿用首次结果）。
+    if intent_coupon_grant_id != 0 {
+        chargepilot_mod_marketing::coupon::redeem_in_tx(
+            &mut *conn,
+            intent_user,
+            intent_coupon_grant_id,
+            order_id,
+            intent_total,
+            intent_discount_cents,
+            &chargepilot_mod_marketing::coupon::pending_charge_no_for(order_id),
+        )
+        .await
+        .map_err(|e| ApplyError::Storage(e.to_string()))?;
+    }
+
+    // 支付确认到账：创建充电订单（paid）并冻结快照（旧版首段）。
     let device_id: String =
         sqlx::query_scalar("SELECT `device_id` FROM `charge_payment_intent` WHERE `intent_id` = ?")
             .bind(&intent_id)
@@ -452,7 +473,7 @@ pub async fn apply_payment(
         payment_order_id: order_id,
         charge_mode,
         charge_quantity: charge_quantity as u16,
-        discount_cents: 0,
+        discount_cents: intent_discount_cents,
     };
     let charge_order_id = chargepilot_mod_order::create_paid_in_tx(&mut *conn, &draft)
         .await

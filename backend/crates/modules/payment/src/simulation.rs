@@ -118,13 +118,17 @@ pub async fn confirm_user(
 }
 
 /// 内部确认（旧版 ConfirmIntent）：按商户单号读意图，构造稳定模拟交易。
+/// 报文金额取支付单应付额（旧版 intent.TotalCents 在无券时与应付额相同；
+/// 引入券冻结后应付额 = 总额 - 优惠，与真实渠道回调金额语义一致）。
 pub async fn confirm_intent(
     pool: &MySqlPool,
     merchant_order_no: &str,
 ) -> Result<ApplyResult, SimulationError> {
     let row: Option<(String, i64, i64)> = sqlx::query_as(
-        "SELECT CAST(`intent_id` AS CHAR), `total_cents`, CAST(`openid` AS CHAR) \
-         FROM `charge_payment_intent` WHERE `merchant_order_no` = ? LIMIT 1",
+        "SELECT CAST(i.`intent_id` AS CHAR), p.`total_cents`, CAST(i.`openid` AS CHAR) \
+         FROM `charge_payment_intent` i \
+         JOIN `payment_order` p ON p.`id` = i.`payment_order_id` \
+         WHERE i.`merchant_order_no` = ? LIMIT 1",
     )
     .bind(merchant_order_no)
     .fetch_optional(pool)

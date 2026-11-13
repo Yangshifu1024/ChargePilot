@@ -65,6 +65,10 @@ struct StartBody {
     client_request_id: String,
     port_code: String,
     offer_id: u64,
+    /// 券发放 ID（可选，十进制字符串或数字）。当前套餐下单不支持券（旧版
+    /// 互斥约束），非 0 由服务层返回冲突；字段保留以对齐旧版请求契约。
+    #[serde(default)]
+    coupon_grant_id: Option<String>,
 }
 
 /// 下单与支付准备（旧版 start）：冻结意图与快照，返回支付参数。
@@ -85,6 +89,12 @@ async fn payment_start(
         client_request_id: body.client_request_id,
         port_code: body.port_code,
         offer_id: body.offer_id,
+        // 旧版 DTO 为十进制字符串（避免 JS 精度丢失），兼容数字。
+        coupon_grant_id: body
+            .coupon_grant_id
+            .as_ref()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0),
     };
     match checkout.start(uid, &input).await {
         Ok(v) => httpx::ok(serde_json::to_value(v).unwrap_or(json!(null)), &rid),

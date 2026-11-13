@@ -5,6 +5,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use chargepilot_http_api::deps::ApiDeps;
 use chargepilot_platform::ids::SegmentAllocator;
+use chrono::Datelike as _;
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -602,4 +603,279 @@ async fn coupon_create_grant_query_stats() {
     .await;
     let _ = user_token;
     let _ = used_id;
+}
+
+/// 批 4 主缝：券的报价（quote）与到账核销（redeem_in_tx 随支付事务）。
+/// 套餐下单带券返回冲突（旧版互斥约束）；带券意图走 apply_payment 直调
+/// 验证核销、幂等重放与订单冻结优惠。
+#[tokio::test]
+async fn coupon_quote_and_redeem() {
+    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((router, db, alloc)) = build().await else {
+        return;
+    };
+    let tag = rand_suffix();
+    let (admin_token, admin_id, admin_role) = login_coupon_admin(
+        &router,
+        &db,
+        &alloc,
+        &[
+            "coupon.read",
+            "coupon.create",
+            "coupon.update",
+            "coupon.grant",
+        ],
+    )
+    .await;
+    let (user_token, uid) = login_user(&router, &format!("mk-{tag}")).await;
+
+    // 建券 + 发放。
+    // 时长券：核销分支的可达场景（旧版固定零服务费率 → 冻结优惠恒 0，
+    // 意图总额与应付额一致，能通过到账核对）。金额型券的报价路径另行断言。
+    let (status, body) = req(
+        router.clone(),
+        "POST",
+        "/api/v1/admin/coupons",
+        Some(json!({
+            "name": "批4核销时长券", "discount_type": "time_free",
+            "free_minutes": 30, "min_charge_cents": 1000,
+            "valid_hours": 24, "total_quota": 0, "per_user_quota": 1
+        })),
+        Some(&admin_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "建券: {body}");
+    let coupon_id = body["data"]["id"].as_u64().unwrap();
+    let (status, body) = req(
+        router.clone(),
+        "POST",
+        &format!("/api/v1/admin/coupons/{coupon_id}/grants"),
+        Some(json!({"request_id": rand_uuid(), "user_id": uid.to_string()})),
+        Some(&admin_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "发放: {body}");
+    let grant_id = body["data"]["coupon_grant_id"].as_u64().unwrap();
+
+    // 1. 报价：时长券固定零费率 → 优惠 0（过门槛后）；金额型报价语义由
+    //    domain 差分样本与 coupon 单测覆盖，此处验证服务路径。
+    let discount = chargepilot_mod_marketing::coupon::quote(db.as_ref(), uid, grant_id, 2000)
+        .await
+        .expect("报价应成功");
+    assert_eq!(discount, 0);
+    // 门槛不足。
+    let err = chargepilot_mod_marketing::coupon::quote(db.as_ref(), uid, grant_id, 999)
+        .await
+        .expect_err("门槛不足应拒绝");
+    assert!(matches!(
+        err,
+        chargepilot_mod_marketing::coupon::CouponRedeemError::Threshold
+    ));
+    // 非本人券。
+    let err = chargepilot_mod_marketing::coupon::quote(db.as_ref(), uid + 999, grant_id, 2000)
+        .await
+        .expect_err("非本人应拒绝");
+    assert!(matches!(
+        err,
+        chargepilot_mod_marketing::coupon::CouponRedeemError::NotFound
+    ));
+
+    // 2. 套餐下单带券的互斥冲突断言在 payment_flow（checkout 已装配）。
+    //    此处以库态模拟非套餐路径：payment_order(total=1500, initiated)
+    //    + intent(total=2000, discount=500, coupon)。
+    let payment_id = alloc.next_id().await.unwrap();
+    let month = chrono::Utc::now().date_naive().with_day(1).unwrap();
+    let order_no = format!("PMK{tag}");
+    sqlx::query(
+        "INSERT INTO `payment_order` (`id`, `order_no`, `biz_type`, `biz_id`, `user_id`, \
+         `pay_method`, `total_cents`, `status`, `expired_at`, `created_month`) \
+         VALUES (?, ?, 'charge', 0, ?, 'wechat', 2000, 'initiated', \
+         DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 5 MINUTE), ?)",
+    )
+    .bind(payment_id as i64)
+    .bind(&order_no)
+    .bind(uid as i64)
+    .bind(month)
+    .execute(db.as_ref())
+    .await
+    .unwrap();
+    let intent_id = format!("mk-intent-{tag}");
+    sqlx::query(
+        "INSERT INTO `charge_payment_intent` (`intent_id`, `client_request_id`, `merchant_order_no`, \
+         `payment_order_id`, `user_id`, `openid`, `device_id`, `port_no`, `port_code`, `station_id`, \
+         `pricing_rule_id`, `pricing_rule_version`, `pricing_snapshot`, `estimated_kwh`, \
+         `estimated_minutes`, `electric_cents`, `service_cents`, `total_cents`, `discount_cents`, \
+         `charge_mode`, `charge_quantity`, `status`, `expires_at`, `coupon_grant_id`) \
+         VALUES (?, ?, ?, ?, ?, CAST(? AS BINARY), 'dev-mk', 1, ?, 1, 1, 1, \
+         CAST('{\"rule\":{\"id\":1,\"station_id\":1,\"version\":1,\"spec\":{\"mode\":\"server_energy\",\"electric\":[],\"display\":{\"duration\":[],\"energy\":[]}},\"channel\":\"\"},\"estimate\":{},\"offer\":{},\"computed_at\":0}' AS JSON), \
+         '0.000', 60, 0, 0, 2000, 0, 0, 60, 'initiated', \
+         DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 5 MINUTE), ?)",
+    )
+    .bind(&intent_id)
+    .bind(format!("req-{tag}"))
+    .bind(&order_no)
+    .bind(payment_id as i64)
+    .bind(uid as i64)
+    .bind(format!("dev-mk-{tag}"))
+    .bind(format!("pc-mk-{tag}"))
+    .bind(grant_id as i64)
+    .execute(db.as_ref())
+    .await
+    .unwrap();
+
+    // 4. 到账（回调金额=应付 2000）→ 核销随资金事务提交（时长券冻结优惠 0）。
+    let payment = chargepilot_mod_payment::apply::VerifiedPayment {
+        merchant_order_no: order_no.clone(),
+        transaction_id: format!("SIMMK{tag}"),
+        open_id: String::new(),
+        paid_cents: 2000,
+        paid_at_unix_micros: chrono::Utc::now().timestamp_micros(),
+    };
+    let result = chargepilot_mod_payment::apply::apply_payment(db.as_ref(), &payment)
+        .await
+        .expect("到账应成功");
+    assert!(!result.replayed);
+    let charge_order_id = result.charge_order_id;
+    // 券已用 + 绑定支付单。
+    let (g_status, used_pay): (String, Option<u64>) = sqlx::query_as(
+        "SELECT `status`, `used_payment_order_id` FROM `coupon_grant` WHERE `id` = ?",
+    )
+    .bind(grant_id as i64)
+    .fetch_one(db.as_ref())
+    .await
+    .unwrap();
+    assert_eq!(g_status, "used");
+    assert_eq!(used_pay, Some(payment_id));
+    // 核销记录一条（PENDING- 派生单号）。
+    let (red_discount, red_no): (i64, String) = sqlx::query_as(
+        "SELECT `discount_cents`, CAST(`order_no` AS CHAR) FROM `coupon_redemption` \
+         WHERE `biz_type` = 'charge' AND `biz_id` = ?",
+    )
+    .bind(payment_id as i64)
+    .fetch_one(db.as_ref())
+    .await
+    .unwrap();
+    assert_eq!(red_discount, 0, "时长券冻结优惠恒 0");
+    assert_eq!(red_no, format!("PENDING-{payment_id}"));
+    // 订单冻结优惠与意图一致。
+    let order_discount: i64 =
+        sqlx::query_scalar("SELECT `discount_cents` FROM `charge_order` WHERE `id` = ?")
+            .bind(charge_order_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
+    assert_eq!(order_discount, 0);
+
+    // 5. 同报文重放 → replayed，核销不重复。
+    let result = chargepilot_mod_payment::apply::apply_payment(db.as_ref(), &payment)
+        .await
+        .expect("重放应成功");
+    assert!(result.replayed);
+    let red_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM `coupon_redemption` WHERE `biz_type` = 'charge' AND `biz_id` = ?",
+    )
+    .bind(payment_id as i64)
+    .fetch_one(db.as_ref())
+    .await
+    .unwrap();
+    assert_eq!(red_count, 1, "重放不重复核销");
+
+    // 6. 已用券换支付单重放 → Exhausted（券级独占）。
+    let err = chargepilot_mod_marketing::coupon::redeem_in_tx(
+        &mut db.acquire().await.unwrap(),
+        uid,
+        grant_id,
+        payment_id + 1,
+        2000,
+        0,
+        "PENDING-OTHER",
+    )
+    .await
+    .expect_err("换支付单重放应拒绝");
+    assert!(matches!(
+        err,
+        chargepilot_mod_marketing::coupon::CouponRedeemError::Exhausted,
+    ));
+    // 新支付单重放同一张已用券 → Exhausted。
+    let payment2 = chargepilot_mod_payment::apply::VerifiedPayment {
+        merchant_order_no: format!("{order_no}X"),
+        transaction_id: format!("SIMMK{tag}X"),
+        open_id: String::new(),
+        paid_cents: 1500,
+        paid_at_unix_micros: chrono::Utc::now().timestamp_micros(),
+    };
+    let err = chargepilot_mod_payment::apply::apply_payment(db.as_ref(), &payment2)
+        .await
+        .expect_err("无对应支付单应冲突");
+    assert!(matches!(
+        err,
+        chargepilot_mod_payment::apply::ApplyError::Conflict
+    ));
+
+    // 清理。
+    let _ = sqlx::query("DELETE FROM `charge_event_log` WHERE `charge_order_id` = ?")
+        .bind(charge_order_id as i64)
+        .execute(db.as_ref())
+        .await;
+    let _ = sqlx::query("DELETE FROM `charge_order_event` WHERE `charge_order_id` = ?")
+        .bind(charge_order_id as i64)
+        .execute(db.as_ref())
+        .await;
+    let _ = sqlx::query("DELETE FROM `charge_order_pricing` WHERE `charge_order_id` = ?")
+        .bind(charge_order_id as i64)
+        .execute(db.as_ref())
+        .await;
+    let _ = sqlx::query("DELETE FROM `charge_order` WHERE `id` = ?")
+        .bind(charge_order_id as i64)
+        .execute(db.as_ref())
+        .await;
+    let _ =
+        sqlx::query("DELETE FROM `charge_payment_intent` WHERE `intent_id` = ? OR `port_code` = ?")
+            .bind(&intent_id)
+            .bind(format!("pc-mk-{tag}"))
+            .execute(db.as_ref())
+            .await;
+    let _ =
+        sqlx::query("DELETE FROM `payment_callback_idempotent` WHERE `wechat_transaction_id` = ?")
+            .bind(format!("SIMMK{tag}"))
+            .execute(db.as_ref())
+            .await;
+    let _ = sqlx::query("DELETE FROM `payment_order` WHERE `id` = ?")
+        .bind(payment_id as i64)
+        .execute(db.as_ref())
+        .await;
+    let _ = sqlx::query("DELETE FROM `coupon_redemption` WHERE `coupon_id` = ?")
+        .bind(coupon_id as i64)
+        .execute(db.as_ref())
+        .await;
+    let _ = sqlx::query("DELETE FROM `coupon_grant_request` WHERE `coupon_id` = ?")
+        .bind(coupon_id as i64)
+        .execute(db.as_ref())
+        .await;
+    let _ = sqlx::query("DELETE FROM `coupon_grant` WHERE `coupon_id` = ?")
+        .bind(coupon_id as i64)
+        .execute(db.as_ref())
+        .await;
+    let _ = sqlx::query("DELETE FROM `audit_log` WHERE `actor_id` = ?")
+        .bind(admin_id as i64)
+        .execute(db.as_ref())
+        .await;
+    let _ = sqlx::query("DELETE FROM `admin_user` WHERE `id` = ?")
+        .bind(admin_id as i64)
+        .execute(db.as_ref())
+        .await;
+    let _ = sqlx::query("DELETE FROM `role_permission` WHERE `role_id` = ?")
+        .bind(admin_role as i64)
+        .execute(db.as_ref())
+        .await;
+    let _ = sqlx::query("DELETE FROM `role` WHERE `id` = ?")
+        .bind(admin_role as i64)
+        .execute(db.as_ref())
+        .await;
+    let _ = sqlx::query("DELETE FROM `user` WHERE `openid` = ?")
+        .bind(format!("development:mk-{tag}"))
+        .execute(db.as_ref())
+        .await;
+    let _ = coupon_id;
+    let _ = user_token;
 }
