@@ -59,11 +59,40 @@ async fn serve() -> anyhow::Result<()> {
 
     let mut tasks = chargepilot_platform::lifecycle::TaskManager::new();
     let token = tasks.token();
+    let allocator = Arc::new(allocator);
 
-    // 事件投递循环（处理器登记表随各业务域落地；kind 无处理器时退避不崩溃）
-    let registry = Arc::new(chargepilot_events::runtime::Registry::new());
+    // 事件投递循环：登记充电启动投递器（charge_payment_confirmed → 命令+预占）。
+    let mut registry = chargepilot_events::runtime::Registry::new();
+    registry.register(
+        "charge_payment_confirmed",
+        Arc::new(chargepilot_mod_charging::StartDispatcher {
+            pool: db.clone(),
+            allocator: (*allocator).clone(),
+            sink: Arc::new(chargepilot_mod_charging::SimulationSink),
+        }),
+    );
+    let registry = Arc::new(registry);
     tasks.spawn("event-dispatcher", {
         chargepilot_events::runtime::spawn_dispatch_loop(db.clone(), registry, token.clone())
+    });
+
+    // 启动超时兜底扫描（每 30s；超期 paid 订单 → failed + 退款登记）。
+    tasks.spawn("charging-start-sweeper", {
+        let db = db.clone();
+        let token = token.clone();
+        async move {
+            loop {
+                if token.is_cancelled() {
+                    return Ok(());
+                }
+                if let Err(e) =
+                    chargepilot_mod_charging::sweeper::sweep_once(&db, 5).await
+                {
+                    tracing::warn!(error = %e, "启动超时扫描失败");
+                }
+                token.sleep_or_cancelled(std::time::Duration::from_secs(30)).await;
+            }
+        }
     });
 
     // 后台引导账号（提供 ADMIN_BOOTSTRAP_USER/PASSWORD 时确保存在）
@@ -81,7 +110,6 @@ async fn serve() -> anyhow::Result<()> {
     }
 
     // 业务路由装配
-    let allocator = Arc::new(allocator);
     let payment_services =
         chargepilot_http_api::deps::PaymentServices::from_env(db.clone(), allocator.clone())
             .context("支付域装配失败")?;
@@ -95,6 +123,10 @@ async fn serve() -> anyhow::Result<()> {
         checkout: Some(payment_services.checkout),
         wallet_recharge: Some(payment_services.wallet_recharge),
         simulation_payment: payment_services.simulation_payment,
+        charging_stop: Some(Arc::new(chargepilot_mod_charging::StopService {
+            pool: db.clone(),
+            sink: Arc::new(chargepilot_mod_charging::SimulationSink),
+        })),
     });
     let app = chargepilot_http_api::build_router(
         deps,

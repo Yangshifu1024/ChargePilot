@@ -70,6 +70,7 @@ async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAlloc
         checkout: None,
         wallet_recharge: None,
         simulation_payment: false,
+        charging_stop: None,
     });
     Some((
         chargepilot_http_api::build_router(deps, prometheus_handle(), None),

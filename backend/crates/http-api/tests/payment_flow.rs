@@ -98,6 +98,10 @@ async fn build() -> Option<RouterEnv> {
         checkout: Some(checkout),
         wallet_recharge: Some(wallet_recharge),
         simulation_payment: true,
+        charging_stop: Some(Arc::new(chargepilot_mod_charging::StopService {
+            pool: db.clone(),
+            sink: Arc::new(chargepilot_mod_charging::SimulationSink),
+        })),
     });
     Some((
         chargepilot_http_api::build_router(deps, prometheus_handle(), None),

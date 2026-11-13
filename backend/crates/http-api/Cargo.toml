@@ -16,6 +16,7 @@ sqlx.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 chargepilot-platform.workspace = true
+chargepilot-mod-charging.workspace = true
 chargepilot-mod-identity.workspace = true
 chargepilot-mod-settlement.workspace = true
 chargepilot-mod-payment.workspace = true
@@ -26,6 +27,10 @@ chargepilot-mod-wallet.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
+chargepilot-domain.workspace = true
+chargepilot-events.workspace = true
+chargepilot-mod-charging.workspace = true
+chargepilot-mod-order.workspace = true
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 mime = "0.3"

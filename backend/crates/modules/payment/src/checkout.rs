@@ -9,7 +9,6 @@ use chargepilot_domain::charging_settle::{Estimate, Offer};
 use chargepilot_domain::money::{PayMethod, PaymentBizType, PaymentStatus};
 use chargepilot_domain::payment_intent::{intent_estimate, IntentError, IntentStatus};
 use chargepilot_platform::ids::SegmentAllocator;
-use rand::RngCore;
 use sqlx::{Acquire, MySqlPool};
 
 /// 下单域错误（HTTP 层映射旧版 CheckoutError 的 Kind 族）。
@@ -587,21 +586,9 @@ fn rule_stub(
     }
 }
 
-/// UUID v4 生成（rand 驱动；意图与幂等请求共用格式）。
+/// UUID v4 生成（转 platform::ids，命令/意图/请求共用实现）。
 pub fn new_uuid_v4() -> String {
-    let mut b = [0u8; 16];
-    rand::rng().fill_bytes(&mut b);
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    let hex: Vec<String> = b.iter().map(|x| format!("{x:02x}")).collect();
-    format!(
-        "{}-{}-{}-{}-{}",
-        hex[0..4].concat(),
-        hex[4..6].concat(),
-        hex[6..8].concat(),
-        hex[8..10].concat(),
-        hex[10..16].concat()
-    )
+    chargepilot_platform::ids::uuid_v4()
 }
 
 /// 宽松 UUID 校验（8-4-4-4-12 十六进制；旧版 uuid.Validate 的等价判定）。

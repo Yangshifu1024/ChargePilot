@@ -212,3 +212,176 @@ pub async fn new_payment_order_no(allocator: &SegmentAllocator) -> Result<String
         .map_err(|e| OrderError::Storage(e.to_string()))?;
     Ok(format!("P{id}"))
 }
+
+/// 生命周期推进所需的订单行锁视图（旧版 LifecycleView + LockForLifecycleInTx）。
+#[derive(Debug, Clone)]
+pub struct LifecycleView {
+    pub charge_order_id: u64,
+    pub order_no: String,
+    pub user_id: u64,
+    pub device_id: String,
+    pub port_no: u8,
+    pub status: String,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// 锁订单行并读取生命周期推进所需事实；不存在返回 None（旧版 LockForLifecycleInTx）。
+pub async fn lock_for_lifecycle_tx(
+    tx: &mut MySqlConnection,
+    charge_order_id: u64,
+    order_no: &str,
+) -> Result<Option<LifecycleView>, OrderError> {
+    let row: Option<(u64, String, u64, String, u8, String, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)> =
+        sqlx::query_as(
+            "SELECT `id`, `order_no`, `user_id`, `device_id`, `port_no`, `status`, \
+                    `started_at`, `ended_at` \
+             FROM `charge_order` WHERE `id` = ? AND `order_no` = ? FOR UPDATE",
+        )
+        .bind(charge_order_id as i64)
+        .bind(order_no)
+        .fetch_optional(&mut *tx)
+        .await?;
+    Ok(row.map(
+        |(id, no, user_id, device_id, port_no, status, started_at, ended_at)| LifecycleView {
+            charge_order_id: id,
+            order_no: no,
+            user_id,
+            device_id,
+            port_no,
+            status,
+            started_at,
+            ended_at,
+        },
+    ))
+}
+
+/// 启动成功：paid → charging 并写业务启动时间（旧版 StartInTx 的状态推进）。
+/// 条件更新保证只在 paid 状态推进一次；RowsAffected==0 视为冲突。
+pub async fn mark_charging_tx(
+    tx: &mut MySqlConnection,
+    charge_order_id: u64,
+    order_no: &str,
+    started_at: chrono::DateTime<chrono::Utc>,
+) -> Result<(), OrderError> {
+    let n = sqlx::query(
+        "UPDATE `charge_order` SET `status` = ?, `started_at` = ? \
+         WHERE `id` = ? AND `order_no` = ? AND `status` = ?",
+    )
+    .bind(OrderStatus::CHARGING)
+    .bind(started_at)
+    .bind(charge_order_id as i64)
+    .bind(order_no)
+    .bind(OrderStatus::PAID)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if n != 1 {
+        return Err(OrderError::NumberConflict);
+    }
+    Ok(())
+}
+
+/// 启动失败：paid → failed 并记录原因（旧版失败回执分支）。
+pub async fn mark_failed_tx(
+    tx: &mut MySqlConnection,
+    charge_order_id: u64,
+    order_no: &str,
+    reason: &str,
+) -> Result<(), OrderError> {
+    let n = sqlx::query(
+        "UPDATE `charge_order` SET `status` = ?, `failure_reason` = ? \
+         WHERE `id` = ? AND `order_no` = ? AND `status` = ?",
+    )
+    .bind(OrderStatus::FAILED)
+    .bind(reason)
+    .bind(charge_order_id as i64)
+    .bind(order_no)
+    .bind(OrderStatus::PAID)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if n != 1 {
+        return Err(OrderError::NumberConflict);
+    }
+    Ok(())
+}
+
+/// 结束回执：charging → completed 并写计量列（旧版 CompleteInTx）。
+/// 电量文本由调用方按 Wh→kWh 四位小数换算（StringFixed(4) 语义）。
+#[allow(clippy::too_many_arguments)]
+pub async fn complete_tx(
+    tx: &mut MySqlConnection,
+    charge_order_id: u64,
+    order_no: &str,
+    ended_at: chrono::DateTime<chrono::Utc>,
+    charged_kwh: &str,
+    charged_seconds: i64,
+) -> Result<(), OrderError> {
+    let n = sqlx::query(
+        "UPDATE `charge_order` SET `status` = ?, `ended_at` = ?, \
+         `charged_kwh` = ?, `charged_seconds` = ? \
+         WHERE `id` = ? AND `order_no` = ? AND `status` = ? AND `ended_at` IS NULL",
+    )
+    .bind(OrderStatus::COMPLETED)
+    .bind(ended_at)
+    .bind(charged_kwh)
+    .bind(charged_seconds)
+    .bind(charge_order_id as i64)
+    .bind(order_no)
+    .bind(OrderStatus::CHARGING)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if n != 1 {
+        return Err(OrderError::NumberConflict);
+    }
+    Ok(())
+}
+
+/// 预占端口（旧版 active_port_charge 写入）；重复预占冲突由主键仲裁。
+pub async fn occupy_port_tx(
+    tx: &mut MySqlConnection,
+    device_id: &str,
+    port_no: u8,
+    charge_order_id: u64,
+    user_id: u64,
+    started_at: chrono::DateTime<chrono::Utc>,
+) -> Result<(), OrderError> {
+    // port_id 复合编码：device 哈希无法逆，直接用 (device_id,port_no) 唯一键并令
+    // port_id 取 charge_order_id（同单同端口一一对应，旧版为 gateway 端口主键）。
+    sqlx::query(
+        "INSERT INTO `active_port_charge` \
+         (`port_id`, `device_id`, `port_no`, `charge_order_id`, `user_id`, `started_at`) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(charge_order_id as i64)
+    .bind(device_id)
+    .bind(port_no)
+    .bind(charge_order_id as i64)
+    .bind(user_id as i64)
+    .bind(started_at)
+    .execute(&mut *tx)
+    .await?;
+    Ok(())
+}
+
+/// 释放端口占用：必须匹配订单（迟到回执不能释放新占用）；返回是否删除了行。
+pub async fn release_port_tx(
+    tx: &mut MySqlConnection,
+    device_id: &str,
+    port_no: u8,
+    charge_order_id: u64,
+) -> Result<bool, OrderError> {
+    let n = sqlx::query(
+        "DELETE FROM `active_port_charge` \
+         WHERE `device_id` = ? AND `port_no` = ? AND `charge_order_id` = ?",
+    )
+    .bind(device_id)
+    .bind(port_no)
+    .bind(charge_order_id as i64)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    Ok(n == 1)
+}

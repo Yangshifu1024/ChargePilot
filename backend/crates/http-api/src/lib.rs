@@ -10,6 +10,7 @@ pub mod deps;
 pub mod device_and_user;
 pub mod user_auth;
 pub mod user_ops;
+pub mod user_charging;
 pub mod user_payment;
 pub mod user_wallet;
 
@@ -33,6 +34,7 @@ pub fn build_router(
         .merge(user_ops::router())
         .merge(user_wallet::router())
         .merge(user_payment::router())
+        .merge(user_charging::router())
         .merge(user_auth::router())
         .route("/health/live", axum::routing::get(|| async { "ok" }))
         .route("/health/ready", axum::routing::get(readiness))

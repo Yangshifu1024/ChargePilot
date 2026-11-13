@@ -19,6 +19,8 @@ pub struct ApiDeps {
     pub wallet_recharge: Option<Arc<chargepilot_mod_wallet::recharge::RechargeService>>,
     /// 支付渠道模式：simulation 时开放模拟确认路由（旧版 PAYMENT_MODE）。
     pub simulation_payment: bool,
+    /// 充电停止服务（批 4）：授权与计费截止冻结；命令下沉随阶段 06 替换。
+    pub charging_stop: Option<Arc<chargepilot_mod_charging::StopService>>,
 }
 
 /// 钱包域装配（payment 来源读取 + settlement 退款记录 + wallet 服务）。

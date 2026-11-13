@@ -110,7 +110,7 @@ impl SegmentAllocator {
         Ok(result.rows_affected())
     }
 
-    /// 资金强一致路径：在业务事务内取下一个号段并推进水位（同事务提交，崩溃回滚则号段未发）。
+/// 资金强一致路径：在业务事务内取下一个号段并推进水位（同事务提交，崩溃回滚则号段未发）。
     /// 调用方把返回的 tx 交给后续资金写入，保证「ID 与记录同事务」。
     pub async fn next_id_in_tx(&self, tx: &mut sqlx::MySqlConnection) -> anyhow::Result<u64> {
         let watermark: u64 = sqlx::query_scalar(
@@ -127,6 +127,24 @@ impl SegmentAllocator {
             .await?;
         Ok((watermark + 1) as u64)
     }
+}
+
+/// UUID v4 生成（rand 驱动；命令 ID、意图 ID 与幂等请求共用格式）。
+pub fn uuid_v4() -> String {
+    use rand::RngCore;
+    let mut b = [0u8; 16];
+    rand::rng().fill_bytes(&mut b);
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let hex: Vec<String> = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        hex[0..4].concat(),
+        hex[4..6].concat(),
+        hex[6..8].concat(),
+        hex[8..10].concat(),
+        hex[10..16].concat()
+    )
 }
 
 #[cfg(test)]

@@ -292,6 +292,7 @@ dependencies = [
  "axum",
  "chargepilot-events",
  "chargepilot-http-api",
+ "chargepilot-mod-charging",
  "chargepilot-mod-ops",
  "chargepilot-platform",
  "chargepilot-storage",
@@ -338,9 +339,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "chargepilot-domain",
+ "chargepilot-events",
+ "chargepilot-mod-charging",
  "chargepilot-mod-device",
  "chargepilot-mod-identity",
  "chargepilot-mod-ops",
+ "chargepilot-mod-order",
  "chargepilot-mod-payment",
  "chargepilot-mod-pricing",
  "chargepilot-mod-settlement",
@@ -371,6 +376,20 @@ version = "0.1.0"
 [[package]]
 name = "chargepilot-mod-charging"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chargepilot-domain",
+ "chargepilot-events",
+ "chargepilot-mod-order",
+ "chargepilot-platform",
+ "chrono",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "chargepilot-mod-device"
