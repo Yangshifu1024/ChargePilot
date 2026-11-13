@@ -6,6 +6,7 @@ pub mod announcement;
 pub mod dashboard;
 pub mod management;
 pub mod repo;
+pub mod scope;
 pub mod service;
 pub mod session;
 

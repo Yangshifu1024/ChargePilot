@@ -14,4 +14,5 @@ pub mod charging_spec;
 pub mod charging_state;
 pub mod marketing;
 pub mod money;
+pub mod operations;
 pub mod payment_intent;

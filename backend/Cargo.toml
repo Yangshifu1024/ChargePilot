@@ -66,6 +66,7 @@ metrics-exporter-prometheus = { version = "0.17", default-features = false }
 clap = { version = "4", features = ["derive"] }
 # 定点十进制（计费域：语义对齐旧版 shopspring/decimal）
 rust_decimal = { version = "1", features = ["maths"] }
+rust_xlsxwriter = "0.79"
 # 时间
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 # 内部 crate

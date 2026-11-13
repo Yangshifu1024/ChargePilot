@@ -464,3 +464,64 @@ pub async fn permission_codes_by_id_tx(
     .await?;
     Ok(without_retired(codes))
 }
+
+/// 锁定读取有效账号（旧版 LockActiveAdmin）：status=active 且未删除，FOR UPDATE。
+/// 不存在或已停用返回 None（调用方按凭据失效处理）。
+pub async fn lock_active_admin_tx(
+    tx: &mut sqlx::MySqlConnection,
+    id: u64,
+) -> anyhow::Result<Option<AdminAccount>> {
+    let row: Option<(u64, String, Option<String>, String, Option<u64>, u64)> = sqlx::query_as(
+        "SELECT `id`, `username`, `display_name`, `password_hash`, `role_id`, `auth_version` \
+         FROM `admin_user` WHERE `id` = ? AND `status` = 'active' AND `deleted_at` IS NULL FOR UPDATE",
+    )
+    .bind(id as i64)
+    .fetch_optional(tx)
+    .await?;
+    Ok(row.map(
+        |(id, username, display_name, password_hash, role_id, auth_version)| AdminAccount {
+            id,
+            username,
+            display_name,
+            password_hash,
+            role_id,
+            mfa_enabled: false,
+            mfa_secret: None,
+            mfa_last_step: None,
+            status: "active".into(),
+            failed_login_count: 0,
+            locked_until: None,
+            auth_version: auth_version as u64,
+        },
+    ))
+}
+
+/// 锁定读取未删除角色（旧版 LockRole），FOR UPDATE。
+pub async fn lock_role_tx(
+    tx: &mut sqlx::MySqlConnection,
+    id: u64,
+) -> anyhow::Result<Option<(u64, String)>> {
+    let row: Option<(u64, String)> = sqlx::query_as(
+        "SELECT `id`, `code` FROM `role` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
+    )
+    .bind(id as i64)
+    .fetch_optional(tx)
+    .await?;
+    Ok(row)
+}
+
+/// 角色权限码（旧版 RolePermissionCodesInTx），FOR SHARE 共享锁读最新集合。
+pub async fn role_permission_codes_tx(
+    tx: &mut sqlx::MySqlConnection,
+    role_id: u64,
+) -> anyhow::Result<Vec<String>> {
+    let codes: Vec<String> = sqlx::query_scalar(
+        "SELECT p.`code` FROM `permission` AS p \
+         JOIN `role_permission` rp ON rp.`permission_id` = p.`id` \
+         WHERE rp.`role_id` = ? ORDER BY p.`code` FOR SHARE",
+    )
+    .bind(role_id as i64)
+    .fetch_all(tx)
+    .await?;
+    Ok(codes)
+}
