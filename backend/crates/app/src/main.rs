@@ -6,6 +6,8 @@ use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use std::sync::Arc;
 
+mod simulator_batch;
+
 #[derive(Parser)]
 #[command(name = "chargepilot", about = "充电桩运营平台单体服务（Rust）")]
 struct Cli {
@@ -19,6 +21,8 @@ enum Cmd {
     Serve,
     /// 把数据库迁移到最新版本
     Migrate,
+    /// 批量模拟器（headless 压测加载源，非生产服务路径）
+    SimulatorBatch(simulator_batch::BatchArgs),
 }
 
 #[tokio::main]
@@ -31,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
         Cmd::Serve => serve().await,
         Cmd::Migrate => migrate().await,
+        Cmd::SimulatorBatch(args) => simulator_batch::run(args).await,
     }
 }
 
@@ -61,16 +66,62 @@ async fn serve() -> anyhow::Result<()> {
     let token = tasks.token();
     let allocator = Arc::new(allocator);
 
-    // 事件投递循环：登记充电启动投递器（charge_payment_confirmed → 命令+预占）。
+    // 设备接入装配：会话路由 + 事件 sink/审计 + 遥测缓冲（阶段 06 组件）。
+    let snapshots = Arc::new(chargepilot_gateway_runtime::SnapshotStore::new());
+    let telemetry = Arc::new(chargepilot_gateway_runtime::TelemetryBuffer::new());
+    let gateway_sink = Arc::new(chargepilot_gateway_runtime::GatewaySink::new(
+        db.clone(),
+        snapshots.clone(),
+        telemetry.clone(),
+    ));
+    let session_registry = Arc::new(chargepilot_gateway_runtime::SessionRegistry::new());
+    // 遥测批量落库循环（200ms 节拍冲刷，停机信号后冲净退出）。
+    let (telemetry_stop, telemetry_stop_rx) = tokio::sync::watch::channel(false);
+    tasks.spawn("telemetry-flush", {
+        let telemetry = telemetry.clone();
+        let db = db.clone();
+        let stop_rx = telemetry_stop_rx;
+        async move {
+            chargepilot_gateway_runtime::telemetry::run_flush_loop(db, telemetry, stop_rx).await;
+            Ok(())
+        }
+    });
+    // 设备 TCP 接入监听（DEVICE_ADDR，默认 0.0.0.0:9100）。
+    let device_addr: std::net::SocketAddr =
+        cfg.device_addr.parse().context("DEVICE_ADDR 解析失败")?;
+    tasks.spawn("device-listener", {
+        let gateway_sink = gateway_sink.clone();
+        let session_registry = session_registry.clone();
+        let token = token.clone();
+        async move {
+            chargepilot_gateway_runtime::DeviceListener::new(
+                Arc::new(chargepilot_protocol_dc589::adapter::TcpAdapter::new()),
+                gateway_sink.clone(),
+                gateway_sink,
+                session_registry,
+            )
+            .run(device_addr, token)
+            .await
+        }
+    });
+
+    // 事件投递循环：充电启动走真实设备命令通道（B8 回执异步推进）；
+    // 设备事件（B8/BA/BB）由网关侧处理器推进回执。
     let mut registry = chargepilot_events::runtime::Registry::new();
     registry.register(
         "charge_payment_confirmed",
         Arc::new(chargepilot_mod_charging::StartDispatcher {
             pool: db.clone(),
             allocator: (*allocator).clone(),
-            sink: Arc::new(chargepilot_mod_charging::SimulationSink),
-            simulation: true,
+            sink: Arc::new(chargepilot_gateway_runtime::GatewayCommandSink::new(
+                session_registry.clone(),
+            )),
+            simulation: false,
         }),
+    );
+    registry.register(
+        chargepilot_events::kind::DEVICE_EVENT,
+        Arc::new(chargepilot_gateway_runtime::DeviceEventDispatcher { pool: db.clone() }),
     );
     let registry = Arc::new(registry);
     tasks.spawn("event-dispatcher", {
@@ -172,7 +223,9 @@ async fn serve() -> anyhow::Result<()> {
         simulation_payment: payment_services.simulation_payment,
         charging_stop: Some(Arc::new(chargepilot_mod_charging::StopService {
             pool: db.clone(),
-            sink: Arc::new(chargepilot_mod_charging::SimulationSink),
+            sink: Arc::new(chargepilot_gateway_runtime::GatewayCommandSink::new(
+                session_registry.clone(),
+            )),
         })),
     });
     let app = chargepilot_http_api::build_router(
@@ -202,6 +255,8 @@ async fn serve() -> anyhow::Result<()> {
     let _ = server_task.await;
 
     let _ = token; // 后台任务由 shutdown 统一广播取消
+    // 遥测冲刷独立信号：先冲净缓冲再关连接池。
+    let _ = telemetry_stop.send(true);
     let stuck = tasks.shutdown(std::time::Duration::from_secs(15)).await;
     if !stuck.is_empty() {
         tracing::warn!(?stuck, "部分任务停机超时");

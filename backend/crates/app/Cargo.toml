@@ -9,6 +9,11 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
+rand.workspace = true
+chargepilot-gateway-runtime.workspace = true
+chargepilot-protocol.workspace = true
+chargepilot-protocol-dc589.workspace = true
 axum.workspace = true
 clap.workspace = true
 redis.workspace = true
