@@ -7,11 +7,16 @@ use crate::deps::ApiDeps;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
+use chargepilot_domain::marketing::ActivityRuleInput;
+use chargepilot_mod_marketing::activity::{
+    create_activity_rule, has_activity_read, list_activity_rules, update_activity_rule,
+};
 use chargepilot_mod_marketing::coupon::{
     CouponError, CouponRow, CouponUpdate, GrantInput, coupon_stats, create_coupon, grant_coupon,
     list_coupons, update_coupon,
 };
 use chargepilot_platform::httpx;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -32,6 +37,14 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
         .route(
             "/api/v1/admin/coupons/{id}/grants",
             axum::routing::post(grant_coupon_handler),
+        )
+        .route(
+            "/api/v1/admin/coupon-activities",
+            axum::routing::get(list_activities).post(create_activity),
+        )
+        .route(
+            "/api/v1/admin/coupon-activities/{id}",
+            axum::routing::put(update_activity),
         )
 }
 
@@ -196,6 +209,109 @@ async fn grant_coupon_handler(
             let body = serde_json::to_value(&out).unwrap_or(Value::Null);
             httpx::ok(body, &rid)
         }
+        Err(e) => coupon_error(e, &rid),
+    }
+}
+
+/// 活动列表查询参数（旧版 ReadAdminPage：page/page_size/status/keyword）。
+#[derive(Deserialize)]
+struct ActivityListQuery {
+    page: Option<i64>,
+    page_size: Option<i64>,
+    status: Option<String>,
+    keyword: Option<String>,
+}
+
+async fn list_activities(
+    State(deps): State<Arc<ApiDeps>>,
+    guard: AdminGuard,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<ActivityListQuery>,
+) -> Response {
+    let rid = rid_of(&headers);
+    if !has_activity_read(&guard.profile) {
+        return crate::respond(403, 1003, "无权执行此操作", &rid);
+    }
+    match list_activity_rules(
+        &deps.db,
+        &guard.profile,
+        q.status.as_deref().unwrap_or(""),
+        q.keyword.as_deref().unwrap_or(""),
+        q.page.unwrap_or(1).max(1),
+        q.page_size.unwrap_or(20).clamp(1, 100),
+    )
+    .await
+    {
+        Ok((items, total)) => httpx::ok(
+            json!({"items": items, "total": total, "page": q.page.unwrap_or(1).max(1),
+                   "page_size": q.page_size.unwrap_or(20).clamp(1, 100)}),
+            &rid,
+        ),
+        Err(e) => coupon_error(e, &rid),
+    }
+}
+
+/// 主键字段解析：旧版 DTO 为十进制字符串（DecimalID，避免 JS 精度丢失），兼容数字。
+fn id_of(v: &Value) -> u64 {
+    v.as_str()
+        .and_then(|s| s.parse::<u64>().ok())
+        .or_else(|| v.as_u64())
+        .unwrap_or(0)
+}
+
+/// 活动输入 → 领域校验结构（时间文本原样交由 normalize 解析 RFC3339）。
+fn activity_input(v: &Value) -> ActivityRuleInput {
+    ActivityRuleInput {
+        name: v["name"].as_str().unwrap_or_default().to_string(),
+        trigger_type: v["trigger_type"].as_str().unwrap_or_default().to_string(),
+        coupon_id: id_of(&v["coupon_id"]),
+        inviter_coupon_id: v.get("inviter_coupon_id").map(id_of),
+        threshold_cents: v["threshold_cents"].as_i64().unwrap_or(0),
+        max_grants: v["max_grants"].as_i64().unwrap_or(0) as i32,
+        per_user_limit: v["per_user_limit"].as_i64().unwrap_or(0) as i32,
+        status: v["status"].as_str().unwrap_or_default().to_string(),
+        start_at: v["start_at"].as_str().unwrap_or_default().to_string(),
+        end_at: v["end_at"].as_str().unwrap_or_default().to_string(),
+    }
+}
+
+async fn create_activity(
+    State(deps): State<Arc<ApiDeps>>,
+    guard: AdminGuard,
+    headers: HeaderMap,
+    body: Option<axum::Json<Value>>,
+) -> Response {
+    let rid = rid_of(&headers);
+    if let Some(resp) = deny(&guard, "coupon.activity.manage", &rid) {
+        return resp;
+    }
+    let Some(v) = body.map(|b| b.0) else {
+        return crate::respond(400, 1005, "活动规则无效", &rid);
+    };
+    let ip = real_ip(&headers);
+    match create_activity_rule(&deps.db, &guard.profile, &ip, &rid, activity_input(&v)).await {
+        Ok(id) => httpx::ok(json!({"id": id}), &rid),
+        Err(e) => coupon_error(e, &rid),
+    }
+}
+
+async fn update_activity(
+    State(deps): State<Arc<ApiDeps>>,
+    guard: AdminGuard,
+    headers: HeaderMap,
+    Path(id): Path<u64>,
+    body: Option<axum::Json<Value>>,
+) -> Response {
+    let rid = rid_of(&headers);
+    if let Some(resp) = deny(&guard, "coupon.activity.manage", &rid) {
+        return resp;
+    }
+    let Some(v) = body.map(|b| b.0) else {
+        return crate::respond(400, 1005, "活动规则无效", &rid);
+    };
+    let ip = real_ip(&headers);
+    match update_activity_rule(&deps.db, &guard.profile, &ip, &rid, id, activity_input(&v)).await {
+        Ok(()) => httpx::ok(json!({"id": id}), &rid),
         Err(e) => coupon_error(e, &rid),
     }
 }

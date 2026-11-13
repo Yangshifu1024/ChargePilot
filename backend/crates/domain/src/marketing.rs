@@ -460,3 +460,276 @@ mod tests {
         assert!(replay_grant(&receipt, "r1", 3, 2).is_err());
     }
 }
+
+// ---------- 活动规则纯规则（旧版 rules_coupon_activity.go + activity_grant.go 纯部分） ----------
+
+/// 活动结束时间距今的上限（旧版 MaxActivityHorizon：365 天）。
+pub const MAX_ACTIVITY_HORIZON: chrono::Duration = chrono::Duration::hours(365 * 24);
+
+/// 活动名称字数上限。
+pub const MAX_ACTIVITY_NAME_LENGTH: usize = 128;
+
+/// 活动规则待校验参数（旧版 ActivityRule）：时间为 RFC3339 文本，由 normalize 统一解析。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActivityRuleInput {
+    pub name: String,
+    /// 触发类型（TriggerType）。
+    pub trigger_type: String,
+    /// 活动发放的券模板。
+    pub coupon_id: u64,
+    /// 邀请人奖励券；邀请有奖必填。
+    pub inviter_coupon_id: Option<u64>,
+    /// 触发门槛，分。
+    pub threshold_cents: i64,
+    /// 同券模板和发放来源共享的份数上限，0 表示不限。
+    pub max_grants: i32,
+    /// 单人可领份数，0 沿用默认一份。
+    pub per_user_limit: i32,
+    /// coupon_activity_rule.status；留空时按 active 处理。
+    pub status: String,
+    /// RFC3339 开始时刻。
+    pub start_at: String,
+    /// RFC3339 结束时刻。
+    pub end_at: String,
+}
+
+/// 校验活动并将时间统一为 UTC，空状态默认 active（旧版 NormalizeActivity）。
+/// 满减门槛须为正，首充和节日门槛须为零；邀请奖励须配置邀请人券，金额门槛只要求非负。
+/// 结束时间不得超过当前时间 365 天后。
+pub fn normalize_activity(
+    rule: &ActivityRuleInput,
+    now: chrono::DateTime<Utc>,
+) -> Result<(DateTime<Utc>, DateTime<Utc>, String), ()> {
+    if rule.name.is_empty() || rule.name.chars().count() > MAX_ACTIVITY_NAME_LENGTH {
+        return Err(());
+    }
+    if !TriggerType(rule.trigger_type.clone()).known() {
+        return Err(());
+    }
+    if rule.coupon_id == 0 {
+        return Err(());
+    }
+    let start = chrono::DateTime::parse_from_rfc3339(&rule.start_at)
+        .map_err(|_| ())?
+        .with_timezone(&Utc);
+    let end = chrono::DateTime::parse_from_rfc3339(&rule.end_at)
+        .map_err(|_| ())?
+        .with_timezone(&Utc);
+    if !(start < end) {
+        return Err(());
+    }
+    if end > now + MAX_ACTIVITY_HORIZON {
+        return Err(());
+    }
+    if rule.threshold_cents < 0 || rule.max_grants < 0 || rule.per_user_limit < 0 {
+        return Err(());
+    }
+    match rule.trigger_type.as_str() {
+        TriggerType::THRESHOLD_REDEEM => {
+            if rule.threshold_cents <= 0 {
+                return Err(());
+            }
+        }
+        TriggerType::INVITE_REWARD => match rule.inviter_coupon_id {
+            Some(id) if id != 0 => {}
+            _ => return Err(()),
+        },
+        _ => {
+            if rule.threshold_cents != 0 {
+                return Err(());
+            }
+        }
+    }
+    let status = if rule.status.is_empty() {
+        ActivityStatus::ACTIVE.to_string()
+    } else {
+        rule.status.clone()
+    };
+    if !ActivityStatus(status.clone()).known() {
+        return Err(());
+    }
+    Ok((start, end, status))
+}
+
+/// 活动发券有效期：取发券起算 valid_hours 小时、券模板结束、活动结束三者最早
+/// （旧版 ActivityGrantExpiry）。
+pub fn activity_grant_expiry(
+    now: DateTime<Utc>,
+    valid_hours: i32,
+    coupon_end: Option<DateTime<Utc>>,
+    rule_end: DateTime<Utc>,
+) -> DateTime<Utc> {
+    let mut expires = now + chrono::Duration::hours(valid_hours as i64);
+    if let Some(end) = coupon_end {
+        if end < expires {
+            expires = end;
+        }
+    }
+    if rule_end < expires {
+        expires = rule_end;
+    }
+    expires
+}
+
+/// 单人份数归一：零或负数按一份处理，不表示不限量；总量不限由总份数字段控制
+/// （旧版 PerUserAllowance）。
+pub fn per_user_allowance(per_user_limit: i32) -> i64 {
+    if per_user_limit <= 0 {
+        1
+    } else {
+        per_user_limit as i64
+    }
+}
+
+/// 邀请资格：仅对邀请奖励检查非空邀请人和禁止自邀，其他触发不受限制
+/// （旧版 InviteEligible）。
+pub fn invite_eligible(trigger_type: &str, inviter_id: u64, user_id: u64) -> bool {
+    if trigger_type != TriggerType::INVITE_REWARD {
+        return true;
+    }
+    inviter_id != 0 && inviter_id != user_id
+}
+
+/// 由规则、用户、事件键和奖励方生成稳定的 32 字符发放号，不使用重试时间
+/// （旧版 activityEventID：sha256(规则 ID + scope + 用户 + 事件键) 前 16 字节 hex）。
+pub fn activity_event_id(rule_id: u64, user_id: u64, event_key: &str, scope: &[&str]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut key = String::new();
+    key.push_str(&rule_id.to_string());
+    for s in scope {
+        key.push('\0');
+        key.push_str(s);
+    }
+    key.push('\0');
+    key.push_str(&user_id.to_string());
+    key.push('\0');
+    key.push_str(event_key);
+    let sum = Sha256::digest(key.as_bytes());
+    sum[..16].iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 触发类型到发放来源：邀请奖励归 invite_reward，其余活动归 activity
+/// （旧版 grantSourceFor；触发类型与发放来源同值不同义，经此函数转换）。
+pub fn grant_source_for(trigger_type: &str) -> &'static str {
+    if trigger_type == TriggerType::INVITE_REWARD {
+        GrantSource::INVITE_REWARD
+    } else {
+        GrantSource::ACTIVITY
+    }
+}
+
+/// 充值请求号生成稳定事件键（旧版 ActivityEventKeyForRecharge）。
+pub fn activity_event_key_for_recharge(request_id: &str) -> String {
+    format!("recharge:{request_id}")
+}
+
+/// 充电订单号生成稳定事件键（旧版 ActivityEventKeyForOrder）。
+pub fn activity_event_key_for_order(order_no: &str) -> String {
+    format!("order:{order_no}")
+}
+
+#[cfg(test)]
+mod activity_tests {
+    use super::*;
+
+    fn base_rule() -> ActivityRuleInput {
+        ActivityRuleInput {
+            name: "满 50 减 5".into(),
+            trigger_type: "threshold_redeem".into(),
+            coupon_id: 1,
+            inviter_coupon_id: None,
+            threshold_cents: 5000,
+            max_grants: 0,
+            per_user_limit: 0,
+            status: "".into(),
+            start_at: "2026-01-01T00:00:00Z".into(),
+            end_at: "2026-12-31T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn normalize_activity_rules() {
+        let now = Utc::now();
+        // 合法：默认 status=active。
+        let (s, e, st) = normalize_activity(&base_rule(), now).unwrap();
+        assert_eq!(st, "active");
+        assert!(s < e);
+        // 满减门槛必须为正。
+        let mut r = base_rule();
+        r.threshold_cents = 0;
+        assert!(normalize_activity(&r, now).is_err());
+        // 首充/节日门槛必须为零。
+        let mut r = base_rule();
+        r.trigger_type = "first_recharge".into();
+        assert!(normalize_activity(&r, now).is_err());
+        r.threshold_cents = 0;
+        assert!(normalize_activity(&r, now).is_ok());
+        // 邀请有奖必须配置邀请人券。
+        let mut r = base_rule();
+        r.trigger_type = "invite_reward".into();
+        r.threshold_cents = 0;
+        assert!(normalize_activity(&r, now).is_err());
+        r.inviter_coupon_id = Some(2);
+        assert!(normalize_activity(&r, now).is_ok());
+        // 时间窗口与上限。
+        let mut r = base_rule();
+        r.start_at = "2027-01-02T00:00:00Z".into();
+        assert!(normalize_activity(&r, now).is_err());
+        let mut r = base_rule();
+        r.end_at = (now + chrono::Duration::hours(24 * 366)).to_rfc3339();
+        assert!(normalize_activity(&r, now).is_err());
+        // 非法触发类型与空状态值。
+        let mut r = base_rule();
+        r.trigger_type = "cashback".into();
+        assert!(normalize_activity(&r, now).is_err());
+        let mut r = base_rule();
+        r.status = "paused".into();
+        assert!(normalize_activity(&r, now).is_err());
+    }
+
+    #[test]
+    fn expiry_allowance_and_eligibility() {
+        let now = Utc::now();
+        let rule_end = now + chrono::Duration::hours(10);
+        // 有效期取三者最早。
+        assert_eq!(activity_grant_expiry(now, 24, None, rule_end), rule_end);
+        let coupon_end = now + chrono::Duration::hours(5);
+        assert_eq!(
+            activity_grant_expiry(now, 24, Some(coupon_end), rule_end),
+            coupon_end
+        );
+        assert_eq!(
+            activity_grant_expiry(now, 2, Some(coupon_end), rule_end),
+            now + chrono::Duration::hours(2)
+        );
+        // 单人份数归一。
+        assert_eq!(per_user_allowance(0), 1);
+        assert_eq!(per_user_allowance(-3), 1);
+        assert_eq!(per_user_allowance(3), 3);
+        // 邀请资格：仅 invite_reward 检查，禁止自邀。
+        assert!(invite_eligible("first_recharge", 0, 1));
+        assert!(!invite_eligible("invite_reward", 0, 1));
+        assert!(!invite_eligible("invite_reward", 2, 2));
+        assert!(invite_eligible("invite_reward", 2, 1));
+    }
+
+    #[test]
+    fn event_id_is_stable_and_scoped() {
+        // 同输入同输出；scope 与用户、事件键参与哈希。
+        let a = activity_event_id(7, 9, "order:C1", &[]);
+        let b = activity_event_id(7, 9, "order:C1", &[]);
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 32);
+        assert_ne!(a, activity_event_id(8, 9, "order:C1", &[]));
+        assert_ne!(a, activity_event_id(7, 10, "order:C1", &[]));
+        assert_ne!(a, activity_event_id(7, 9, "order:C2", &[]));
+        // 邀请人 scope 与受益人发放号不同。
+        assert_ne!(activity_event_id(7, 9, "order:C1", &["inviter"]), a);
+        // 来源映射：invite_reward 触发 → invite_reward 来源，其余 → activity。
+        assert_eq!(grant_source_for("invite_reward"), "invite_reward");
+        assert_eq!(grant_source_for("threshold_redeem"), "activity");
+        // 事件键前缀。
+        assert_eq!(activity_event_key_for_recharge("R1"), "recharge:R1");
+        assert_eq!(activity_event_key_for_order("C1"), "order:C1");
+    }
+}
