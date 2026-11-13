@@ -76,6 +76,49 @@ async fn serve() -> anyhow::Result<()> {
         chargepilot_events::runtime::spawn_dispatch_loop(db.clone(), registry, token.clone())
     });
 
+    // 计费批次与退款执行器（各 15s 节拍；处理器幂等，重复调度无害）。
+    tasks.spawn("billing-loop", {
+        let db = db.clone();
+        let token = token.clone();
+        async move {
+            loop {
+                if token.is_cancelled() {
+                    return Ok(());
+                }
+                match chargepilot_mod_settlement::billing::due_jobs(&db, 50).await {
+                    Ok(ids) => {
+                        for id in ids {
+                            if let Err(e) =
+                                chargepilot_mod_settlement::billing::process_job(&db, id).await
+                            {
+                                tracing::warn!(charge_order_id = id, error = %e, "计费任务处理失败");
+                            }
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, "计费任务领取失败"),
+                }
+                token.sleep_or_cancelled(std::time::Duration::from_secs(15)).await;
+            }
+        }
+    });
+    tasks.spawn("refund-executor", {
+        let db = db.clone();
+        let token = token.clone();
+        async move {
+            loop {
+                if token.is_cancelled() {
+                    return Ok(());
+                }
+                if let Err(e) =
+                    chargepilot_mod_settlement::refund_executor::run_once(&db, 50).await
+                {
+                    tracing::warn!(error = %e, "退款执行失败");
+                }
+                token.sleep_or_cancelled(std::time::Duration::from_secs(15)).await;
+            }
+        }
+    });
+
     // 启动超时兜底扫描（每 30s；超期 paid 订单 → failed + 退款登记）。
     tasks.spawn("charging-start-sweeper", {
         let db = db.clone();
