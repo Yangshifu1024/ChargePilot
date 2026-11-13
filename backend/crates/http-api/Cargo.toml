@@ -15,6 +15,7 @@ serde_json.workspace = true
 sqlx.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
+chargepilot-gateway-runtime.workspace = true
 chargepilot-platform.workspace = true
 chargepilot-mod-charging.workspace = true
 chargepilot-domain.workspace = true

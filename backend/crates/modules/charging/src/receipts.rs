@@ -193,7 +193,8 @@ pub async fn apply_start_receipt(
     .bind(id as i64)
     .fetch_one(&mut *c)
     .await?;
-    let refund_no = format!("WR{}", &input.command_id.replace('-', "")[..32.min(32)]);
+    let cleaned = input.command_id.replace('-', "");
+    let refund_no = format!("WR{}", &cleaned[..cleaned.len().min(32)]);
     sqlx::query(
         "INSERT INTO `refund_record` (`refund_no`, `payment_order_id`, `user_id`, `biz_type`, \
          `biz_id`, `refund_cents`, `reason`, `status`, `execution_policy`, `created_month`) \

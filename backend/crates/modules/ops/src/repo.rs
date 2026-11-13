@@ -267,6 +267,28 @@ pub async fn write_auth_audit(
     Ok(())
 }
 
+/// 诊断接口审计（只读操作的可见性记录，module='ops' action='diagnostics'）。
+pub async fn write_diagnostics_audit(
+    pool: &MySqlPool,
+    actor_id: u64,
+    actor_name: &str,
+    ip: &str,
+) -> anyhow::Result<()> {
+    let now = chrono::Utc::now();
+    let month = now.date_naive().with_day(1).expect("月首日必然存在");
+    sqlx::query(
+        "INSERT INTO `audit_log` (`actor_id`, `actor_name`, `module`, `action`, `target_type`, `target_id`, `client_ip`, `created_month`) \
+         VALUES (?, ?, 'ops', 'diagnostics', 'system', '', ?, ?)",
+    )
+    .bind(actor_id as i64)
+    .bind(actor_name)
+    .bind(ip)
+    .bind(month)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// 引导账号：不存在时以明文口令建号（bcrypt 落库），写 bootstrap 审计；存在则不动。
 pub async fn ensure_bootstrap(
     pool: &MySqlPool,

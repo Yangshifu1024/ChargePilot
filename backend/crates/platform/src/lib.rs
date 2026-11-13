@@ -14,4 +14,5 @@ pub mod metrics;
 pub mod password;
 pub mod redisx;
 pub mod sessiontoken;
+pub mod sweeperx;
 pub mod totp;

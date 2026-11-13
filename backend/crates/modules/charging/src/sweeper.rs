@@ -51,7 +51,9 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
             .bind(id as i64)
             .fetch_one(&mut *tx)
             .await?;
-            let refund_no = format!("WR{}", &command_id.replace('-', "")[..32.min(32)]);
+            // 旧版 Go 切片自动截断，Rust 越界 panic：按实际长度截断。
+            let cleaned = command_id.replace('-', "");
+            let refund_no = format!("WR{}", &cleaned[..cleaned.len().min(32)]);
             sqlx::query(
                 "INSERT INTO `refund_record` (`refund_no`, `payment_order_id`, `user_id`, `biz_type`, \
                  `biz_id`, `refund_cents`, `reason`, `status`, `execution_policy`, `created_month`) \
@@ -91,7 +93,8 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
             .bind(chargepilot_domain::payment_intent::IntentStatus::PAID)
             .execute(&mut *tx)
             .await?;
-            let event_id = format!("T{}", &command_id.replace('-', "")[..32.min(32)]);
+            let cleaned = command_id.replace('-', "");
+            let event_id = format!("T{}", &cleaned[..cleaned.len().min(32)]);
             chargepilot_mod_order::append_domain_event_tx(
                 &mut *tx,
                 &event_id,

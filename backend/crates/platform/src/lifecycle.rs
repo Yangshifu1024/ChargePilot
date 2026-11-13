@@ -45,7 +45,7 @@ impl CancelToken {
 #[derive(Default)]
 pub struct TaskManager {
     tx: Option<watch::Sender<bool>>,
-    tasks: Vec<(&'static str, JoinHandle<()>)>,
+    tasks: Vec<(String, JoinHandle<()>)>,
 }
 
 impl TaskManager {
@@ -64,32 +64,34 @@ impl TaskManager {
         }
     }
 
-    /// 登记一个受管理任务。
-    pub fn spawn<F>(&mut self, name: &'static str, fut: F)
+    /// 登记一个受管理任务（名字用于停机超时报告与日志）。
+    pub fn spawn<F>(&mut self, name: impl Into<String>, fut: F)
     where
         F: std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
     {
+        let name = name.into();
+        let task_name = name.clone();
         let handle = tokio::spawn(async move {
             if let Err(e) = fut.await {
-                tracing::error!(task = name, error = %e, "后台任务异常退出");
+                tracing::error!(task = %task_name, error = %e, "后台任务异常退出");
             }
         });
         self.tasks.push((name, handle));
     }
 
     /// 停机：广播取消 → 逐个 join。返回超时未退出的任务名。
-    pub async fn shutdown(mut self, timeout: Duration) -> Vec<&'static str> {
+    pub async fn shutdown(mut self, timeout: Duration) -> Vec<String> {
         if let Some(tx) = self.tx.take() {
             let _ = tx.send(true);
         }
         let deadline = tokio::time::Instant::now() + timeout;
-        let mut stuck = Vec::new();
+        let mut stuck: Vec<String> = Vec::new();
         for (name, handle) in self.tasks.drain(..) {
             let remain = deadline.saturating_duration_since(tokio::time::Instant::now());
             match tokio::time::timeout(remain, handle).await {
-                Ok(_) => tracing::info!(task = name, "后台任务已退出"),
+                Ok(_) => tracing::info!(task = %name, "后台任务已退出"),
                 Err(_) => {
-                    tracing::error!(task = name, "后台任务停机超时");
+                    tracing::error!(task = %name, "后台任务停机超时");
                     stuck.push(name);
                 }
             }

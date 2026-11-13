@@ -172,24 +172,31 @@ async fn serve() -> anyhow::Result<()> {
         }
     });
 
-    // 启动超时兜底扫描（每 30s；超期 paid 订单 → failed + 退款登记）。
-    tasks.spawn("charging-start-sweeper", {
-        let db = db.clone();
-        let token = token.clone();
-        async move {
-            loop {
-                if token.is_cancelled() {
-                    return Ok(());
-                }
-                if let Err(e) = chargepilot_mod_charging::sweeper::sweep_once(&db, 5).await {
-                    tracing::warn!(error = %e, "启动超时扫描失败");
-                }
-                token
-                    .sleep_or_cancelled(std::time::Duration::from_secs(30))
-                    .await;
+    // 兜底扫描统一注册（阶段 08）：统一节拍/滞后指标/内存态（诊断接口读）。
+    // 计费批次与退款执行器保留独立循环（15s 快节拍），只把 30s 级兜底纳入框架。
+    let mut sweeps = chargepilot_platform::sweeperx::SweepRegistry::new(db.clone());
+    sweeps.register(
+        "charging-start-timeout",
+        std::time::Duration::from_secs(30),
+        {
+            move |pool| {
+                Box::pin(
+                    async move { chargepilot_mod_charging::sweeper::sweep_once(&pool, 5).await },
+                )
             }
+        },
+    );
+    sweeps.register("export-cleanup", std::time::Duration::from_secs(3600), {
+        move |pool| {
+            Box::pin(async move {
+                let dir = std::env::var("EXPORT_DIR").unwrap_or_default();
+                chargepilot_mod_export::cleanup_expired(&pool, &dir)
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))
+            })
         }
     });
+    sweeps.spawn_all(&mut tasks, token.clone());
 
     // 后台引导账号（提供 ADMIN_BOOTSTRAP_USER/PASSWORD 时确保存在）
     let bootstrap_user = std::env::var("ADMIN_BOOTSTRAP_USER").unwrap_or_default();

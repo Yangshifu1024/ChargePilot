@@ -2,6 +2,7 @@
 //! 依赖方向：本层只调各域模块服务，不写业务 SQL、不持有业务表。
 
 pub mod admin_auth;
+pub mod admin_diagnostics;
 pub mod admin_export;
 pub mod admin_finance;
 pub mod admin_guard;
@@ -31,6 +32,7 @@ pub fn build_router(
     let mut app = axum::Router::new()
         .merge(admin_auth::router())
         .merge(admin_management::router())
+        .merge(admin_diagnostics::router())
         .merge(admin_export::router())
         .merge(admin_marketing::router())
         .merge(admin_finance::router())
