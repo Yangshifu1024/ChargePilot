@@ -1,9 +1,9 @@
 //! 后台路由：设备管理、导入、故障工单、告警认领；
 //! C 端路由：故障提交/查询、站点附近/详情（无需登录的部分公开）。
 
-use crate::admin_auth::ops_error;
 use crate::admin_guard::AdminGuard;
-use crate::deps::ApiDeps;
+use crate::deps::{ApiDeps, UserSessionBase};
+use crate::errormap::ops_error;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
@@ -487,40 +487,14 @@ async fn station_detail(
     }
 }
 
-/// 公开包装：钱包路由复用同一鉴权路径（旧版同用 user 组鉴权）。
-pub async fn user_id_from_pub(deps: &Arc<ApiDeps>, headers: &HeaderMap) -> Result<u64, Response> {
-    user_id_from(deps, headers).await
-}
-
-async fn user_id_from(deps: &Arc<ApiDeps>, headers: &HeaderMap) -> Result<u64, Response> {
-    let rid = rid_of(headers);
-    let Some(token) = crate::bearer(headers) else {
-        return Err(crate::respond(401, 1001, "access token invalid", &rid));
-    };
-    let svc = chargepilot_mod_identity::service::SessionService {
-        db: &deps.db,
-        redis_url: &deps.redis_url,
-        jwt_secret: &deps.jwt_secret,
-        allocator: &deps.allocator,
-        exchanger: &deps.exchanger,
-    };
-    // 编译期类型归位：SessionService 字段借用结构在 user_auth 同构
-    match svc.authenticate(token).await {
-        Ok(uid) => Ok(uid),
-        Err(chargepilot_mod_identity::IdentityError::SessionExpired) => {
-            Err(crate::respond(401, 1001, "session expired", &rid))
-        }
-        Err(_) => Err(crate::respond(401, 1001, "access token invalid", &rid)),
-    }
-}
-
 async fn report_fault(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let user_id = match user_id_from(&deps, &headers).await {
+    let user_id = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(u) => u,
         Err(resp) => return resp,
     };
@@ -554,11 +528,12 @@ struct MyFaultQuery {
 
 async fn my_faults(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Query(q): Query<MyFaultQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let user_id = match user_id_from(&deps, &headers).await {
+    let user_id = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(u) => u,
         Err(resp) => return resp,
     };
@@ -572,11 +547,12 @@ async fn my_faults(
 
 async fn my_fault_history(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Path(id): Path<u64>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let user_id = match user_id_from(&deps, &headers).await {
+    let user_id = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(u) => u,
         Err(resp) => return resp,
     };

@@ -1,9 +1,9 @@
 //! 后台路由：计费方案（模板/发布/继承/生效）、站点、厂商。
 //! 权限码与路径对齐旧版（pricing.read、pricing.rule.create|update、station.*、vendor.*）。
 
-use crate::admin_auth::ops_error;
 use crate::admin_guard::AdminGuard;
 use crate::deps::ApiDeps;
+use crate::errormap::ops_error;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;

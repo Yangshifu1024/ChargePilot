@@ -9,7 +9,7 @@
 //! wechat 仅收授权 code，正式号码交换能力接入前统一按「暂不可用」拒绝
 //! （旧版 ErrPhoneUnavailable 语义）。在线卡状态 C 端仅可写 lost/unbound。
 
-use crate::deps::ApiDeps;
+use crate::deps::{ApiDeps, UserSessionBase};
 use axum::Json as AxumJson;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -69,11 +69,12 @@ struct PhoneBody {
 /// 绑定手机号：成功只返回掩码（旧版 PhoneAPI.bind）。
 async fn phone_bind(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     body: Option<AxumJson<PhoneBody>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -92,9 +93,13 @@ async fn phone_bind(
 }
 
 /// 解除手机号绑定（旧版 PhoneAPI.unbind；重复解绑同样成功）。
-async fn phone_unbind(State(deps): State<Arc<ApiDeps>>, headers: HeaderMap) -> Response {
+async fn phone_unbind(
+    State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
+    headers: HeaderMap,
+) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -105,9 +110,13 @@ async fn phone_unbind(State(deps): State<Arc<ApiDeps>>, headers: HeaderMap) -> R
 }
 
 /// 返回本人尚未解绑的卡（旧版 card.API.cards）。
-async fn cards(State(deps): State<Arc<ApiDeps>>, headers: HeaderMap) -> Response {
+async fn cards(
+    State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
+    headers: HeaderMap,
+) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -129,12 +138,13 @@ struct CardStatusBody {
 /// 挂失或解绑本人卡（旧版 card.API.cardStatus；C 端仅可写 lost/unbound）。
 async fn card_status(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Path(card_no): Path<String>,
     body: Option<AxumJson<CardStatusBody>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -159,12 +169,13 @@ async fn card_status(
 /// 的归属和状态在提交事务中核对）。
 async fn feedback_submit(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Path(order_id): Path<String>,
     body: Option<AxumJson<FeedbackSubmitInput>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };

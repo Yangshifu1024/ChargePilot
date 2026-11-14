@@ -204,17 +204,52 @@ async fn build() -> Router {
         .acquire_timeout(std::time::Duration::from_millis(100))
         .connect_lazy("mysql://probe:probe@127.0.0.1:1/none")
         .expect("惰性池构建");
+    // 票 17 后域路由注册绑定装配开关：快照要求全量注册，各域句柄全量装配
+    // （惰性池 + 服务构造仅字段赋值，不触库；探活错误信封非 404/405 即通过）。
+    let allocator = std::sync::Arc::new(chargepilot_platform::ids::SegmentAllocator::new(
+        db.clone(),
+        1,
+    ));
+    let provider: std::sync::Arc<dyn chargepilot_mod_payment::PayProvider> =
+        std::sync::Arc::new(chargepilot_mod_payment::channel::SimulationProvider);
+    let scanner: std::sync::Arc<dyn chargepilot_mod_payment::PortScanner> = std::sync::Arc::new(
+        chargepilot_mod_payment::scan::TablePortScanner::new(db.clone()),
+    );
+    let bridge = std::sync::Arc::new(
+        chargepilot_mod_payment::recharge_bridge::RechargePaymentBridge {
+            pool: db.clone(),
+            allocator: (*allocator).clone(),
+            provider: provider.clone(),
+        },
+    );
     let deps = std::sync::Arc::new(chargepilot_http_api::deps::ApiDeps {
         db: db.clone(),
         redis_url: std::sync::Arc::new("redis://127.0.0.1:1".into()),
         jwt_secret: std::sync::Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: std::sync::Arc::new(chargepilot_platform::ids::SegmentAllocator::new(db, 1)),
+        allocator: allocator.clone(),
         exchanger: std::sync::Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        wallet: None,
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: false,
-        charging_stop: None,
+        wallet: Some(std::sync::Arc::new(
+            chargepilot_http_api::deps::WalletServices::build(db.clone()),
+        )),
+        checkout: Some(std::sync::Arc::new(
+            chargepilot_mod_payment::CheckoutService {
+                pool: db.clone(),
+                allocator: (*allocator).clone(),
+                scanner,
+                provider: provider.clone(),
+            },
+        )),
+        wallet_recharge: Some(std::sync::Arc::new(
+            chargepilot_mod_wallet::recharge::RechargeService {
+                db: db.clone(),
+                payments: bridge,
+            },
+        )),
+        simulation_payment: true,
+        charging_stop: Some(std::sync::Arc::new(chargepilot_mod_charging::StopService {
+            pool: db.clone(),
+            sink: std::sync::Arc::new(chargepilot_mod_charging::SimulationSink),
+        })),
         snapshots: None,
         export: chargepilot_mod_export::ExportConfig {
             export_dir: String::new(),

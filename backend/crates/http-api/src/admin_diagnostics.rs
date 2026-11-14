@@ -77,7 +77,7 @@ async fn diagnostics(
 ) -> axum::response::Response {
     let rid = httpx::request_id_from(&headers);
     if !guard.has("audit.read") {
-        return crate::admin_auth::ops_error(chargepilot_mod_ops::OpsError::Permission, &rid);
+        return crate::errormap::ops_error(chargepilot_mod_ops::OpsError::Permission, &rid);
     }
     let ip = headers
         .get("x-real-ip")

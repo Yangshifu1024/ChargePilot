@@ -3,9 +3,9 @@
 //! （casework.go / audit_log.go / admin_accounts.go / admin_mfa_settings.go /
 //! charging_schemes.go 的 preview 与 executionCapabilities）。
 
-use crate::admin_auth::ops_error;
 use crate::admin_guard::AdminGuard;
 use crate::deps::ApiDeps;
+use crate::errormap::ops_error;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
@@ -83,13 +83,6 @@ struct CasePaging {
 }
 
 /// 反馈状态白名单（旧版 ReadAdminPage(c, "pending processed closed")）。
-fn feedback_status_allowed(status: Option<&str>) -> bool {
-    match status {
-        None | Some("") => true,
-        Some(s) => matches!(s, "pending" | "processed" | "closed"),
-    }
-}
-
 async fn list_feedback(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
@@ -100,7 +93,15 @@ async fn list_feedback(
     if let Some(resp) = deny(&guard, "feedback.read", &rid) {
         return resp;
     }
-    if !feedback_status_allowed(q.status.as_deref()) {
+    // 状态过滤白名单语义收编共享提取器（票 17）；错误文案逐字保留。
+    if crate::params::StatusFilter::allowed(
+        q.status.as_deref(),
+        &["pending", "processed", "closed"],
+        &rid,
+        "关键词过长或状态无效",
+    )
+    .is_err()
+    {
         return crate::respond(400, 1005, "关键词过长或状态无效", &rid);
     }
     let page = match Page::sanitized(q.page.unwrap_or(1), q.page_size.unwrap_or(20)) {

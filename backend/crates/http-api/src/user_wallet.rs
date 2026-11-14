@@ -1,7 +1,7 @@
 //! C 端钱包路由：余额、流水、充值记录、退款进度与退款申请（路径对齐旧版）。
 //! 充值申请入口（POST /wallet/recharge）依赖支付渠道准备，随批 3 接线。
 
-use crate::deps::ApiDeps;
+use crate::deps::{ApiDeps, UserSessionBase, WalletState};
 use axum::Json as AxumJson;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
+/// 查询路由（无条件注册：只消费库连接）。
 pub fn router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
         .route(
@@ -26,6 +27,11 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
             "/api/v1/user/wallet/refunds",
             axum::routing::get(wallet_refunds),
         )
+}
+
+/// 退款申请路由（`wallet` 装配开关 → WalletState 必达，票 17）。
+pub fn refund_router() -> axum::Router<Arc<ApiDeps>> {
+    axum::Router::new()
         // 旧版契约：申请入口为单数 /refund，查询为复数 /refunds。
         .route(
             "/api/v1/user/wallet/refund",
@@ -72,9 +78,13 @@ pub fn wallet_error(e: chargepilot_mod_wallet::WalletError, rid: &str) -> Respon
     }
 }
 
-async fn wallet_balance(State(deps): State<Arc<ApiDeps>>, headers: HeaderMap) -> Response {
+async fn wallet_balance(
+    State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
+    headers: HeaderMap,
+) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -86,11 +96,12 @@ async fn wallet_balance(State(deps): State<Arc<ApiDeps>>, headers: HeaderMap) ->
 
 async fn wallet_txns(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Query(q): Query<Paging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -107,11 +118,12 @@ async fn wallet_txns(
 
 async fn wallet_recharges(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Query(q): Query<Paging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -129,11 +141,12 @@ async fn wallet_recharges(
 
 async fn wallet_refunds(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Query(q): Query<Paging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -157,18 +170,16 @@ struct RefundBody {
 
 /// 余额退款申请：重放同请求号返回首次回执；3 次/5 分钟触发频次冻结转人工。
 async fn wallet_refund(
-    State(deps): State<Arc<ApiDeps>>,
+    State(st): State<WalletState>,
     headers: HeaderMap,
     AxumJson(body): AxumJson<RefundBody>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&st.base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
-    let Some(wallet) = &deps.wallet else {
-        return crate::respond(503, 5003, "钱包服务未装配", &rid);
-    };
+    let wallet = &st.wallet;
     let input = chargepilot_mod_wallet::refund::RefundInput {
         request_id: body.request_id,
         amount_cents: body.amount_cents,

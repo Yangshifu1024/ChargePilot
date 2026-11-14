@@ -69,6 +69,27 @@ pub fn ok<T: Serialize>(data: T, request_id: &str) -> Response {
 }
 
 /// 按错误码映射状态码与信封（内部原因记日志，不进响应）。
+/// 显式状态覆盖的错误信封（票 17）：同一业务码在不同场景配不同 HTTP
+/// 状态时使用（如 ChannelInteraction 502 主态与 409 模拟渠道冲突）。
+pub fn error_with_status(
+    err: &ApiError,
+    status: axum::http::StatusCode,
+    request_id: &str,
+) -> Response {
+    if let Some(cause) = &err.cause {
+        tracing::warn!(code = err.code as i64, cause = %cause, "请求处理失败");
+    }
+    let body = Envelope {
+        code: err.code as i64,
+        message: err.message.clone(),
+        data: serde_json::Value::Null,
+        request_id: request_id.to_string(),
+        trace_id: request_id.to_string(),
+        errors: err.fields.clone(),
+    };
+    respond(status, request_id, body)
+}
+
 pub fn error(err: &ApiError, request_id: &str) -> Response {
     if let Some(cause) = &err.cause {
         tracing::warn!(code = err.code as i64, cause = %cause, "请求处理失败");

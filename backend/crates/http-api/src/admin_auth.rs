@@ -2,11 +2,10 @@
 //! POST login | mfa | refresh | logout，GET me。实时鉴权由 `admin_guard` 提供。
 
 use crate::deps::ApiDeps;
-use crate::{bearer, respond};
+use crate::errormap::{bearer, ops_error, respond};
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_ops::OpsError;
 use chargepilot_mod_ops::service::{AccessReply, LoginOutcome, SessionService};
 use chargepilot_platform::httpx;
 use std::sync::Arc;
@@ -29,35 +28,6 @@ fn service(deps: &Arc<ApiDeps>) -> SessionService<'_> {
 }
 
 /// OpsError → HTTP（码值与文案沿用旧版字面量契约）。
-pub fn ops_error(err: OpsError, request_id: &str) -> Response {
-    match &err {
-        OpsError::Credentials => respond(401, 1001, "用户名或密码错误，或登录已失效", request_id),
-        OpsError::Locked(msg) => respond(423, 2006, msg, request_id),
-        OpsError::UsedTotp => respond(
-            401,
-            1001,
-            "该验证码已被使用，请等待下一个验证码",
-            request_id,
-        ),
-        OpsError::InvalidTotp => respond(401, 1001, "验证码无效或已过期", request_id),
-        OpsError::InvalidChallenge => respond(401, 1001, "登录已失效，请重新登录", request_id),
-        OpsError::LoginRate => {
-            let mut resp = respond(429, 4291, "登录尝试过于频繁，请稍后再试", request_id);
-            resp.headers_mut()
-                .insert("retry-after", axum::http::HeaderValue::from_static("60"));
-            resp
-        }
-        OpsError::Permission => respond(403, 1003, "没有操作权限", request_id),
-        OpsError::Input(msg) => respond(400, 1005, msg, request_id),
-        OpsError::Conflict(msg) => respond(409, 2009, msg, request_id),
-        OpsError::NotFound(msg) => respond(404, 1004, msg, request_id),
-        OpsError::Storage(_) => {
-            tracing::warn!(cause = %err, "后台登录存储失败");
-            respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", request_id)
-        }
-    }
-}
-
 fn reply_response(reply: AccessReply, rid: &str) -> Response {
     match serde_json::to_value(&reply) {
         Ok(data) => httpx::ok(data, rid),

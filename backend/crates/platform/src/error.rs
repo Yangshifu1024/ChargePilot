@@ -39,13 +39,27 @@ pub enum Code {
     DependencyFailed = 5001,
     /// 存储、队列或上游接口不可用（HTTP 503）。
     ServiceUnavailable = 5003,
+    /// 网关或支付渠道交互失败（HTTP 502 主态；模拟渠道冲突显式覆盖为 409，票 17）。
+    ChannelInteraction = 3001,
+    /// 登录尝试过于频繁（HTTP 429，携带 Retry-After）。
+    LoginRateLimited = 4291,
+    /// 查询参数过期：快照或游标不再有效（HTTP 422）。
+    QueryExpired = 2018,
+    /// 服务端内部错误（HTTP 500）。
+    InternalError = 5000,
 }
 
 impl Code {
-    /// 对应 HTTP 状态码（信封语义的组成部分）。
+    /// 对应 HTTP 状态码（信封语义的组成部分）。一码多状态的场景
+    /// （如 ChannelInteraction 的 409 冲突）由调用方经
+    /// [`httpx::error_with_status`] 显式覆盖。
     pub fn http_status(self) -> axum::http::StatusCode {
         use axum::http::StatusCode;
         match self {
+            Code::ChannelInteraction => StatusCode::BAD_GATEWAY,
+            Code::LoginRateLimited => StatusCode::TOO_MANY_REQUESTS,
+            Code::QueryExpired => StatusCode::UNPROCESSABLE_ENTITY,
+            Code::InternalError => StatusCode::INTERNAL_SERVER_ERROR,
             Code::Unauthorized => StatusCode::UNAUTHORIZED,
             Code::VerificationFailed | Code::BadRequest => StatusCode::BAD_REQUEST,
             Code::Forbidden => StatusCode::FORBIDDEN,

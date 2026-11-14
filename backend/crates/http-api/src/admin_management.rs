@@ -1,8 +1,8 @@
 //! 后台管理路由：账号管理、角色管理、公告、仪表盘（路径/权限码/响应形状对齐旧版）。
 
-use crate::admin_auth::ops_error;
 use crate::admin_guard::AdminGuard;
 use crate::deps::ApiDeps;
+use crate::errormap::ops_error;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;

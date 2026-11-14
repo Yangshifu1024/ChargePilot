@@ -1,8 +1,101 @@
 //! 全局路由依赖：各域服务共享的连接与配置。业务模块不持有这些——由本层装配。
 
+use axum::extract::FromRef;
 use chargepilot_mod_identity::wechat::Exchanger;
 use chargepilot_platform::ids::SegmentAllocator;
 use std::sync::Arc;
+
+// ── 按域最小句柄组（票 17 ①）：FromRef 从装配根派生，组内无可选字段。 ──
+// 路由注册绑定装配开关（lib.rs build_router）：开关开启后该域路由才存在，
+// 处理器对域服务的取用必达，不再有「服务未装配」的运行时降级分支。
+// 会话基础件随组携带（用户端鉴权是横切，处理器单 State 提取自足）。
+
+/// 用户端会话基础件：域组共用的鉴权句柄组。
+#[derive(Clone)]
+pub struct UserSessionBase {
+    pub db: sqlx::MySqlPool,
+    pub redis_url: Arc<String>,
+    pub jwt_secret: Arc<String>,
+    pub allocator: Arc<SegmentAllocator>,
+    pub exchanger: Arc<Exchanger>,
+}
+
+impl FromRef<Arc<ApiDeps>> for UserSessionBase {
+    fn from_ref(deps: &Arc<ApiDeps>) -> Self {
+        Self {
+            db: deps.db.clone(),
+            redis_url: deps.redis_url.clone(),
+            jwt_secret: deps.jwt_secret.clone(),
+            allocator: deps.allocator.clone(),
+            exchanger: deps.exchanger.clone(),
+        }
+    }
+}
+
+/// 钱包域句柄组（`wallet` 开关 → user_wallet 退款路由）。
+#[derive(Clone)]
+pub struct WalletState {
+    pub base: UserSessionBase,
+    pub wallet: Arc<WalletServices>,
+}
+
+#[allow(clippy::expect_used)] // 装配开关约束：路由注册已绑定开关，未装域路由不可达
+impl FromRef<Arc<ApiDeps>> for WalletState {
+    fn from_ref(deps: &Arc<ApiDeps>) -> Self {
+        Self {
+            base: UserSessionBase::from_ref(deps),
+            wallet: deps
+                .wallet
+                .clone()
+                .expect("钱包域未装配（路由注册已绑定装配开关，票 17）"), // 域服务必达契约
+        }
+    }
+}
+
+/// 支付域句柄组（`payment` 开关 → 下单/充值路由）。
+#[derive(Clone)]
+pub struct PaymentState {
+    pub base: UserSessionBase,
+    pub checkout: Arc<chargepilot_mod_payment::CheckoutService>,
+    pub wallet_recharge: Arc<chargepilot_mod_wallet::recharge::RechargeService>,
+}
+
+#[allow(clippy::expect_used)] // 装配开关约束：路由注册已绑定开关，未装域路由不可达
+impl FromRef<Arc<ApiDeps>> for PaymentState {
+    fn from_ref(deps: &Arc<ApiDeps>) -> Self {
+        Self {
+            base: UserSessionBase::from_ref(deps),
+            checkout: deps
+                .checkout
+                .clone()
+                .expect("支付域未装配（路由注册已绑定装配开关，票 17）"),
+            wallet_recharge: deps
+                .wallet_recharge
+                .clone()
+                .expect("支付域未装配（路由注册已绑定装配开关，票 17）"),
+        }
+    }
+}
+
+/// 充电停止域句柄组（`charging_stop` 开关 → 停止路由）。
+#[derive(Clone)]
+pub struct ChargingStopState {
+    pub base: UserSessionBase,
+    pub stop: Arc<chargepilot_mod_charging::StopService>,
+}
+
+#[allow(clippy::expect_used)] // 装配开关约束：路由注册已绑定开关，未装域路由不可达
+impl FromRef<Arc<ApiDeps>> for ChargingStopState {
+    fn from_ref(deps: &Arc<ApiDeps>) -> Self {
+        Self {
+            base: UserSessionBase::from_ref(deps),
+            stop: deps
+                .charging_stop
+                .clone()
+                .expect("充电停止域未装配（路由注册已绑定装配开关，票 17）"),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct ApiDeps {

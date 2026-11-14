@@ -7,7 +7,7 @@
 //! 快照端点经 deps.snapshots（SnapshotStore）读实时端口读数，
 //! 缺失时回退查库；估费沿旧版「依赖缺失」分支输出 live_unavailable 提示。
 
-use crate::deps::ApiDeps;
+use crate::deps::{ApiDeps, ChargingStopState, UserSessionBase};
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
@@ -21,15 +21,6 @@ use std::sync::Arc;
 
 pub fn router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
-        .route(
-            "/api/v1/user/charging/{order_no}/stop",
-            axum::routing::post(user_stop),
-        )
-        // 旧版请求体形状（{order_no}），小程序 charging.controller.js 调用。
-        .route(
-            "/api/v1/user/charge/stop",
-            axum::routing::post(user_stop_body),
-        )
         .route(
             "/api/v1/user/charge/ongoing",
             axum::routing::get(charge_ongoing),
@@ -53,6 +44,20 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
         .route(
             "/api/v1/user/charge/{order_no}",
             axum::routing::get(charge_detail),
+        )
+}
+
+/// 停止路由（`charging_stop` 装配开关 → ChargingStopState 必达，票 17）。
+pub fn stop_router() -> axum::Router<Arc<ApiDeps>> {
+    axum::Router::new()
+        .route(
+            "/api/v1/user/charging/{order_no}/stop",
+            axum::routing::post(user_stop),
+        )
+        // 旧版请求体形状（{order_no}），小程序 charging.controller.js 调用。
+        .route(
+            "/api/v1/user/charge/stop",
+            axum::routing::post(user_stop_body),
         )
 }
 
@@ -150,9 +155,13 @@ struct HistoryQuery {
 }
 
 /// 充电中订单（旧版 ongoing：无记录输出空状态，不报错）。
-async fn charge_ongoing(State(deps): State<Arc<ApiDeps>>, headers: HeaderMap) -> Response {
+async fn charge_ongoing(
+    State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
+    headers: HeaderMap,
+) -> Response {
     let rid = httpx::request_id_from(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(u) => u,
         Err(resp) => return resp,
     };
@@ -176,11 +185,12 @@ async fn charge_ongoing(State(deps): State<Arc<ApiDeps>>, headers: HeaderMap) ->
 /// 历史订单分页（旧版 history：状态词表校验 + 费用批量回填）。
 async fn charge_history(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Query(q): Query<HistoryQuery>,
 ) -> Response {
     let rid = httpx::request_id_from(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(u) => u,
         Err(resp) => return resp,
     };
@@ -221,11 +231,12 @@ async fn charge_history(
 /// 订单详情（旧版 Detail：base + 支付摘要 + 退款列表）。
 async fn charge_detail(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Path(order_no): Path<String>,
 ) -> Response {
     let rid = httpx::request_id_from(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(u) => u,
         Err(resp) => return resp,
     };
@@ -255,11 +266,12 @@ async fn charge_detail(
 /// 实时快照（旧版 Snapshot：轮询提示 + 两分钟窗口观测 + 估费提示）。
 async fn charge_snapshot(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Query(q): Query<OrderNoQuery>,
 ) -> Response {
     let rid = httpx::request_id_from(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(u) => u,
         Err(resp) => return resp,
     };
@@ -359,11 +371,12 @@ async fn build_snapshot(deps: &ApiDeps, row: &OrderRecord) -> Result<Value, sqlx
 /// 实时曲线窗口（旧版 Curve：last_30min/last_2h/last_24h）。
 async fn charge_curve(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Query(q): Query<WindowQuery>,
 ) -> Response {
     let rid = httpx::request_id_from(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(u) => u,
         Err(resp) => return resp,
     };
@@ -417,12 +430,13 @@ async fn charge_curve(
 /// 历史曲线（旧版 HistoricalCurve：聚合粒度与点数校验 + 摘要）。
 async fn charge_history_curve(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Path(order_no): Path<String>,
     Query(q): Query<GranularityQuery>,
 ) -> Response {
     let rid = httpx::request_id_from(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(u) => u,
         Err(resp) => return resp,
     };
@@ -493,16 +507,16 @@ async fn charge_history_curve(
 
 /// 新版路径形状：POST /charging/{order_no}/stop。
 async fn user_stop(
-    State(deps): State<Arc<ApiDeps>>,
+    State(st): State<ChargingStopState>,
     headers: HeaderMap,
     Path(order_no): Path<String>,
 ) -> Response {
-    run_stop(&deps, &headers, &order_no).await
+    run_stop(&st, &headers, &order_no).await
 }
 
 /// 旧版请求体形状：POST /charge/stop，体 {order_no}（必填、最长 64）。
 async fn user_stop_body(
-    State(deps): State<Arc<ApiDeps>>,
+    State(st): State<ChargingStopState>,
     headers: HeaderMap,
     body: Option<axum::Json<Value>>,
 ) -> Response {
@@ -518,16 +532,15 @@ async fn user_stop_body(
     if order_no.is_empty() || order_no.len() > 64 {
         return crate::respond(400, 1005, "invalid order number", &rid);
     }
-    run_stop(&deps, &headers, &order_no).await
+    run_stop(&st, &headers, &order_no).await
 }
 
 /// 停止链：归属校验 + 计费截止冻结 + 停止命令下发。
-async fn run_stop(deps: &Arc<ApiDeps>, headers: &HeaderMap, order_no: &str) -> Response {
+/// 域服务经 ChargingStopState 必达（票 17：路由注册绑定装配开关）。
+async fn run_stop(st: &ChargingStopState, headers: &HeaderMap, order_no: &str) -> Response {
     let rid = httpx::request_id_from(headers);
-    let Some(stop) = &deps.charging_stop else {
-        return crate::respond(503, 5003, "充电服务未装配", &rid);
-    };
-    let uid = match crate::device_and_user::user_id_from_pub(deps, headers).await {
+    let stop = &st.stop;
+    let uid = match crate::user_guard::user_id_from(&st.base, headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -540,19 +553,7 @@ async fn run_stop(deps: &Arc<ApiDeps>, headers: &HeaderMap, order_no: &str) -> R
             }),
             &rid,
         ),
-        Err(chargepilot_mod_charging::StopError::NotFound) => {
-            crate::respond(404, 1004, "订单不存在或不可停止", &rid)
-        }
-        Err(chargepilot_mod_charging::StopError::PortIdentity) => {
-            crate::respond(409, 2009, "端口身份缺失", &rid)
-        }
-        Err(chargepilot_mod_charging::StopError::SendFailed(m)) => {
-            tracing::warn!(error = %m, "停止命令下发失败");
-            crate::respond(502, 3001, "停止命令下发失败，请重试", &rid)
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "停止请求处理失败");
-            crate::respond(503, 5003, "停止请求暂不可用", &rid)
-        }
+        // 错误映射经 errormap::stop_error 收编（票 17：三枢纽之一）。
+        Err(e) => crate::errormap::stop_error(e, &rid),
     }
 }

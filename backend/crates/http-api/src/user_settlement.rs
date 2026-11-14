@@ -4,7 +4,7 @@
 //! 挂载行：.merge(user_settlement::router())
 //! （lib.rs build_router 中与其余 user 路由并列；模块声明 pub mod user_settlement;）
 
-use crate::deps::ApiDeps;
+use crate::deps::{ApiDeps, UserSessionBase};
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
@@ -58,11 +58,12 @@ fn bill_id_of(raw: &str, rid: &str) -> Result<u64, Response> {
 /// GET /api/v1/user/bills：分页返回当前用户的账单。
 async fn bill_list(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Query(q): Query<Paging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -82,11 +83,12 @@ async fn bill_list(
 /// GET /api/v1/user/bills/:id：按账单 ID 与当前用户查询详情；越权与不存在统一 404。
 async fn bill_detail(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -107,11 +109,12 @@ async fn bill_detail(
 /// POST /api/v1/user/bills/:id/read：幂等已读标记；查不到 404，保存失败 503。
 async fn bill_mark_read(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -147,11 +150,12 @@ struct InvoiceApplyBody {
 /// 错误映射对齐旧版 applyInvoice 的字面量契约（状态码、业务码与文案）。
 async fn invoice_apply(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     body: Option<axum::Json<InvoiceApplyBody>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -221,11 +225,12 @@ fn invoice_error(e: &UserInvoiceError, rid: &str) -> Response {
 /// GET /api/v1/user/invoice/my：分页返回当前用户的发票申请。
 async fn invoice_my(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Query(q): Query<Paging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };

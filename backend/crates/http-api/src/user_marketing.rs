@@ -1,7 +1,7 @@
 //! C 端营销路由：本人持券分页与支付前可用券（路径对齐旧版 user/marketing 装配）。
 //! 只读视图：到期状态由服务层按当前时间派生展示，不写回数据库。
 
-use crate::deps::ApiDeps;
+use crate::deps::{ApiDeps, UserSessionBase};
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
@@ -42,11 +42,12 @@ struct MyCouponQuery {
 
 async fn my_coupons(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     Query(q): Query<MyCouponQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -69,9 +70,13 @@ async fn my_coupons(
     }
 }
 
-async fn list_available(State(deps): State<Arc<ApiDeps>>, headers: HeaderMap) -> Response {
+async fn list_available(
+    State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
+    headers: HeaderMap,
+) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };

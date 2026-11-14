@@ -14,8 +14,11 @@ pub mod admin_pricing_device;
 pub mod admin_users_cards;
 pub mod deps;
 pub mod device_and_user;
+pub mod errormap;
+pub mod params;
 pub mod user_auth;
 pub mod user_charging;
+pub mod user_guard;
 pub mod user_identity_cards;
 pub mod user_marketing;
 pub mod user_ops;
@@ -36,6 +39,23 @@ pub async fn build_router(
     h5_static_dir: Option<&str>,
 ) -> axum::Router {
     let mut app = axum::Router::new()
+        // 域路由注册绑定装配开关（票 17）：开关开启后该域路由才存在，
+        // 域处理器对服务的取用必达（ChargingStopState/PaymentState 等）。
+        .merge(if deps.wallet.is_some() {
+            user_wallet::refund_router()
+        } else {
+            axum::Router::new()
+        })
+        .merge(if deps.checkout.is_some() {
+            user_payment::checkout_router()
+        } else {
+            axum::Router::new()
+        })
+        .merge(if deps.charging_stop.is_some() {
+            user_charging::stop_router()
+        } else {
+            axum::Router::new()
+        })
         .merge(admin_auth::router())
         .merge(admin_management::router())
         .merge(admin_diagnostics::router())
@@ -50,7 +70,7 @@ pub async fn build_router(
         .merge(user_marketing::router())
         .merge(user_ops::router())
         .merge(user_wallet::router())
-        .merge(user_payment::router())
+        .merge(user_payment::simulation_router())
         .merge(user_charging::router())
         .merge(user_settlement::router())
         .merge(user_identity_cards::router())
@@ -162,56 +182,6 @@ async fn not_found(headers: axum::http::HeaderMap) -> Response {
     chargepilot_platform::httpx::error(&api, &rid)
 }
 
-/// 从请求头解析 Bearer 凭证（<scheme> <token>）。
-pub fn bearer(headers: &axum::http::HeaderMap) -> Option<&str> {
-    headers
-        .get(axum::http::header::AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .strip_prefix("Bearer ")
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-}
-
-/// identity 域错误 → HTTP 响应（码值与文案沿用旧版字面量契约）。
-pub fn identity_error(err: chargepilot_mod_identity::IdentityError, request_id: &str) -> Response {
-    use chargepilot_mod_identity::IdentityError as E;
-    match &err {
-        E::InvalidRefresh => respond(401, 1001, "refresh token invalid", request_id),
-        E::TokenInvalid => respond(401, 1001, "access token invalid", request_id),
-        E::SessionExpired => respond(401, 1001, "session expired", request_id),
-        E::AccountFrozen => respond(403, 1003, "account frozen", request_id),
-        E::ExchangeFailed(_) => respond(502, 3001, "WeChat login failed", request_id),
-        E::Storage(_) => {
-            let api = ApiError::from(anyhow::anyhow!(err.to_string()));
-            chargepilot_platform::httpx::error(&api, request_id)
-        }
-    }
-}
-
-/// 直发指定状态/码/文案的信封（3001 等旧版字面量码不在 Code enum 内，契约优先）。
-pub fn respond(status: u16, code: i64, message: &str, request_id: &str) -> Response {
-    let body = chargepilot_platform::httpx::Envelope {
-        code,
-        message: message.to_string(),
-        data: serde_json::Value::Null,
-        request_id: request_id.to_string(),
-        trace_id: request_id.to_string(),
-        errors: Vec::new(),
-    };
-    let _ = Code::BadRequest; // 保持错误码模块可见
-    let mut resp = (
-        axum::http::StatusCode::from_u16(status)
-            .unwrap_or_else(|_| panic!("契约内状态码非法: {status}")),
-        axum::Json(body),
-    )
-        .into_response();
-    resp.headers_mut().insert(
-        "cache-control",
-        axum::http::HeaderValue::from_static("no-store"),
-    );
-    if let Ok(v) = axum::http::HeaderValue::from_str(request_id) {
-        resp.headers_mut().insert("x-request-id", v);
-    }
-    resp
-}
+// 票 17 收编：bearer/respond/identity_error 定义归 errormap（下方 re-export
+// 保持既有 crate::respond / crate::bearer 引用路径不变）。
+pub use errormap::{bearer, identity_error, respond};

@@ -14,13 +14,12 @@
 //! 错误映射沿用旧版 AdminResourceFailure 语义：输入错 400/1005、缺失 404/1004、
 //! 存储错 503/5003；过程读取失败 503/5003「充电过程暂时无法读取，请稍后重试」。
 
-use crate::admin_auth::ops_error;
 use crate::admin_guard::AdminGuard;
 use crate::deps::ApiDeps;
+use crate::errormap::ops_error;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_domain::limits as _limits;
 use chargepilot_mod_ops::OpsError;
 use chargepilot_mod_ops::management::Page;
 use chargepilot_mod_order::admin_query::{self, AdminOrderListQuery, PaymentOrderListQuery};
@@ -364,37 +363,17 @@ struct ProcessParams {
 
 /// 游标与页长解析（旧版 parseOrderProcessQuery + ProcessService.Read 校验）。
 fn parse_process_params(q: &ProcessParams, rid: &str) -> Result<(u64, u32), Response> {
-    let after_id = match q.after_id.as_deref() {
-        None => 0,
-        Some("") => return Err(crate::respond(400, 1005, "过程游标或分页参数无效", rid)),
-        Some(raw) => match raw.parse::<u64>() {
-            Ok(v) => v,
-            Err(_) => {
-                return Err(crate::respond(
-                    400,
-                    1005,
-                    "过程游标必须非负，limit 为 1–2000",
-                    rid,
-                ));
-            }
-        },
-    };
-    let limit = match q.limit.as_deref() {
-        None => u32::try_from(_limits::CURSOR_LIMIT_DEFAULT).unwrap_or(1_000),
-        Some("") => return Err(crate::respond(400, 1005, "过程游标或分页参数无效", rid)),
-        Some(raw) => match raw.parse::<u64>() {
-            Ok(v) if _limits::CURSOR_LIMIT.contains(&v) => v as u32,
-            _ => {
-                return Err(crate::respond(
-                    400,
-                    1005,
-                    "过程游标必须非负，limit 为 1–2000",
-                    rid,
-                ));
-            }
-        },
-    };
-    Ok((after_id, limit))
+    // 游标分页校验收编共享提取器（票 17）；错误文案逐字保留旧契约。
+    let parsed = crate::params::CursorParams::parse(
+        q.after_id.as_deref(),
+        q.limit.as_deref(),
+        rid,
+        (
+            "过程游标或分页参数无效",
+            "过程游标必须非负，limit 为 1–2000",
+        ),
+    )?;
+    Ok((parsed.after_id, parsed.limit))
 }
 
 async fn order_process(

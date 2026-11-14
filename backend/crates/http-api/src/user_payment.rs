@@ -2,7 +2,7 @@
 //! 路径对齐旧版：POST /scan/offers、/scan/start、/development/payments/confirm、
 //! /wallet/recharge；模拟确认仅在 PAYMENT_MODE=simulation 时装配。
 
-use crate::deps::ApiDeps;
+use crate::deps::{ApiDeps, PaymentState, UserSessionBase};
 use axum::Json as AxumJson;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -12,7 +12,8 @@ use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
-pub fn router() -> axum::Router<Arc<ApiDeps>> {
+/// 下单与充值路由（`payment` 装配开关 → PaymentState 必达，票 17）。
+pub fn checkout_router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
         .route(
             "/api/v1/user/scan/offers",
@@ -23,13 +24,17 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
             axum::routing::post(payment_start),
         )
         .route(
-            "/api/v1/user/development/payments/confirm",
-            axum::routing::post(payment_simulation_confirm),
-        )
-        .route(
             "/api/v1/user/wallet/recharge",
             axum::routing::post(wallet_recharge),
         )
+}
+
+/// 模拟确认路由（`simulation_payment` 布尔开关，404 语义保留）。
+pub fn simulation_router() -> axum::Router<Arc<ApiDeps>> {
+    axum::Router::new().route(
+        "/api/v1/user/development/payments/confirm",
+        axum::routing::post(payment_simulation_confirm),
+    )
 }
 
 fn rid_of(headers: &HeaderMap) -> String {
@@ -43,14 +48,12 @@ struct OffersBody {
 
 /// 端口当前套餐与展示配置；无需登录（旧版 offers）。
 async fn payment_offers(
-    State(deps): State<Arc<ApiDeps>>,
+    State(st): State<PaymentState>,
     headers: HeaderMap,
     AxumJson(body): AxumJson<OffersBody>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let Some(checkout) = &deps.checkout else {
-        return crate::respond(503, 5003, "支付服务未装配", &rid);
-    };
+    let checkout = &st.checkout;
     if body.port_code.is_empty() {
         return crate::respond(400, 1005, "请求参数无效", &rid);
     }
@@ -73,15 +76,13 @@ struct StartBody {
 
 /// 下单与支付准备（旧版 start）：冻结意图与快照，返回支付参数。
 async fn payment_start(
-    State(deps): State<Arc<ApiDeps>>,
+    State(st): State<PaymentState>,
     headers: HeaderMap,
     AxumJson(body): AxumJson<StartBody>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let Some(checkout) = &deps.checkout else {
-        return crate::respond(503, 5003, "支付服务未装配", &rid);
-    };
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let checkout = &st.checkout;
+    let uid = match crate::user_guard::user_id_from(&st.base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -110,6 +111,7 @@ struct ConfirmBody {
 /// 模拟确认当前用户的支付（旧版 DevelopmentAPI.confirm；走支付成功事务）。
 async fn payment_simulation_confirm(
     State(deps): State<Arc<ApiDeps>>,
+    State(base): State<UserSessionBase>,
     headers: HeaderMap,
     AxumJson(body): AxumJson<ConfirmBody>,
 ) -> Response {
@@ -117,7 +119,7 @@ async fn payment_simulation_confirm(
     if !deps.simulation_payment {
         return crate::respond(404, 1004, "未开放模拟支付", &rid);
     }
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -152,15 +154,13 @@ struct RechargeBody {
 
 /// 钱包充值申请（旧版 RechargeService.Create）：幂等建单 + 预支付参数。
 async fn wallet_recharge(
-    State(deps): State<Arc<ApiDeps>>,
+    State(st): State<PaymentState>,
     headers: HeaderMap,
     AxumJson(body): AxumJson<RechargeBody>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let Some(recharge) = &deps.wallet_recharge else {
-        return crate::respond(503, 5003, "钱包服务未装配", &rid);
-    };
-    let uid = match crate::device_and_user::user_id_from_pub(&deps, &headers).await {
+    let recharge = &st.wallet_recharge;
+    let uid = match crate::user_guard::user_id_from(&st.base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
