@@ -6,6 +6,7 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_ops::service::{AccessReply, LoginOutcome, SessionService};
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use std::sync::Arc;
 
@@ -30,7 +31,12 @@ fn service(deps: &Arc<ApiDeps>) -> SessionService<'_> {
 fn reply_response(reply: AccessReply, rid: &str) -> Response {
     match serde_json::to_value(&reply) {
         Ok(data) => httpx::ok(data, rid),
-        Err(_) => respond(503, 5003, "登录服务暂不可用", rid),
+        Err(_) => respond(
+            503,
+            Code::ServiceUnavailable as i64,
+            "登录服务暂不可用",
+            rid,
+        ),
     }
 }
 
@@ -61,7 +67,7 @@ async fn login(
         None => (String::new(), String::new()),
     };
     if username.is_empty() || password.is_empty() || password.len() > 72 {
-        return respond(400, 1005, "请输入用户名和密码", &rid);
+        return respond(400, Code::BadRequest as i64, "请输入用户名和密码", &rid);
     }
     match service(&deps).login(&username, &password, &ip).await {
         Ok(LoginOutcome::Challenge(challenge)) => {
@@ -90,7 +96,7 @@ async fn verify_mfa(
         None => (String::new(), String::new()),
     };
     if challenge.is_empty() || code.is_empty() || code.len() > 16 {
-        return respond(400, 1005, "请提供登录挑战与验证码", &rid);
+        return respond(400, Code::BadRequest as i64, "请提供登录挑战与验证码", &rid);
     }
     match service(&deps).verify_mfa(&challenge, &code, &ip).await {
         Ok(reply) => reply_response(reply, &rid),
@@ -101,7 +107,12 @@ async fn verify_mfa(
 async fn refresh(State(deps): State<Arc<ApiDeps>>, headers: HeaderMap) -> Response {
     let rid = httpx::request_id_from(&headers);
     let Some(token) = bearer(&headers) else {
-        return respond(401, 1001, "用户名或密码错误，或登录已失效", &rid);
+        return respond(
+            401,
+            Code::Unauthorized as i64,
+            "用户名或密码错误，或登录已失效",
+            &rid,
+        );
     };
     match service(&deps).refresh(token).await {
         Ok(reply) => reply_response(reply, &rid),
@@ -112,7 +123,12 @@ async fn refresh(State(deps): State<Arc<ApiDeps>>, headers: HeaderMap) -> Respon
 async fn logout(State(deps): State<Arc<ApiDeps>>, headers: HeaderMap) -> Response {
     let rid = httpx::request_id_from(&headers);
     let Some(token) = bearer(&headers) else {
-        return respond(401, 1001, "用户名或密码错误，或登录已失效", &rid);
+        return respond(
+            401,
+            Code::Unauthorized as i64,
+            "用户名或密码错误，或登录已失效",
+            &rid,
+        );
     };
     match service(&deps).logout(token).await {
         Ok(()) => httpx::ok(serde_json::json!({ "revoked": true }), &rid),
@@ -124,7 +140,12 @@ async fn logout(State(deps): State<Arc<ApiDeps>>, headers: HeaderMap) -> Respons
 async fn me(State(deps): State<Arc<ApiDeps>>, headers: HeaderMap) -> Response {
     let rid = httpx::request_id_from(&headers);
     let Some(token) = bearer(&headers) else {
-        return respond(401, 1001, "用户名或密码错误，或登录已失效", &rid);
+        return respond(
+            401,
+            Code::Unauthorized as i64,
+            "用户名或密码错误，或登录已失效",
+            &rid,
+        );
     };
     match service(&deps).authenticate(token).await {
         Ok((profile, _sid)) => {

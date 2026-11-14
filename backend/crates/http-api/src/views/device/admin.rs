@@ -9,6 +9,7 @@ use chargepilot_mod_device::{DeviceError, alert, fault, import, management, stat
 use chargepilot_mod_ops::OpsError;
 use chargepilot_mod_ops::management::Page;
 use chargepilot_mod_pricing::metering;
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -32,7 +33,12 @@ async fn device_capabilities(
         return resp;
     }
     let Some(station_id) = q.station_id.filter(|s| *s > 0) else {
-        return crate::respond(400, 1005, "station_id 必须为正整数", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "station_id 必须为正整数",
+            &rid,
+        );
     };
     let device = q.device_id.as_deref().unwrap_or_default();
     match chargepilot_mod_device::capabilities::execution_capabilities(&deps.db, station_id, device)
@@ -46,13 +52,20 @@ async fn device_capabilities(
 /// 能力查询错误映射（旧版 pricingFailure：InputError→400、其余按资源失败）。
 fn capability_error(e: DeviceError, rid: &str) -> Response {
     match &e {
-        DeviceError::Input(msg) => crate::respond(400, 1005, msg, rid),
-        DeviceError::NotFound => crate::respond(404, 1004, "记录不存在或已删除", rid),
-        DeviceError::Forbidden => crate::respond(403, 1003, "没有操作权限", rid),
-        DeviceError::Conflict(msg) => crate::respond(409, 2009, msg, rid),
+        DeviceError::Input(msg) => crate::respond(400, Code::BadRequest as i64, msg, rid),
+        DeviceError::NotFound => {
+            crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid)
+        }
+        DeviceError::Forbidden => crate::respond(403, Code::Forbidden as i64, "没有操作权限", rid),
+        DeviceError::Conflict(msg) => crate::respond(409, Code::Conflict as i64, msg, rid),
         DeviceError::Storage(_) => {
             tracing::warn!(cause = %e, "设备能力查询失败");
-            crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                rid,
+            )
         }
     }
 }
@@ -88,13 +101,18 @@ fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
 
 fn device_error(e: DeviceError, rid: &str) -> Response {
     match &e {
-        DeviceError::Input(msg) => crate::respond(400, 1005, msg, rid),
-        DeviceError::Forbidden => crate::respond(403, 1003, "没有操作权限", rid),
-        DeviceError::NotFound => crate::respond(404, 1004, "记录不存在或已删除", rid),
-        DeviceError::Conflict(msg) => crate::respond(409, 2009, msg, rid),
-        DeviceError::Storage(_) => {
-            crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", rid)
+        DeviceError::Input(msg) => crate::respond(400, Code::BadRequest as i64, msg, rid),
+        DeviceError::Forbidden => crate::respond(403, Code::Forbidden as i64, "没有操作权限", rid),
+        DeviceError::NotFound => {
+            crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid)
         }
+        DeviceError::Conflict(msg) => crate::respond(409, Code::Conflict as i64, msg, rid),
+        DeviceError::Storage(_) => crate::respond(
+            503,
+            Code::ServiceUnavailable as i64,
+            "数据暂时无法读取或保存，请稍后重试",
+            rid,
+        ),
     }
 }
 #[derive(Deserialize)]
@@ -117,7 +135,7 @@ async fn list_stations(
     }
     let page = match Page::sanitized(q.page.unwrap_or(1), q.page_size.unwrap_or(20)) {
         Ok(p) => p,
-        Err(e) => return crate::respond(400, 1005, &e.to_string(), &rid),
+        Err(e) => return crate::respond(400, Code::BadRequest as i64, &e.to_string(), &rid),
     };
     // 前端「全部状态」以空串发送（axios 照发 status=），旧版语义空串=不过滤。
     let status = q.status.as_deref().filter(|s| !s.is_empty());
@@ -144,7 +162,12 @@ async fn get_station(
     match station::get(&deps.db, id).await {
         Ok(s) => match serde_json::to_value(&s) {
             Ok(v) => httpx::ok(v, &rid),
-            Err(_) => crate::respond(503, 5003, "数据暂时无法读取", &rid),
+            Err(_) => crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取",
+                &rid,
+            ),
         },
         Err(e) => device_error(e, &rid),
     }
@@ -161,7 +184,7 @@ async fn create_station(
         return resp;
     }
     let Some(input) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "请填写站点信息", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请填写站点信息", &rid);
     };
     match station::create(
         &deps.db,
@@ -190,7 +213,7 @@ async fn update_station(
         return resp;
     }
     let Some(input) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "请填写站点信息", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请填写站点信息", &rid);
     };
     match station::update(&deps.db, &guard.profile, id, input, "unknown", &rid).await {
         Ok(id) => httpx::ok(json!({"id": id}), &rid),
@@ -251,7 +274,7 @@ async fn create_vendor(
         return resp;
     }
     let Some(input) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "请填写厂商信息", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请填写厂商信息", &rid);
     };
     match vendor::create(
         &deps.db,
@@ -280,7 +303,7 @@ async fn update_vendor(
         return resp;
     }
     let Some(input) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "请填写厂商信息", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请填写厂商信息", &rid);
     };
     match vendor::update(&deps.db, &guard.profile, id, input, "unknown", &rid).await {
         Ok(id) => httpx::ok(json!({"id": id}), &rid),
@@ -357,7 +380,7 @@ async fn list_devices(
     }
     let page = match Page::sanitized(q.page.unwrap_or(1), q.page_size.unwrap_or(20)) {
         Ok(p) => p,
-        Err(e) => return crate::respond(400, 1005, &e.to_string(), &rid),
+        Err(e) => return crate::respond(400, Code::BadRequest as i64, &e.to_string(), &rid),
     };
     match management::list(
         &deps.db,
@@ -406,11 +429,18 @@ async fn update_device(
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "请提供设备资料", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请提供设备资料", &rid);
     };
     let input: management::DeviceInput = match serde_json::from_value(v) {
         Ok(i) => i,
-        Err(_) => return crate::respond(400, 1005, "设备资料字段缺失或类型无效", &rid),
+        Err(_) => {
+            return crate::respond(
+                400,
+                Code::BadRequest as i64,
+                "设备资料字段缺失或类型无效",
+                &rid,
+            );
+        }
     };
     match management::update(&deps.db, &guard.profile, id, input, "unknown", &rid).await {
         Ok(id) => httpx::ok(json!({"id": id}), &rid),
@@ -468,7 +498,7 @@ async fn create_import(
         return resp;
     }
     let Some(input) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "请提供导入清单", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请提供导入清单", &rid);
     };
     match import::import_devices(
         &deps.db,
@@ -517,7 +547,7 @@ async fn admin_fault_list(
     }
     let page = match Page::sanitized(q.page.unwrap_or(1), q.page_size.unwrap_or(20)) {
         Ok(p) => p,
-        Err(e) => return crate::respond(400, 1005, &e.to_string(), &rid),
+        Err(e) => return crate::respond(400, Code::BadRequest as i64, &e.to_string(), &rid),
     };
     match fault::admin_list(&deps.db, q.status.as_deref(), page.page, page.page_size).await {
         Ok((items, total)) => httpx::ok(
@@ -558,7 +588,7 @@ async fn admin_fault_dispatch(
     let v = body.map(|b| b.0).unwrap_or(Value::Null);
     let assigned_to = v["assigned_to"].as_u64().unwrap_or(0);
     if assigned_to == 0 {
-        return crate::respond(400, 1005, "请指定处理人", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请指定处理人", &rid);
     }
     match fault::dispatch(
         &deps.db,

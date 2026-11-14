@@ -7,6 +7,7 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_ops::OpsError;
 use chargepilot_mod_pricing::{PricingError, publication, templates};
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -22,17 +23,36 @@ async fn preview_scheme(
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "请提供完整的计费方案与模拟计量", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请提供完整的计费方案与模拟计量",
+            &rid,
+        );
     };
     let scheme: chargepilot_domain::charging_scheme::Scheme =
         match serde_json::from_value(v["scheme"].clone()) {
             Ok(s) => s,
-            Err(e) => return crate::respond(400, 1005, &format!("方案无效：{e}"), &rid),
+            Err(e) => {
+                return crate::respond(
+                    400,
+                    Code::BadRequest as i64,
+                    &format!("方案无效：{e}"),
+                    &rid,
+                );
+            }
         };
     let meter: chargepilot_domain::charging_actual::ActualMeter =
         match serde_json::from_value(v["meter"].clone()) {
             Ok(m) => m,
-            Err(e) => return crate::respond(400, 1005, &format!("模拟计量无效：{e}"), &rid),
+            Err(e) => {
+                return crate::respond(
+                    400,
+                    Code::BadRequest as i64,
+                    &format!("模拟计量无效：{e}"),
+                    &rid,
+                );
+            }
         };
     let package_id = v["package_id"].as_u64().unwrap_or(0);
     let scenario = v["scenario"].as_str().unwrap_or_default();
@@ -42,9 +62,14 @@ async fn preview_scheme(
     match scheme.preview_scenario(package_id, meter, scenario, wallet_cents) {
         Ok(result) => match serde_json::to_value(&result) {
             Ok(data) => httpx::ok(data, &rid),
-            Err(_) => crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", &rid),
+            Err(_) => crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                &rid,
+            ),
         },
-        Err(e) => crate::respond(400, 1005, &e.0, &rid),
+        Err(e) => crate::respond(400, Code::BadRequest as i64, &e.0, &rid),
     }
 }
 
@@ -93,16 +118,25 @@ fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
 
 fn pricing_error(e: PricingError, rid: &str) -> Response {
     match &e {
-        PricingError::InvalidScheme(msg) => crate::respond(409, 2009, msg, rid),
+        PricingError::InvalidScheme(msg) => crate::respond(409, Code::Conflict as i64, msg, rid),
         PricingError::VersionConflict | PricingError::PublishMismatch => {
-            crate::respond(409, 2009, &e.to_string(), rid)
+            crate::respond(409, Code::Conflict as i64, &e.to_string(), rid)
         }
-        PricingError::Forbidden => crate::respond(403, 1003, "没有操作权限", rid),
-        PricingError::NotFound => crate::respond(404, 1004, "记录不存在或已删除", rid),
-        PricingError::RuleUnavailable => crate::respond(409, 2009, &e.to_string(), rid),
+        PricingError::Forbidden => crate::respond(403, Code::Forbidden as i64, "没有操作权限", rid),
+        PricingError::NotFound => {
+            crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid)
+        }
+        PricingError::RuleUnavailable => {
+            crate::respond(409, Code::Conflict as i64, &e.to_string(), rid)
+        }
         PricingError::Storage(_) => {
             tracing::warn!(cause = %e, "pricing 存储失败");
-            crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                rid,
+            )
         }
     }
 }
@@ -141,7 +175,7 @@ async fn create_scheme(
         .map(|b| b.0)
         .and_then(|v| serde_json::from_value::<templates::SchemeInput>(v).ok())
     else {
-        return crate::respond(400, 1005, "请提供完整的计费方案", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请提供完整的计费方案", &rid);
     };
     match templates::create_template(
         &deps.db,
@@ -173,7 +207,7 @@ async fn update_scheme(
         .map(|b| b.0)
         .and_then(|v| serde_json::from_value::<templates::SchemeInput>(v).ok())
     else {
-        return crate::respond(400, 1005, "请提供完整的计费方案", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请提供完整的计费方案", &rid);
     };
     match templates::update_template(&deps.db, &guard.profile, id, input, "unknown", &rid).await {
         Ok((id, version)) => httpx::ok(json!({"id": id, "version": version}), &rid),
@@ -253,7 +287,7 @@ async fn apply_scheme(
         .map(|b| b.0)
         .and_then(|v| serde_json::from_value::<publication::PublishInput>(v).ok())
     else {
-        return crate::respond(400, 1005, "请提供发布目标与方案", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请提供发布目标与方案", &rid);
     };
     match publication::publish(&deps.db, &guard.profile, input, "unknown", &rid).await {
         Ok((id, version, replayed)) => httpx::ok(
@@ -300,7 +334,7 @@ async fn inherit_scheme(
         .map(|b| b.0)
         .and_then(|v| serde_json::from_value::<publication::InheritInput>(v).ok())
     else {
-        return crate::respond(400, 1005, "请提供继承目标设备", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请提供继承目标设备", &rid);
     };
     match publication::inherit_station_rule(&deps.db, &guard.profile, id, input, "unknown", &rid)
         .await

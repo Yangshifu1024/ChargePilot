@@ -4,6 +4,7 @@ use crate::state::ApiDeps;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::json;
@@ -28,13 +29,18 @@ async fn list(
     let page = q.page.unwrap_or(1);
     let size = q.page_size.unwrap_or(20);
     if !(1..=100_000).contains(&page) || !(1..=100).contains(&size) {
-        return crate::respond(400, 1005, "分页参数无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "分页参数无效", &rid);
     }
     match chargepilot_mod_ops::announcement::public_list(&deps.db, page as u32, size as u32).await {
         Ok((items, page, page_size)) => httpx::ok(
             json!({"items": items, "page": page, "page_size": page_size}),
             &rid,
         ),
-        Err(_) => crate::respond(503, 5003, "公告暂时无法读取", &rid),
+        Err(_) => crate::respond(
+            503,
+            Code::ServiceUnavailable as i64,
+            "公告暂时无法读取",
+            &rid,
+        ),
     }
 }

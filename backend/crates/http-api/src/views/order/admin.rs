@@ -7,6 +7,7 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_ops::OpsError;
 use chargepilot_mod_ops::management::Page;
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -39,11 +40,11 @@ async fn list_feedback(
     )
     .is_err()
     {
-        return crate::respond(400, 1005, "关键词过长或状态无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "关键词过长或状态无效", &rid);
     }
     let page = match Page::sanitized(q.page.unwrap_or(1), q.page_size.unwrap_or(20)) {
         Ok(p) => p,
-        Err(e) => return crate::respond(400, 1005, &e.to_string(), &rid),
+        Err(e) => return crate::respond(400, Code::BadRequest as i64, &e.to_string(), &rid),
     };
     match chargepilot_mod_order::feedback::list(
         &deps.db,
@@ -95,13 +96,23 @@ async fn reply_feedback(
 fn feedback_error(e: chargepilot_mod_order::feedback::FeedbackError, rid: &str) -> Response {
     use chargepilot_mod_order::feedback::FeedbackError as E;
     match &e {
-        E::Input(msg) => crate::respond(400, 1005, msg, rid),
-        E::Conflict => crate::respond(409, 2009, "当前记录状态不允许此操作，请刷新后重试", rid),
-        E::NotFound => crate::respond(404, 1004, "记录不存在或已删除", rid),
-        E::Forbidden => crate::respond(403, 1003, "没有操作权限", rid),
+        E::Input(msg) => crate::respond(400, Code::BadRequest as i64, msg, rid),
+        E::Conflict => crate::respond(
+            409,
+            Code::Conflict as i64,
+            "当前记录状态不允许此操作，请刷新后重试",
+            rid,
+        ),
+        E::NotFound => crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid),
+        E::Forbidden => crate::respond(403, Code::Forbidden as i64, "没有操作权限", rid),
         E::Storage(_) => {
             tracing::warn!(cause = %e, "反馈请求处理失败");
-            crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                rid,
+            )
         }
     }
 }
@@ -213,7 +224,12 @@ fn storage_error(e: sqlx::Error, rid: &str) -> Response {
 fn parse_path_id(raw: &str, rid: &str) -> Result<u64, Response> {
     match raw.parse::<u64>() {
         Ok(id) if id > 0 => Ok(id),
-        _ => Err(crate::respond(400, 1005, "ID 必须为正整数", rid)),
+        _ => Err(crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "ID 必须为正整数",
+            rid,
+        )),
     }
 }
 
@@ -227,7 +243,7 @@ struct Paging {
 impl Paging {
     fn sanitized(&self, rid: &str) -> Result<Page, Response> {
         Page::sanitized(self.page.unwrap_or(1), self.page_size.unwrap_or(20))
-            .map_err(|e| crate::respond(400, 1005, &e.to_string(), rid))
+            .map_err(|e| crate::respond(400, Code::BadRequest as i64, &e.to_string(), rid))
     }
 }
 
@@ -241,7 +257,12 @@ fn validate_keyword_status(
     if keyword.is_some_and(|k| k.chars().count() > 128)
         || status.is_some_and(|s| !s.is_empty() && !allowed.contains(&s))
     {
-        return Err(crate::respond(400, 1005, "关键词过长或状态无效", rid));
+        return Err(crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "关键词过长或状态无效",
+            rid,
+        ));
     }
     Ok(())
 }
@@ -260,7 +281,7 @@ fn parse_time(
     }
     match chrono::DateTime::parse_from_rfc3339(raw) {
         Ok(t) => Ok(Some(t.with_timezone(&chrono::Utc))),
-        Err(_) => Err(crate::respond(400, 1005, message, rid)),
+        Err(_) => Err(crate::respond(400, Code::BadRequest as i64, message, rid)),
     }
 }
 
@@ -322,18 +343,23 @@ async fn list_orders(
         || !one_of(q.payment_status.as_deref(), &PAYMENT_STATUSES)
         || !one_of(q.start_source.as_deref(), &START_SOURCES)
     {
-        return crate::respond(400, 1005, "业务状态、支付状态或启动来源无效", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "业务状态、支付状态或启动来源无效",
+            &rid,
+        );
     }
     if q.order_no.as_deref().is_some_and(|v| v.len() > 64)
         || q.device_id.as_deref().is_some_and(|v| v.len() > 64)
     {
-        return crate::respond(400, 1005, "订单号或设备号过长", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "订单号或设备号过长", &rid);
     }
     let station_id = match q.station_id.as_deref() {
         None | Some("") => None,
         Some(raw) => match raw.parse::<u64>() {
             Ok(id) if id > 0 => Some(id),
-            _ => return crate::respond(400, 1005, "站点 ID 无效", &rid),
+            _ => return crate::respond(400, Code::BadRequest as i64, "站点 ID 无效", &rid),
         },
     };
     let from = match parse_time(q.started_from.as_deref(), "时间格式须为 ISO 8601", &rid) {
@@ -347,7 +373,12 @@ async fn list_orders(
     if let (Some(f), Some(t)) = (from, to)
         && f > t
     {
-        return crate::respond(400, 1005, "开始时间不能晚于结束时间", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "开始时间不能晚于结束时间",
+            &rid,
+        );
     }
     let query = AdminOrderListQuery {
         page: page.page,
@@ -517,7 +548,12 @@ async fn order_process(
         Ok((items, next)) => httpx::ok(json!({"items": items, "next_after_id": next}), &rid),
         Err(e) => {
             tracing::warn!(cause = %e, "充电过程读取失败");
-            crate::respond(503, 5003, "充电过程暂时无法读取，请稍后重试", &rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "充电过程暂时无法读取，请稍后重试",
+                &rid,
+            )
         }
     }
 }
@@ -605,7 +641,12 @@ async fn payment_orders(
         || !one_of(q.pay_method.as_deref(), &PAY_METHODS)
         || !one_of(q.payment_status.as_deref(), &PAYMENT_STATUSES)
     {
-        return crate::respond(400, 1005, "支付单号、用途、支付方式或支付状态无效", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "支付单号、用途、支付方式或支付状态无效",
+            &rid,
+        );
     }
     let from = match parse_time(
         q.created_from.as_deref(),
@@ -627,13 +668,23 @@ async fn payment_orders(
     for t in [from, to].into_iter().flatten() {
         let year = t.year();
         if !(1000..=9999).contains(&year) {
-            return crate::respond(400, 1005, "时间格式须为 ISO 8601，且在有效日期范围内", &rid);
+            return crate::respond(
+                400,
+                Code::BadRequest as i64,
+                "时间格式须为 ISO 8601，且在有效日期范围内",
+                &rid,
+            );
         }
     }
     if let (Some(f), Some(t)) = (from, to)
         && f > t
     {
-        return crate::respond(400, 1005, "开始时间不能晚于结束时间", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "开始时间不能晚于结束时间",
+            &rid,
+        );
     }
     let query = PaymentOrderListQuery {
         page: page.page,

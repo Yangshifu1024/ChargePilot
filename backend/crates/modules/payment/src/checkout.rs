@@ -12,46 +12,37 @@ use chargepilot_platform::ids::SegmentAllocator;
 use sqlx::{Acquire, MySqlPool};
 
 /// 下单域错误（HTTP 层映射旧版 CheckoutError 的 Kind 族）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// 下单与支付准备错误（语义分类 → HTTP 映射在 views/payment 门面）。
+#[derive(Debug, thiserror::Error)]
 pub enum CheckoutError {
     /// 输入不合法。
+    #[error("请求参数无效")]
     InvalidInput,
     /// 端口或设备不存在。
+    #[error("设备或端口不存在")]
     NotFound,
     /// 设备已停用。
+    #[error("设备已停用")]
     Paused,
     /// 端口不可用（被预占或非空闲）。
+    #[error("端口已被占用")]
     PortBusy,
     /// 套餐不可售。
+    #[error("套餐不可售")]
     OfferUnavailable,
     /// 计费方案不可用或与设备能力不兼容。
+    #[error("计费方案不可用")]
     Pricing,
     /// 支付申请冲突（并发或重放不一致）。
+    #[error("支付申请冲突")]
     Conflict,
     /// 渠道不可用。
+    #[error("支付渠道不可用")]
     Provider,
     /// 存储错误。
+    #[error("支付存储错误: {0}")]
     Storage(String),
 }
-
-impl std::fmt::Display for CheckoutError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let text = match self {
-            CheckoutError::InvalidInput => "请求参数无效",
-            CheckoutError::NotFound => "设备或端口不存在",
-            CheckoutError::Paused => "设备已停用",
-            CheckoutError::PortBusy => "端口已被占用",
-            CheckoutError::OfferUnavailable => "套餐不可售",
-            CheckoutError::Pricing => "计费方案不可用",
-            CheckoutError::Conflict => "支付申请冲突",
-            CheckoutError::Provider => "支付渠道不可用",
-            CheckoutError::Storage(m) => return write!(f, "下单存储错误: {m}"),
-        };
-        f.write_str(text)
-    }
-}
-
-impl std::error::Error for CheckoutError {}
 
 impl From<sqlx::Error> for CheckoutError {
     fn from(e: sqlx::Error) -> Self {

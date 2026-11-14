@@ -14,6 +14,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_ops::OpsError;
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::json;
@@ -100,7 +101,12 @@ async fn list_invoices(
         Ok(items) => httpx::ok(json!({ "items": items }), &rid),
         Err(e) => {
             tracing::warn!(error = %e, "发票队列读取失败");
-            crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", &rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                &rid,
+            )
         }
     }
 }
@@ -153,10 +159,15 @@ async fn review_invoice(
         return resp;
     }
     if id == 0 {
-        return crate::respond(400, 1005, "ID 必须为正整数", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "ID 必须为正整数", &rid);
     }
     let Some(input) = decode_strict::<InvoiceReviewBody>(&body) else {
-        return crate::respond(400, 1005, "请求内容无效或包含未知字段", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请求内容无效或包含未知字段",
+            &rid,
+        );
     };
     // 审批只认 HTTPS 发票链接，驳回必填原因（旧版 operations.ValidPublicURL / ValidText）。
     let ok_input = if approve {
@@ -165,7 +176,12 @@ async fn review_invoice(
         valid_text(&input.reason, 255)
     };
     if !ok_input {
-        return crate::respond(400, 1005, "请填写 HTTPS 发票链接或拒绝原因", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请填写 HTTPS 发票链接或拒绝原因",
+            &rid,
+        );
     }
     let actor = guard.profile.clone();
     let ip = real_ip(&headers);
@@ -193,12 +209,22 @@ fn invoice_error(
 ) -> Response {
     use chargepilot_mod_settlement::invoice_admin::InvoiceAdminError as E;
     match &e {
-        E::Conflict => crate::respond(409, 2009, "当前记录状态不允许此操作，请刷新后重试", rid),
-        E::NotFound => crate::respond(404, 1004, "记录不存在或已删除", rid),
-        E::Forbidden => crate::respond(403, 1003, "没有操作权限", rid),
+        E::Conflict => crate::respond(
+            409,
+            Code::Conflict as i64,
+            "当前记录状态不允许此操作，请刷新后重试",
+            rid,
+        ),
+        E::NotFound => crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid),
+        E::Forbidden => crate::respond(403, Code::Forbidden as i64, "没有操作权限", rid),
         E::Storage(m) => {
             tracing::warn!(error = %m, "发票审核处理失败");
-            crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                rid,
+            )
         }
     }
 }
@@ -228,16 +254,16 @@ async fn list_meter_reviews(
     let page = q.page.unwrap_or(1);
     let size = q.page_size.unwrap_or(20);
     if !(1..=1_000_000).contains(&page) || !(1..=100).contains(&size) {
-        return crate::respond(400, 1005, "分页参数无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "分页参数无效", &rid);
     }
     let keyword = q.keyword.unwrap_or_default().trim().to_string();
     if keyword.chars().count() > 128 {
-        return crate::respond(400, 1005, "关键词过长或状态无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "关键词过长或状态无效", &rid);
     }
     let status = q.status.unwrap_or_default();
     // 状态白名单（旧版 ReadAdminPage(c, "pending resolved")）。
     if !status.is_empty() && status != "pending" && status != "resolved" {
-        return crate::respond(400, 1005, "关键词过长或状态无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "关键词过长或状态无效", &rid);
     }
     match chargepilot_mod_settlement::meter_review::list_manual_fee_reviews(
         &deps.db,
@@ -254,7 +280,12 @@ async fn list_meter_reviews(
         ),
         Err(e) => {
             tracing::warn!(error = %e, "计量核实队列读取失败");
-            crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", &rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                &rid,
+            )
         }
     }
 }
@@ -292,10 +323,15 @@ async fn propose_meter(
         return resp;
     }
     if id == 0 {
-        return crate::respond(400, 1005, "ID 必须为正整数", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "ID 必须为正整数", &rid);
     }
     let Some(input) = decode_strict::<MeterProposeBody>(&body) else {
-        return crate::respond(400, 1005, "请求内容无效或包含未知字段", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请求内容无效或包含未知字段",
+            &rid,
+        );
     };
     let reason = input.reason.trim().to_string();
     // request_id 须为 UUID；依据 1–500 字；分段 1–10080 段（七天按分钟上限）。
@@ -304,7 +340,12 @@ async fn propose_meter(
         || input.segments.is_empty()
         || input.segments.len() > 10080
     {
-        return crate::respond(400, 1005, "请填写 UUID、核实依据及有效计量分段", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请填写 UUID、核实依据及有效计量分段",
+            &rid,
+        );
     }
     let segments: Vec<chargepilot_mod_settlement::meter_review::MeterSegmentInput> = input
         .segments
@@ -344,10 +385,20 @@ async fn propose_meter(
             {
                 Ok(Some(row)) => match serde_json::to_value(&row) {
                     Ok(v) => httpx::ok(v, &rid),
-                    Err(_) => crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", &rid),
+                    Err(_) => crate::respond(
+                        503,
+                        Code::ServiceUnavailable as i64,
+                        "数据暂时无法读取或保存，请稍后重试",
+                        &rid,
+                    ),
                 },
-                Ok(None) => crate::respond(404, 1004, "记录不存在或已删除", &rid),
-                Err(_) => crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", &rid),
+                Ok(None) => crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", &rid),
+                Err(_) => crate::respond(
+                    503,
+                    Code::ServiceUnavailable as i64,
+                    "数据暂时无法读取或保存，请稍后重试",
+                    &rid,
+                ),
             }
         }
         Err(e) => meter_error(e, &rid),
@@ -379,18 +430,33 @@ async fn decide_meter(
         return resp;
     }
     if id == 0 {
-        return crate::respond(400, 1005, "ID 必须为正整数", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "ID 必须为正整数", &rid);
     }
     let Some(input) = decode_strict::<MeterDecideBody>(&body) else {
-        return crate::respond(400, 1005, "请求内容无效或包含未知字段", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请求内容无效或包含未知字段",
+            &rid,
+        );
     };
     let reason = input.reason.trim().to_string();
     // review_id 必填、approve 必须显式提交（缺失与 false 用 Option 区分）、驳回必填依据。
     let Some(approve) = input.approve else {
-        return crate::respond(400, 1005, "请提供审核记录、决定和拒绝依据", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请提供审核记录、决定和拒绝依据",
+            &rid,
+        );
     };
     if input.review_id == 0 || (!approve && !valid_text(&reason, 500)) {
-        return crate::respond(400, 1005, "请提供审核记录、决定和拒绝依据", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请提供审核记录、决定和拒绝依据",
+            &rid,
+        );
     }
     let ip = real_ip(&headers);
     let audit_ref = chargepilot_mod_settlement::AuditView {
@@ -443,10 +509,15 @@ async fn resolve_meter_amount(
         return resp;
     }
     if id == 0 {
-        return crate::respond(400, 1005, "ID 必须为正整数", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "ID 必须为正整数", &rid);
     }
     let Some(input) = decode_strict::<MeterResolveBody>(&body) else {
-        return crate::respond(400, 1005, "请求内容无效或包含未知字段", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请求内容无效或包含未知字段",
+            &rid,
+        );
     };
     let reason = input.reason.trim().to_string();
     let ip = real_ip(&headers);
@@ -488,10 +559,15 @@ fn meter_error(e: chargepilot_mod_settlement::meter_review::ReviewError, rid: &s
             "计量分段须连续覆盖原始时段、总电量一致，且各段不得跨不同费率；价格快照必须有效",
             rid,
         ),
-        E::NotFound => crate::respond(404, 1004, "记录不存在或已删除", rid),
+        E::NotFound => crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid),
         E::Storage(m) => {
             tracing::warn!(error = %m, "计量核实处理失败");
-            crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                rid,
+            )
         }
     }
 }
@@ -522,14 +598,14 @@ async fn list_refunds(
     let page = q.page.unwrap_or(1);
     let size = q.page_size.unwrap_or(20);
     if !(1..=1_000_000).contains(&page) || !(1..=100).contains(&size) {
-        return crate::respond(400, 1005, "分页参数无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "分页参数无效", &rid);
     }
     // keyword 不参与退款筛选，但旧版 ReadAdminPage 仍校验其长度。
     if q.keyword
         .map(|k| k.trim().chars().count() > 128)
         .unwrap_or(false)
     {
-        return crate::respond(400, 1005, "关键词过长或状态无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "关键词过长或状态无效", &rid);
     }
     let status = q.status.unwrap_or_default();
     // 状态白名单（旧版 money.AllRefundStatuses 全量）。
@@ -539,11 +615,11 @@ async fn list_refunds(
             "pending" | "processing" | "success" | "failed" | "rejected"
         )
     {
-        return crate::respond(400, 1005, "关键词过长或状态无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "关键词过长或状态无效", &rid);
     }
     let refund_no = q.refund_no.unwrap_or_default();
     if refund_no.chars().count() > 64 {
-        return crate::respond(400, 1005, "退款单号过长", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "退款单号过长", &rid);
     }
     match chargepilot_mod_settlement::refund_admin::list_refunds(
         &deps.db,
@@ -560,7 +636,12 @@ async fn list_refunds(
         ),
         Err(e) => {
             tracing::warn!(error = %e, "退款列表读取失败");
-            crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", &rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                &rid,
+            )
         }
     }
 }
@@ -613,7 +694,12 @@ async fn review_refund(
         return resp;
     }
     let Some(input) = decode_strict::<RefundReviewBody>(&body) else {
-        return crate::respond(400, 1005, "请求内容无效或包含未知字段", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请求内容无效或包含未知字段",
+            &rid,
+        );
     };
     let ok_input = if approve {
         valid_text(&input.approve_comment, 255)
@@ -621,7 +707,12 @@ async fn review_refund(
         valid_text(&input.reason, 255)
     };
     if !ok_input {
-        return crate::respond(400, 1005, "请填写 1–255 字审核意见", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请填写 1–255 字审核意见",
+            &rid,
+        );
     }
     let ip = real_ip(&headers);
     let audit_ref = chargepilot_mod_settlement::AuditView {
@@ -675,10 +766,15 @@ async fn retry_refund(
         return resp;
     }
     let Some(input) = decode_strict::<RefundRetryBody>(&body) else {
-        return crate::respond(400, 1005, "请求内容无效或包含未知字段", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请求内容无效或包含未知字段",
+            &rid,
+        );
     };
     if !valid_text(&input.reason, 255) {
-        return crate::respond(400, 1005, "请填写重试原因", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请填写重试原因", &rid);
     }
     let ip = real_ip(&headers);
     let audit_ref = chargepilot_mod_settlement::AuditView {
@@ -720,10 +816,15 @@ async fn manual_refund(
         return resp;
     }
     if id == 0 {
-        return crate::respond(400, 1005, "ID 必须为正整数", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "ID 必须为正整数", &rid);
     }
     let Some(input) = decode_strict::<ManualRefundBody>(&body) else {
-        return crate::respond(400, 1005, "请求内容无效或包含未知字段", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请求内容无效或包含未知字段",
+            &rid,
+        );
     };
     if !valid_uuid(&input.request_id) || input.amount_cents <= 0 || !valid_text(&input.reason, 255)
     {
@@ -760,7 +861,12 @@ async fn manual_refund(
             &rid,
         ),
         Err(chargepilot_mod_settlement::refund_admin::RefundAdminError::NotSettled) => {
-            crate::respond(409, 2000, "订单尚未完成费用结算，请结算后再申请退款", &rid)
+            crate::respond(
+                409,
+                Code::StateConflict as i64,
+                "订单尚未完成费用结算，请结算后再申请退款",
+                &rid,
+            )
         }
         Err(e) => refund_error(e, &rid),
     }
@@ -773,12 +879,27 @@ fn refund_error(
 ) -> Response {
     use chargepilot_mod_settlement::refund_admin::RefundAdminError as E;
     match &e {
-        E::Conflict => crate::respond(409, 2009, "当前记录状态不允许此操作，请刷新后重试", rid),
-        E::NotFound => crate::respond(404, 1004, "记录不存在或已删除", rid),
-        E::NotSettled => crate::respond(409, 2000, "订单尚未完成费用结算，请结算后再申请退款", rid),
+        E::Conflict => crate::respond(
+            409,
+            Code::Conflict as i64,
+            "当前记录状态不允许此操作，请刷新后重试",
+            rid,
+        ),
+        E::NotFound => crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid),
+        E::NotSettled => crate::respond(
+            409,
+            Code::StateConflict as i64,
+            "订单尚未完成费用结算，请结算后再申请退款",
+            rid,
+        ),
         E::Storage(m) => {
             tracing::warn!(error = %m, "人工退款处理失败");
-            crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                rid,
+            )
         }
     }
 }

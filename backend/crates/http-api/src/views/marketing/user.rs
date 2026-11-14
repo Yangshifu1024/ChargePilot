@@ -5,6 +5,7 @@ use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_marketing::query::{CouponQueryError, available, mine};
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::json;
@@ -23,10 +24,15 @@ fn rid_of(headers: &HeaderMap) -> String {
 /// 券视图错误 → HTTP（旧版 myCoupons 的映射：输入 400，其余 503 固定文案）。
 fn query_error(e: CouponQueryError, rid: &str) -> Response {
     match &e {
-        CouponQueryError::Input(m) => crate::respond(400, 1005, m, rid),
+        CouponQueryError::Input(m) => crate::respond(400, Code::BadRequest as i64, m, rid),
         CouponQueryError::Storage(_) => {
             tracing::warn!(error = %e, "优惠券查询处理失败");
-            crate::respond(503, 5003, "优惠券暂时无法读取", rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "优惠券暂时无法读取",
+                rid,
+            )
         }
     }
 }

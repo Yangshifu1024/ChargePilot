@@ -12,6 +12,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_ops::OpsError;
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::json;
@@ -69,7 +70,7 @@ async fn list_wallet_risks(
         return resp;
     }
     let Some(wallet) = &deps.wallet else {
-        return crate::respond(503, 5003, "钱包服务未装配", &rid);
+        return crate::respond(503, Code::ServiceUnavailable as i64, "钱包服务未装配", &rid);
     };
     // guard 内已有实时权限快照（AdminGuard 构造时加载），与旧版 actor 语义一致。
     match wallet
@@ -105,7 +106,7 @@ async fn review_wallet_risk(
         return resp;
     }
     let Some(wallet) = &deps.wallet else {
-        return crate::respond(503, 5003, "钱包服务未装配", &rid);
+        return crate::respond(503, Code::ServiceUnavailable as i64, "钱包服务未装配", &rid);
     };
     let input = chargepilot_mod_wallet::risk::RiskReviewInput {
         approved: body.approved,
@@ -138,7 +139,7 @@ async fn release_wallet_risk(
         return resp;
     }
     let Some(wallet) = &deps.wallet else {
-        return crate::respond(503, 5003, "钱包服务未装配", &rid);
+        return crate::respond(503, Code::ServiceUnavailable as i64, "钱包服务未装配", &rid);
     };
     let input = chargepilot_mod_wallet::risk::RiskReleaseInput {
         comment: body.comment,

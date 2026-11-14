@@ -8,6 +8,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_device::{DeviceError, fault, user_station};
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -19,13 +20,18 @@ fn rid_of(headers: &HeaderMap) -> String {
 
 fn device_error(e: DeviceError, rid: &str) -> Response {
     match &e {
-        DeviceError::Input(msg) => crate::respond(400, 1005, msg, rid),
-        DeviceError::Forbidden => crate::respond(403, 1003, "没有操作权限", rid),
-        DeviceError::NotFound => crate::respond(404, 1004, "记录不存在或已删除", rid),
-        DeviceError::Conflict(msg) => crate::respond(409, 2009, msg, rid),
-        DeviceError::Storage(_) => {
-            crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", rid)
+        DeviceError::Input(msg) => crate::respond(400, Code::BadRequest as i64, msg, rid),
+        DeviceError::Forbidden => crate::respond(403, Code::Forbidden as i64, "没有操作权限", rid),
+        DeviceError::NotFound => {
+            crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid)
         }
+        DeviceError::Conflict(msg) => crate::respond(409, Code::Conflict as i64, msg, rid),
+        DeviceError::Storage(_) => crate::respond(
+            503,
+            Code::ServiceUnavailable as i64,
+            "数据暂时无法读取或保存，请稍后重试",
+            rid,
+        ),
     }
 }
 
@@ -49,7 +55,7 @@ async fn nearby_stations(
         .page_size
         .unwrap_or(if q.longitude.is_some() { 20 } else { 10 });
     if !(1..=100_000).contains(&page) || !(1..=100).contains(&size) {
-        return crate::respond(400, 1005, "分页参数无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "分页参数无效", &rid);
     }
     let radius = q.radius_km.unwrap_or(50.0);
     match user_station::nearby(
@@ -102,7 +108,7 @@ async fn report_fault(
         Err(resp) => return resp,
     };
     let Some(v) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "请提供报修信息", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请提供报修信息", &rid);
     };
     let input = fault::FaultSubmission {
         device_id: v["device_id"].as_str().unwrap_or_default().to_string(),
@@ -224,11 +230,16 @@ fn canonical_scan_code(raw: &str) -> Option<String> {
 fn scan_error(e: chargepilot_mod_device::scan::ScanError, rid: &str) -> Response {
     match e {
         chargepilot_mod_device::scan::ScanError::NotFound => {
-            crate::respond(404, 1004, "scan code not found", rid)
+            crate::respond(404, Code::NotFound as i64, "scan code not found", rid)
         }
         chargepilot_mod_device::scan::ScanError::Storage(err) => {
             tracing::warn!(cause = %err, "扫码查询失败");
-            crate::respond(503, 5001, "device lookup unavailable", rid)
+            crate::respond(
+                503,
+                Code::DependencyFailed as i64,
+                "device lookup unavailable",
+                rid,
+            )
         }
     }
 }
@@ -245,7 +256,7 @@ async fn scan_resolve(
         .and_then(|v| v.get("code").and_then(|x| x.as_str()).map(str::to_string))
         .unwrap_or_default();
     let Some(code) = canonical_scan_code(&code) else {
-        return crate::respond(400, 1005, "invalid scan code", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "invalid scan code", &rid);
     };
     match chargepilot_mod_device::scan::resolve(&deps.db, &code).await {
         Ok(view) => httpx::ok(serde_json::to_value(&view).unwrap_or(Value::Null), &rid),
@@ -269,13 +280,13 @@ async fn scan_port(
         })
         .unwrap_or_default();
     if !is_scan_code(&port_id) {
-        return crate::respond(400, 1005, "invalid scan code", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "invalid scan code", &rid);
     }
     match chargepilot_mod_device::scan::resolve(&deps.db, &port_id).await {
         Ok(view) if view.kind == "port" && view.port.is_some() => {
             httpx::ok(serde_json::to_value(view.port).unwrap_or(Value::Null), &rid)
         }
-        Ok(_) => crate::respond(404, 1004, "port not found", &rid),
+        Ok(_) => crate::respond(404, Code::NotFound as i64, "port not found", &rid),
         Err(e) => scan_error(e, &rid),
     }
 }

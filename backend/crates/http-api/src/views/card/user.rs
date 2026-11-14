@@ -7,6 +7,7 @@ use axum::Json as AxumJson;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::json;
@@ -30,7 +31,7 @@ async fn cards(
         Ok(items) => httpx::ok(json!({"items": items}), &rid),
         Err(e) => {
             tracing::warn!(error = %e, "用户卡列表失败");
-            crate::respond(503, 5001, "卡信息暂不可用", &rid)
+            crate::respond(503, Code::DependencyFailed as i64, "卡信息暂不可用", &rid)
         }
     }
 }
@@ -58,14 +59,14 @@ async fn card_status(
     match chargepilot_mod_card::user_card::change_status(&deps.db, uid, &card_no, &status).await {
         Ok(()) => httpx::ok(json!({"status": status}), &rid),
         Err(chargepilot_mod_card::user_card::UserCardError::Input) => {
-            crate::respond(400, 1005, "仅可挂失或解绑自己的卡", &rid)
+            crate::respond(400, Code::BadRequest as i64, "仅可挂失或解绑自己的卡", &rid)
         }
         Err(chargepilot_mod_card::user_card::UserCardError::NotFound) => {
-            crate::respond(404, 1004, "卡不存在", &rid)
+            crate::respond(404, Code::NotFound as i64, "卡不存在", &rid)
         }
         Err(e) => {
             tracing::warn!(error = %e, "用户卡状态变更失败");
-            crate::respond(503, 5001, "卡状态暂不可保存", &rid)
+            crate::respond(503, Code::DependencyFailed as i64, "卡状态暂不可保存", &rid)
         }
     }
 }

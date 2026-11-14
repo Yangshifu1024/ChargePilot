@@ -8,6 +8,7 @@ use axum::response::Response;
 use chargepilot_mod_ops::OpsError;
 use chargepilot_mod_ops::management::Page;
 use chargepilot_mod_ops::mfa::MfaError;
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -37,7 +38,7 @@ async fn list_audit_logs(
     }
     let page = match Page::sanitized(q.page.unwrap_or(1), q.page_size.unwrap_or(20)) {
         Ok(p) => p,
-        Err(e) => return crate::respond(400, 1005, &e.to_string(), &rid),
+        Err(e) => return crate::respond(400, Code::BadRequest as i64, &e.to_string(), &rid),
     };
     // 仅解析 RFC3339 输入（旧版 time.Parse(time.RFC3339)；无效返回 400）。
     let parse_bound =
@@ -46,7 +47,12 @@ async fn list_audit_logs(
                 None => Ok(None),
                 Some(raw) => match chrono::DateTime::parse_from_rfc3339(raw) {
                     Ok(t) => Ok(Some(t.with_timezone(&chrono::Utc))),
-                    Err(_) => Err(crate::respond(400, 1005, "时间须为 RFC 3339 格式", &rid)),
+                    Err(_) => Err(crate::respond(
+                        400,
+                        Code::BadRequest as i64,
+                        "时间须为 RFC 3339 格式",
+                        &rid,
+                    )),
                 },
             }
         };
@@ -74,7 +80,12 @@ async fn list_audit_logs(
         ),
         Err(e) => {
             tracing::warn!(cause = %e, "审计日志读取失败");
-            crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", &rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                &rid,
+            )
         }
     }
 }
@@ -155,26 +166,56 @@ async fn self_mfa_settings(
 /// MFA 错误映射（旧版 mfaSettingsFailure + AdminManagementFailure）。
 fn mfa_error(e: MfaError, rid: &str) -> Response {
     match &e {
-        MfaError::Input | MfaError::InputMsg(_) => crate::respond(400, 1005, &e.to_string(), rid),
-        MfaError::Proof => crate::respond(400, 1002, "密码或验证码校验失败", rid),
-        MfaError::UsedTotp => crate::respond(400, 1002, "该验证码已使用，请等待下一个验证码", rid),
+        MfaError::Input | MfaError::InputMsg(_) => {
+            crate::respond(400, Code::BadRequest as i64, &e.to_string(), rid)
+        }
+        MfaError::Proof => crate::respond(
+            400,
+            Code::VerificationFailed as i64,
+            "密码或验证码校验失败",
+            rid,
+        ),
+        MfaError::UsedTotp => crate::respond(
+            400,
+            Code::VerificationFailed as i64,
+            "该验证码已使用，请等待下一个验证码",
+            rid,
+        ),
         MfaError::Pending | MfaError::State | MfaError::Busy => {
-            crate::respond(409, 2009, &e.to_string(), rid)
+            crate::respond(409, Code::Conflict as i64, &e.to_string(), rid)
         }
         MfaError::Rate => {
-            let mut resp = crate::respond(429, 4291, "安全验证过于频繁，请稍后重试", rid);
+            let mut resp = crate::respond(
+                429,
+                Code::LoginRateLimited as i64,
+                "安全验证过于频繁，请稍后重试",
+                rid,
+            );
             resp.headers_mut()
                 .insert("retry-after", axum::http::HeaderValue::from_static("60"));
             resp
         }
-        MfaError::SelfMfa => {
-            crate::respond(409, 2009, "请使用本人账号的安全设置修改双因素认证", rid)
-        }
-        MfaError::Credentials => crate::respond(401, 1001, "用户名或密码错误，或登录已失效", rid),
-        MfaError::NotFound => crate::respond(404, 1004, "记录不存在或已删除", rid),
+        MfaError::SelfMfa => crate::respond(
+            409,
+            Code::Conflict as i64,
+            "请使用本人账号的安全设置修改双因素认证",
+            rid,
+        ),
+        MfaError::Credentials => crate::respond(
+            401,
+            Code::Unauthorized as i64,
+            "用户名或密码错误，或登录已失效",
+            rid,
+        ),
+        MfaError::NotFound => crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid),
         MfaError::Storage(_) => {
             tracing::warn!(cause = %e, "MFA 请求处理失败");
-            crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                rid,
+            )
         }
     }
 }

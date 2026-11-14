@@ -13,39 +13,30 @@ use sha2::{Digest, Sha256};
 use sqlx::{Acquire, MySqlPool, Row};
 
 /// 导出域错误（HTTP 层按变体映射旧版码值）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error)]
 pub enum ExportError {
     /// 请求参数不合法（400/1005，文案透出）。
+    #[error("{0}")]
     Input(String),
     /// 权限、归属或范围不足（403/1003，文案透出）。
+    #[error("{0}")]
     Forbidden(String),
     /// 登录凭据已变化（401）。
+    #[error("credentials invalid")]
     Credentials,
     /// 当前状态不允许下载；过期返回 410，其余 409。
+    #[error("{message}")]
     Download { message: String, expired: bool },
     /// 记录不存在（404）。
+    #[error("记录不存在或已删除")]
     NotFound,
     /// 冲突（409/2009）。
+    #[error("导出请求冲突")]
     Conflict,
     /// 存储错误（503/5003）。
+    #[error("导出存储错误: {0}")]
     Storage(String),
 }
-
-impl std::fmt::Display for ExportError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ExportError::Input(m) => f.write_str(m),
-            ExportError::Forbidden(m) => f.write_str(m),
-            ExportError::Credentials => f.write_str("credentials invalid"),
-            ExportError::Download { message, .. } => f.write_str(message),
-            ExportError::NotFound => f.write_str("记录不存在或已删除"),
-            ExportError::Conflict => f.write_str("导出请求冲突"),
-            ExportError::Storage(m) => write!(f, "导出存储错误: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for ExportError {}
 
 impl From<sqlx::Error> for ExportError {
     fn from(e: sqlx::Error) -> Self {

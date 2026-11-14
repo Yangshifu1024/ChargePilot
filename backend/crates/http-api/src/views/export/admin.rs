@@ -6,6 +6,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_export::ExportError;
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -41,21 +42,33 @@ fn rid_of(headers: &HeaderMap) -> String {
 /// 导出错误 → HTTP（旧版 failure 映射：400/403/409/410/其他存储）。
 fn export_error(e: ExportError, rid: &str) -> Response {
     match &e {
-        ExportError::Input(m) => crate::respond(400, 1005, m, rid),
-        ExportError::Forbidden(m) => crate::respond(403, 1003, m, rid),
-        ExportError::Credentials => crate::respond(401, 1001, "登录已失效，请重新登录", rid),
+        ExportError::Input(m) => crate::respond(400, Code::BadRequest as i64, m, rid),
+        ExportError::Forbidden(m) => crate::respond(403, Code::Forbidden as i64, m, rid),
+        ExportError::Credentials => crate::respond(
+            401,
+            Code::Unauthorized as i64,
+            "登录已失效，请重新登录",
+            rid,
+        ),
         ExportError::Download { message, expired } => {
             if *expired {
-                crate::respond(410, 1007, message, rid)
+                crate::respond(410, Code::ResourceExpired as i64, message, rid)
             } else {
-                crate::respond(409, 2009, message, rid)
+                crate::respond(409, Code::Conflict as i64, message, rid)
             }
         }
-        ExportError::NotFound => crate::respond(404, 1004, "记录不存在或已删除", rid),
-        ExportError::Conflict => crate::respond(409, 2009, "导出请求冲突", rid),
+        ExportError::NotFound => {
+            crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid)
+        }
+        ExportError::Conflict => crate::respond(409, Code::Conflict as i64, "导出请求冲突", rid),
         ExportError::Storage(_) => {
             tracing::warn!(error = %e, "导出请求处理失败");
-            crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                rid,
+            )
         }
     }
 }
@@ -126,7 +139,12 @@ async fn create_task(
 ) -> Response {
     let rid = rid_of(&headers);
     let Some(v) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "请提供 UUID 格式的请求号", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请提供 UUID 格式的请求号",
+            &rid,
+        );
     };
     let input = chargepilot_mod_export::CreateInput {
         request_id: v["request_id"].as_str().unwrap_or_default().to_string(),
@@ -188,7 +206,9 @@ async fn download_task(
                 )
                 .header("x-request-id", rid)
                 .body(body)
-                .unwrap_or_else(|_| crate::respond(500, 5000, "响应构造失败", ""))
+                .unwrap_or_else(|_| {
+                    crate::respond(500, Code::InternalError as i64, "响应构造失败", "")
+                })
         }
         Err(e) => export_error(e, &rid),
     }

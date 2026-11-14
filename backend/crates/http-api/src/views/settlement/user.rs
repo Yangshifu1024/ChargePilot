@@ -11,6 +11,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_settlement::user_invoice::{self, InvoiceInput, UserInvoiceError};
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::json;
@@ -53,7 +54,12 @@ fn paging(q: &Paging) -> (u32, u32) {
 fn bill_id_of(raw: &str, rid: &str) -> Result<u64, Response> {
     match raw.parse::<u64>() {
         Ok(id) if id > 0 => Ok(id),
-        _ => Err(crate::respond(400, 1005, "账单编号无效", rid)),
+        _ => Err(crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "账单编号无效",
+            rid,
+        )),
     }
 }
 
@@ -77,7 +83,12 @@ async fn bill_list(
         ),
         Err(e) => {
             tracing::warn!(error = %e, "账单列表读取失败");
-            crate::respond(503, 5003, "账单暂时无法读取", &rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "账单暂时无法读取",
+                &rid,
+            )
         }
     }
 }
@@ -100,10 +111,10 @@ async fn bill_detail(
     };
     match chargepilot_mod_settlement::bill::load_user_bill(&deps.db, uid, bill_id).await {
         Ok(Some(bill)) => httpx::ok(bill, &rid),
-        Ok(None) => crate::respond(404, 1004, "账单不存在", &rid),
+        Ok(None) => crate::respond(404, Code::NotFound as i64, "账单不存在", &rid),
         Err(e) => {
             tracing::warn!(error = %e, "账单详情读取失败");
-            crate::respond(404, 1004, "账单不存在", &rid)
+            crate::respond(404, Code::NotFound as i64, "账单不存在", &rid)
         }
     }
 }
@@ -126,10 +137,15 @@ async fn bill_mark_read(
     };
     match chargepilot_mod_settlement::bill::mark_bill_read(&deps.db, uid, bill_id).await {
         Ok(true) => httpx::ok(json!({"id": bill_id.to_string(), "read": true}), &rid),
-        Ok(false) => crate::respond(404, 1004, "账单不存在", &rid),
+        Ok(false) => crate::respond(404, Code::NotFound as i64, "账单不存在", &rid),
         Err(e) => {
             tracing::warn!(error = %e, "账单已读保存失败");
-            crate::respond(503, 5003, "账单状态暂时无法保存", &rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "账单状态暂时无法保存",
+                &rid,
+            )
         }
     }
 }
@@ -162,24 +178,29 @@ async fn invoice_apply(
         Err(resp) => return resp,
     };
     let Some(axum::Json(body)) = body else {
-        return crate::respond(400, 1005, "发票申请无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "发票申请无效", &rid);
     };
     // 前置校验顺序与文案对齐旧版 HTTP 层（服务层仍全量校验兜底）。
     if body.request_id.trim().is_empty() || body.order_no.trim().is_empty() {
-        return crate::respond(400, 1005, "请提供 UUID 请求号与订单号", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请提供 UUID 请求号与订单号",
+            &rid,
+        );
     }
     if !matches!(body.invoice_type.as_str(), "normal" | "vat_special") {
-        return crate::respond(400, 1005, "发票类型无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "发票类型无效", &rid);
     }
     let title = body.title.trim();
     if title.is_empty() || title.chars().count() > 128 {
-        return crate::respond(400, 1005, "发票抬头无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "发票抬头无效", &rid);
     }
     if body.tax_no.trim().chars().count() > 32 {
-        return crate::respond(400, 1005, "税号过长", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "税号过长", &rid);
     }
     if body.email.len() > 128 || (!body.email.is_empty() && !body.email.contains('@')) {
-        return crate::respond(400, 1005, "邮箱格式无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "邮箱格式无效", &rid);
     }
     let input = InvoiceInput {
         request_id: body.request_id,
@@ -206,20 +227,47 @@ async fn invoice_apply(
 /// 发票域错误 → HTTP（旧版 applyInvoice 的 switch 字面量契约）。
 fn invoice_error(e: &UserInvoiceError, rid: &str) -> Response {
     match e {
-        UserInvoiceError::Unbilled => {
-            crate::respond(409, 2009, "订单尚未计费，暂不能申请发票", rid)
+        UserInvoiceError::Unbilled => crate::respond(
+            409,
+            Code::Conflict as i64,
+            "订单尚未计费，暂不能申请发票",
+            rid,
+        ),
+        UserInvoiceError::OrderNotFound => {
+            crate::respond(404, Code::NotFound as i64, "订单不存在", rid)
         }
-        UserInvoiceError::OrderNotFound => crate::respond(404, 1004, "订单不存在", rid),
-        UserInvoiceError::OrderLookup(_) => crate::respond(503, 5003, "订单暂时无法读取", rid),
-        UserInvoiceError::Unfinished => {
-            crate::respond(409, 2009, "订单尚未完成，暂不能申请发票", rid)
+        UserInvoiceError::OrderLookup(_) => crate::respond(
+            503,
+            Code::ServiceUnavailable as i64,
+            "订单暂时无法读取",
+            rid,
+        ),
+        UserInvoiceError::Unfinished => crate::respond(
+            409,
+            Code::Conflict as i64,
+            "订单尚未完成，暂不能申请发票",
+            rid,
+        ),
+        UserInvoiceError::ZeroFee => crate::respond(
+            409,
+            Code::Conflict as i64,
+            "订单金额为零，暂不能申请发票",
+            rid,
+        ),
+        UserInvoiceError::Duplicate => {
+            crate::respond(409, Code::Conflict as i64, "该订单已申请过发票", rid)
         }
-        UserInvoiceError::ZeroFee => crate::respond(409, 2009, "订单金额为零，暂不能申请发票", rid),
-        UserInvoiceError::Duplicate => crate::respond(409, 2009, "该订单已申请过发票", rid),
-        UserInvoiceError::InvalidInput => crate::respond(400, 1005, "发票申请无效", rid),
+        UserInvoiceError::InvalidInput => {
+            crate::respond(400, Code::BadRequest as i64, "发票申请无效", rid)
+        }
         UserInvoiceError::Storage(m) => {
             tracing::warn!(error = %m, "发票申请保存失败");
-            crate::respond(503, 5003, "数据暂时无法保存，请稍后重试", rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法保存，请稍后重试",
+                rid,
+            )
         }
     }
 }
@@ -244,7 +292,12 @@ async fn invoice_my(
         ),
         Err(e) => {
             tracing::warn!(error = %e, "发票记录读取失败");
-            crate::respond(503, 5003, "发票记录暂时无法读取", &rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "发票记录暂时无法读取",
+                &rid,
+            )
         }
     }
 }

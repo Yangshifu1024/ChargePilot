@@ -7,6 +7,7 @@ use axum::response::Response;
 use chargepilot_domain::order::ChargeOrderStatus;
 use chargepilot_gateway_runtime::snapshot::DeviceSnapshot;
 use chargepilot_mod_order::user_query::{self, OrderRecord};
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -80,13 +81,18 @@ impl From<sqlx::Error> for QueryFail {
 
 fn query_failure(f: QueryFail, rid: &str) -> Response {
     match f {
-        QueryFail::Input(m) => crate::respond(400, 1005, m, rid),
-        QueryFail::Conflict(m) => crate::respond(409, 2009, m, rid),
-        QueryFail::Expired(m) => crate::respond(422, 2018, m, rid),
-        QueryFail::NotFound => crate::respond(404, 1004, "充电订单不存在", rid),
+        QueryFail::Input(m) => crate::respond(400, Code::BadRequest as i64, m, rid),
+        QueryFail::Conflict(m) => crate::respond(409, Code::Conflict as i64, m, rid),
+        QueryFail::Expired(m) => crate::respond(422, Code::QueryExpired as i64, m, rid),
+        QueryFail::NotFound => crate::respond(404, Code::NotFound as i64, "充电订单不存在", rid),
         QueryFail::Storage(e) => {
             tracing::warn!(error = %e, "用户订单查询失败");
-            crate::respond(503, 5003, "订单暂时无法读取", rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "订单暂时无法读取",
+                rid,
+            )
         }
     }
 }
@@ -191,10 +197,15 @@ async fn charge_history(
     let page = q.page.unwrap_or(1);
     let size = q.page_size.unwrap_or(20);
     if !(1..=100_000).contains(&page) {
-        return crate::respond(400, 1005, "分页参数无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "分页参数无效", &rid);
     }
     if !(1..=100).contains(&size) {
-        return crate::respond(400, 1005, "分页参数无效：page_size 为 1–100", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "分页参数无效：page_size 为 1–100",
+            &rid,
+        );
     }
     const STATUSES: [&str; 8] = [
         "pending_payment",
@@ -210,7 +221,7 @@ async fn charge_history(
     if let Some(s) = status
         && !STATUSES.contains(&s)
     {
-        return crate::respond(400, 1005, "订单状态无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "订单状态无效", &rid);
     }
     match user_query::list_history(&deps.db, uid, status, page, size).await {
         Ok((items, total)) => httpx::ok(
@@ -523,7 +534,7 @@ async fn user_stop_body(
         })
         .unwrap_or_default();
     if order_no.is_empty() || order_no.len() > 64 {
-        return crate::respond(400, 1005, "invalid order number", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "invalid order number", &rid);
     }
     run_stop(&st, &headers, &order_no).await
 }

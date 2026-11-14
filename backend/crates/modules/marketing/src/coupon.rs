@@ -14,33 +14,24 @@ use sqlx::{Acquire, MySqlPool};
 
 /// 券域错误（旧版 InputError / ErrCouponGrant / operations.ErrForbidden /
 /// gorm.ErrRecordNotFound 的映射源；HTTP 层按变体转码值）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error)]
 pub enum CouponError {
     /// 请求内容不合法（400/1005，文案透出）。
+    #[error("{0}")]
     Input(String),
     /// 权限不足（403/1003）。
+    #[error("无权执行此操作")]
     Forbidden,
     /// 发放条件不满足或请求冲突（409/2009，文案透出）。
+    #[error("{0}")]
     Conflict(String),
     /// 模板不存在（404/1004）。
+    #[error("记录不存在或已删除")]
     NotFound,
     /// 存储错误（503/5003）。
+    #[error("优惠券存储错误: {0}")]
     Storage(String),
 }
-
-impl std::fmt::Display for CouponError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CouponError::Input(m) => f.write_str(m),
-            CouponError::Forbidden => f.write_str("无权执行此操作"),
-            CouponError::Conflict(m) => f.write_str(m),
-            CouponError::NotFound => f.write_str("记录不存在或已删除"),
-            CouponError::Storage(m) => write!(f, "优惠券存储错误: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for CouponError {}
 
 impl From<sqlx::Error> for CouponError {
     fn from(e: sqlx::Error) -> Self {

@@ -10,6 +10,7 @@ use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_order::feedback::{FeedbackSubmitError, FeedbackSubmitInput};
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde_json::json;
 use std::sync::Arc;
@@ -33,30 +34,48 @@ async fn feedback_submit(
     let oid =
         match chargepilot_mod_order::feedback::resolve_reference(&deps.db, uid, &order_id).await {
             Ok(id) => id,
-            Err(FeedbackSubmitError::Input(msg)) => return crate::respond(400, 1005, &msg, &rid),
+            Err(FeedbackSubmitError::Input(msg)) => {
+                return crate::respond(400, Code::BadRequest as i64, &msg, &rid);
+            }
             Err(FeedbackSubmitError::NotFound) => {
-                return crate::respond(404, 1004, "订单不存在", &rid);
+                return crate::respond(404, Code::NotFound as i64, "订单不存在", &rid);
             }
             Err(e) => {
                 tracing::warn!(error = %e, "订单引用解析失败");
-                return crate::respond(503, 5003, "数据暂时无法保存，请稍后重试", &rid);
+                return crate::respond(
+                    503,
+                    Code::ServiceUnavailable as i64,
+                    "数据暂时无法保存，请稍后重试",
+                    &rid,
+                );
             }
         };
     let Some(AxumJson(input)) = body else {
-        return crate::respond(400, 1005, "反馈请求无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "反馈请求无效", &rid);
     };
     match chargepilot_mod_order::feedback::submit_feedback(&deps.db, uid, oid, &input).await {
         Ok(feedback_id) => httpx::ok(json!({"submitted": true, "feedback_id": feedback_id}), &rid),
-        Err(FeedbackSubmitError::Input(msg)) => crate::respond(400, 1005, &msg, &rid),
-        Err(FeedbackSubmitError::OrderNotReady) => {
-            crate::respond(404, 1004, "订单不存在或不可评价", &rid)
+        Err(FeedbackSubmitError::Input(msg)) => {
+            crate::respond(400, Code::BadRequest as i64, &msg, &rid)
         }
-        Err(FeedbackSubmitError::Exists) => crate::respond(409, 2009, "该订单已评价", &rid),
+        Err(FeedbackSubmitError::OrderNotReady) => {
+            crate::respond(404, Code::NotFound as i64, "订单不存在或不可评价", &rid)
+        }
+        Err(FeedbackSubmitError::Exists) => {
+            crate::respond(409, Code::Conflict as i64, "该订单已评价", &rid)
+        }
         // 业务单号解析失败已在 resolve 阶段返回；提交阶段不再出现。
-        Err(FeedbackSubmitError::NotFound) => crate::respond(404, 1004, "订单不存在", &rid),
+        Err(FeedbackSubmitError::NotFound) => {
+            crate::respond(404, Code::NotFound as i64, "订单不存在", &rid)
+        }
         Err(e) => {
             tracing::warn!(error = %e, "反馈提交失败");
-            crate::respond(503, 5003, "反馈提交失败，请稍后重试", &rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "反馈提交失败，请稍后重试",
+                &rid,
+            )
         }
     }
 }

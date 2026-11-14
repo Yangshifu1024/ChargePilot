@@ -51,11 +51,31 @@ pub fn respond(status: u16, code: i64, message: &str, request_id: &str) -> Respo
 /// identity 域错误 → HTTP 响应（码值与文案沿用旧版字面量契约）。
 pub fn identity_error(err: IdE, request_id: &str) -> Response {
     match &err {
-        IdE::InvalidRefresh => respond(401, 1001, "refresh token invalid", request_id),
-        IdE::TokenInvalid => respond(401, 1001, "access token invalid", request_id),
-        IdE::SessionExpired => respond(401, 1001, "session expired", request_id),
-        IdE::AccountFrozen => respond(403, 1003, "account frozen", request_id),
-        IdE::ExchangeFailed(_) => respond(502, 3001, "WeChat login failed", request_id),
+        IdE::InvalidRefresh => respond(
+            401,
+            Code::Unauthorized as i64,
+            "refresh token invalid",
+            request_id,
+        ),
+        IdE::TokenInvalid => respond(
+            401,
+            Code::Unauthorized as i64,
+            "access token invalid",
+            request_id,
+        ),
+        IdE::SessionExpired => respond(
+            401,
+            Code::Unauthorized as i64,
+            "session expired",
+            request_id,
+        ),
+        IdE::AccountFrozen => respond(403, Code::Forbidden as i64, "account frozen", request_id),
+        IdE::ExchangeFailed(_) => respond(
+            502,
+            Code::ChannelInteraction as i64,
+            "WeChat login failed",
+            request_id,
+        ),
         IdE::Storage(_) => {
             let api = ApiError::from(anyhow::anyhow!(err.to_string()));
             chargepilot_platform::httpx::error(&api, request_id)
@@ -66,29 +86,54 @@ pub fn identity_error(err: IdE, request_id: &str) -> Response {
 /// OpsError → HTTP 响应（运营域统一映射；4291 登录频次带 Retry-After）。
 pub fn ops_error(err: OpsError, request_id: &str) -> Response {
     match &err {
-        OpsError::Credentials => respond(401, 1001, "用户名或密码错误，或登录已失效", request_id),
-        OpsError::Locked(msg) => respond(423, 2006, msg, request_id),
+        OpsError::Credentials => respond(
+            401,
+            Code::Unauthorized as i64,
+            "用户名或密码错误，或登录已失效",
+            request_id,
+        ),
+        OpsError::Locked(msg) => respond(423, Code::AccountLocked as i64, msg, request_id),
         OpsError::UsedTotp => respond(
             401,
             1001,
             "该验证码已被使用，请等待下一个验证码",
             request_id,
         ),
-        OpsError::InvalidTotp => respond(401, 1001, "验证码无效或已过期", request_id),
-        OpsError::InvalidChallenge => respond(401, 1001, "登录已失效，请重新登录", request_id),
+        OpsError::InvalidTotp => respond(
+            401,
+            Code::Unauthorized as i64,
+            "验证码无效或已过期",
+            request_id,
+        ),
+        OpsError::InvalidChallenge => respond(
+            401,
+            Code::Unauthorized as i64,
+            "登录已失效，请重新登录",
+            request_id,
+        ),
         OpsError::LoginRate => {
-            let mut resp = respond(429, 4291, "登录尝试过于频繁，请稍后再试", request_id);
+            let mut resp = respond(
+                429,
+                Code::LoginRateLimited as i64,
+                "登录尝试过于频繁，请稍后再试",
+                request_id,
+            );
             resp.headers_mut()
                 .insert("retry-after", axum::http::HeaderValue::from_static("60"));
             resp
         }
-        OpsError::Permission => respond(403, 1003, "没有操作权限", request_id),
-        OpsError::Input(msg) => respond(400, 1005, msg, request_id),
-        OpsError::Conflict(msg) => respond(409, 2009, msg, request_id),
-        OpsError::NotFound(msg) => respond(404, 1004, msg, request_id),
+        OpsError::Permission => respond(403, Code::Forbidden as i64, "没有操作权限", request_id),
+        OpsError::Input(msg) => respond(400, Code::BadRequest as i64, msg, request_id),
+        OpsError::Conflict(msg) => respond(409, Code::Conflict as i64, msg, request_id),
+        OpsError::NotFound(msg) => respond(404, Code::NotFound as i64, msg, request_id),
         OpsError::Storage(_) => {
             tracing::warn!(cause = %err, "后台登录存储失败");
-            respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", request_id)
+            respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                request_id,
+            )
         }
     }
 }
@@ -96,23 +141,41 @@ pub fn ops_error(err: OpsError, request_id: &str) -> Response {
 /// StopError → HTTP 响应（充电停止链直映；原 user_charging.rs 的 match 收编）。
 pub fn stop_error(err: chargepilot_mod_charging::StopError, request_id: &str) -> Response {
     match err {
-        chargepilot_mod_charging::StopError::NotFound => {
-            respond(404, 1004, "订单不存在或不可停止", request_id)
-        }
+        chargepilot_mod_charging::StopError::NotFound => respond(
+            404,
+            Code::NotFound as i64,
+            "订单不存在或不可停止",
+            request_id,
+        ),
         chargepilot_mod_charging::StopError::PortIdentity => {
-            respond(409, 2009, "端口身份缺失", request_id)
+            respond(409, Code::Conflict as i64, "端口身份缺失", request_id)
         }
         chargepilot_mod_charging::StopError::SendFailed(m) => {
             tracing::warn!(error = %m, "停止命令下发失败");
-            respond(502, 3001, "停止命令下发失败，请重试", request_id)
+            respond(
+                502,
+                Code::ChannelInteraction as i64,
+                "停止命令下发失败，请重试",
+                request_id,
+            )
         }
         chargepilot_mod_charging::StopError::CutoffUnavailable(_) => {
             tracing::warn!(error = %err, "停止请求处理失败");
-            respond(503, 5003, "停止请求暂不可用", request_id)
+            respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "停止请求暂不可用",
+                request_id,
+            )
         }
         chargepilot_mod_charging::StopError::Storage(_) => {
             tracing::warn!(error = %err, "停止请求处理失败");
-            respond(503, 5003, "停止请求暂不可用", request_id)
+            respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "停止请求暂不可用",
+                request_id,
+            )
         }
     }
 }
@@ -130,15 +193,23 @@ const _: () = {
 pub fn wallet_error(e: chargepilot_mod_wallet::WalletError, rid: &str) -> Response {
     use chargepilot_mod_wallet::WalletError as E;
     match &e {
-        E::Forbidden => crate::respond(403, 1003, "没有操作权限", rid),
-        E::Frozen => crate::respond(409, 2009, "钱包已冻结，请等待审核", rid),
-        E::InsufficientBalance => crate::respond(409, 2009, "可用余额不足", rid),
-        E::Identity => crate::respond(409, 2009, "请求号冲突或钱包已冻结", rid),
-        E::RequestConflict => crate::respond(409, 2009, "申请冲突或原充值可退额度不足", rid),
-        E::PrepayNotConfigured | E::PrepayUnavailable => {
-            crate::respond(502, 3001, "支付渠道暂不可用，申请已保留", rid)
-        }
-        E::NotFound => crate::respond(404, 1004, "记录不存在", rid),
+        E::Forbidden => crate::respond(403, Code::Forbidden as i64, "没有操作权限", rid),
+        E::Frozen => crate::respond(409, Code::Conflict as i64, "钱包已冻结，请等待审核", rid),
+        E::InsufficientBalance => crate::respond(409, Code::Conflict as i64, "可用余额不足", rid),
+        E::Identity => crate::respond(409, Code::Conflict as i64, "请求号冲突或钱包已冻结", rid),
+        E::RequestConflict => crate::respond(
+            409,
+            Code::Conflict as i64,
+            "申请冲突或原充值可退额度不足",
+            rid,
+        ),
+        E::PrepayNotConfigured | E::PrepayUnavailable => crate::respond(
+            502,
+            Code::ChannelInteraction as i64,
+            "支付渠道暂不可用，申请已保留",
+            rid,
+        ),
+        E::NotFound => crate::respond(404, Code::NotFound as i64, "记录不存在", rid),
         E::Inactive | E::InvalidBalance | E::Storage(_) => {
             tracing::warn!(error = %e, "钱包请求处理失败");
             let api = chargepilot_platform::error::ApiError::from(anyhow::anyhow!(e.to_string()));

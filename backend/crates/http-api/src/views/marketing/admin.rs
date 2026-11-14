@@ -13,6 +13,7 @@ use chargepilot_mod_marketing::coupon::{
     CouponError, CouponRow, CouponUpdate, GrantInput, coupon_stats, create_coupon, grant_coupon,
     list_coupons, update_coupon,
 };
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -62,20 +63,34 @@ fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
     if guard.has(permission) {
         None
     } else {
-        Some(crate::respond(403, 1003, "无权执行此操作", rid))
+        Some(crate::respond(
+            403,
+            Code::Forbidden as i64,
+            "无权执行此操作",
+            rid,
+        ))
     }
 }
 
 /// 券域错误 → HTTP（映射对齐旧版 failure + AdminResourceFailure）。
 fn coupon_error(e: CouponError, rid: &str) -> Response {
     match &e {
-        CouponError::Input(m) => crate::respond(400, 1005, m, rid),
-        CouponError::Forbidden => crate::respond(403, 1003, "无权执行此操作", rid),
-        CouponError::Conflict(m) => crate::respond(409, 2009, m, rid),
-        CouponError::NotFound => crate::respond(404, 1004, "记录不存在或已删除", rid),
+        CouponError::Input(m) => crate::respond(400, Code::BadRequest as i64, m, rid),
+        CouponError::Forbidden => {
+            crate::respond(403, Code::Forbidden as i64, "无权执行此操作", rid)
+        }
+        CouponError::Conflict(m) => crate::respond(409, Code::Conflict as i64, m, rid),
+        CouponError::NotFound => {
+            crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid)
+        }
         CouponError::Storage(_) => {
             tracing::warn!(error = %e, "优惠券请求处理失败");
-            crate::respond(503, 5003, "数据暂时无法读取或保存，请稍后重试", rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                rid,
+            )
         }
     }
 }
@@ -106,7 +121,12 @@ async fn create_coupon_handler(
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "优惠券名称、有效期或额度无效", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "优惠券名称、有效期或额度无效",
+            &rid,
+        );
     };
     let in_row = CouponRow {
         id: v["id"].as_u64().unwrap_or(0),
@@ -146,7 +166,7 @@ async fn update_coupon_handler(
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "名称或状态无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "名称或状态无效", &rid);
     };
     let update = CouponUpdate {
         name: v["name"].as_str().unwrap_or_default().to_string(),
@@ -190,7 +210,7 @@ async fn grant_coupon_handler(
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "请求编号或用户编号无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请求编号或用户编号无效", &rid);
     };
     let input = GrantInput {
         request_id: v["request_id"].as_str().unwrap_or_default().to_string(),
@@ -228,7 +248,7 @@ async fn list_activities(
 ) -> Response {
     let rid = rid_of(&headers);
     if !has_activity_read(&guard.profile) {
-        return crate::respond(403, 1003, "无权执行此操作", &rid);
+        return crate::respond(403, Code::Forbidden as i64, "无权执行此操作", &rid);
     }
     match list_activity_rules(
         &deps.db,
@@ -284,7 +304,7 @@ async fn create_activity(
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "活动规则无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "活动规则无效", &rid);
     };
     let ip = real_ip(&headers);
     match create_activity_rule(&deps.db, &guard.profile, &ip, &rid, activity_input(&v)).await {
@@ -305,7 +325,7 @@ async fn update_activity(
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "活动规则无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "活动规则无效", &rid);
     };
     let ip = real_ip(&headers);
     match update_activity_rule(&deps.db, &guard.profile, &ip, &rid, id, activity_input(&v)).await {

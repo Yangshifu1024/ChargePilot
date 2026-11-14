@@ -220,6 +220,15 @@ async fn event_dispatch_failure_replays() {
     let db = chargepilot_storage::open_pool(&db_url, 4).await.unwrap();
     let alloc = SegmentAllocator::new(db.clone(), 60);
     alloc.warm_up().await.unwrap();
+    // 场景隔离（票 20 修正）：claim 按全库 pending/failed 且退避到期领取
+    // （LIMIT 100）。历史轮残留的 pending/failed 事件会无限积累并挤占批次
+    // （推迟方案只压 1 小时，之后又到期）——本场景是共享 dev 库上唯一的
+    // domain_event 消费方，测试前直接清场：删除全部 pending/failed 事件，
+    // 再入队本场景事件，使两个批次的领取结果可断言。
+    sqlx::query("DELETE FROM `domain_event` WHERE `status` IN ('pending','failed')")
+        .execute(&db)
+        .await
+        .unwrap();
     let charge_order_id = alloc.next_id().await.unwrap();
     let device_id = format!("resil-{}", rand_suffix());
     let event_id = format!("evt-resil-{}", rand_suffix());
@@ -293,19 +302,6 @@ async fn event_dispatch_failure_replays() {
         .await
         .unwrap();
     }
-
-    // 场景隔离：claim 按全库 pending/failed 且退避到期领取（LIMIT 100）。
-    // 多次全量跑会积累短退避到期的遗留 failed 事件并挤占批次——把非本场景
-    // 的到期事件统一推迟 1 小时，使本场景两个批次的领取结果可断言。
-    sqlx::query(
-        "UPDATE `domain_event` SET `scheduled_at` = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 1 HOUR) \
-         WHERE `status` IN ('pending','failed') AND `scheduled_at` <= UTC_TIMESTAMP(3) \
-         AND `event_id` <> ?",
-    )
-    .bind(&event_id)
-    .execute(&db)
-    .await
-    .unwrap();
 
     // 首轮：投递器故障（claim 后直接 mark_failed，退避 1 秒）。
     let batch = chargepilot_events::repo::claim_batch(&db, 100)

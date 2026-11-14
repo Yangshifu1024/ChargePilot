@@ -5,6 +5,7 @@ use axum::Json as AxumJson;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Response;
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::json;
@@ -53,7 +54,7 @@ async fn payment_offers(
     let rid = rid_of(&headers);
     let checkout = &st.checkout;
     if body.port_code.is_empty() {
-        return crate::respond(400, 1005, "请求参数无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请求参数无效", &rid);
     }
     match checkout.offers(&body.port_code).await {
         Ok(v) => httpx::ok(serde_json::to_value(v).unwrap_or(json!(null)), &rid),
@@ -115,31 +116,34 @@ async fn payment_simulation_confirm(
 ) -> Response {
     let rid = rid_of(&headers);
     if !deps.simulation_payment {
-        return crate::respond(404, 1004, "未开放模拟支付", &rid);
+        return crate::respond(404, Code::NotFound as i64, "未开放模拟支付", &rid);
     }
     let uid = match crate::user_guard::user_id_from(&base, &headers).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
     if body.merchant_order_no.is_empty() || body.merchant_order_no.len() > 64 {
-        return crate::respond(400, 1005, "请求参数无效", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "请求参数无效", &rid);
     }
     match chargepilot_mod_payment::simulation::confirm_user(&deps.db, uid, &body.merchant_order_no)
         .await
     {
         Ok(v) => httpx::ok(serde_json::to_value(v).unwrap_or(json!(null)), &rid),
         Err(chargepilot_mod_payment::simulation::SimulationError::NotFound) => {
-            crate::respond(404, 1004, "支付单不存在", &rid)
+            crate::respond(404, Code::NotFound as i64, "支付单不存在", &rid)
         }
-        Err(chargepilot_mod_payment::simulation::SimulationError::NotSimulation) => {
-            crate::respond(409, 3001, "支付不是模拟渠道", &rid)
-        }
+        Err(chargepilot_mod_payment::simulation::SimulationError::NotSimulation) => crate::respond(
+            409,
+            Code::ChannelInteraction as i64,
+            "支付不是模拟渠道",
+            &rid,
+        ),
         Err(chargepilot_mod_payment::simulation::SimulationError::Conflict) => {
-            crate::respond(409, 3001, "模拟支付冲突", &rid)
+            crate::respond(409, Code::ChannelInteraction as i64, "模拟支付冲突", &rid)
         }
         Err(chargepilot_mod_payment::simulation::SimulationError::Storage(m)) => {
             tracing::warn!(error = %m, "模拟确认处理失败");
-            crate::respond(503, 5001, "模拟确认暂不可用", &rid)
+            crate::respond(503, Code::DependencyFailed as i64, "模拟确认暂不可用", &rid)
         }
     }
 }
@@ -176,17 +180,22 @@ async fn wallet_recharge(
 fn checkout_error(e: chargepilot_mod_payment::CheckoutError, rid: &str) -> Response {
     use chargepilot_mod_payment::CheckoutError as E;
     match &e {
-        E::InvalidInput => crate::respond(400, 1005, "请求参数无效", rid),
-        E::NotFound => crate::respond(404, 1004, "设备或端口不存在", rid),
-        E::Paused => crate::respond(409, 2009, "设备已停用", rid),
-        E::PortBusy => crate::respond(409, 2009, "端口已被占用", rid),
-        E::OfferUnavailable => crate::respond(409, 2009, "套餐不可售", rid),
-        E::Pricing => crate::respond(409, 2009, "计费方案不可用", rid),
-        E::Conflict => crate::respond(409, 2009, "支付申请冲突", rid),
-        E::Provider => crate::respond(502, 3001, "支付渠道不可用", rid),
+        E::InvalidInput => crate::respond(400, Code::BadRequest as i64, "请求参数无效", rid),
+        E::NotFound => crate::respond(404, Code::NotFound as i64, "设备或端口不存在", rid),
+        E::Paused => crate::respond(409, Code::Conflict as i64, "设备已停用", rid),
+        E::PortBusy => crate::respond(409, Code::Conflict as i64, "端口已被占用", rid),
+        E::OfferUnavailable => crate::respond(409, Code::Conflict as i64, "套餐不可售", rid),
+        E::Pricing => crate::respond(409, Code::Conflict as i64, "计费方案不可用", rid),
+        E::Conflict => crate::respond(409, Code::Conflict as i64, "支付申请冲突", rid),
+        E::Provider => crate::respond(502, Code::ChannelInteraction as i64, "支付渠道不可用", rid),
         E::Storage(m) => {
             tracing::warn!(error = %m, "下单处理失败");
-            crate::respond(503, 5003, "下单暂不可用，请稍后重试", rid)
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "下单暂不可用，请稍后重试",
+                rid,
+            )
         }
     }
 }

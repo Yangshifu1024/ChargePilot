@@ -8,6 +8,7 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_ops::OpsError;
 use chargepilot_mod_ops::management::{self, CreateAdminInput, Page, RoleInput, UpdateAdminInput};
+use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -151,7 +152,7 @@ async fn update_admin_user(
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "没有可更新的字段", &rid);
+        return crate::respond(400, Code::BadRequest as i64, "没有可更新的字段", &rid);
     };
     let input = UpdateAdminInput {
         display_name: v
@@ -393,7 +394,12 @@ async fn publish_announcement(
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
-        return crate::respond(400, 1005, "请填写标题、内容、有效时间和公告目标", &rid);
+        return crate::respond(
+            400,
+            Code::BadRequest as i64,
+            "请填写标题、内容、有效时间和公告目标",
+            &rid,
+        );
     };
     let input = chargepilot_mod_ops::announcement::PublishInput {
         title: v["title"].as_str().unwrap_or_default().to_string(),
@@ -434,9 +440,19 @@ async fn dashboard(
     match chargepilot_mod_ops::dashboard::load(&deps.db).await {
         Ok(data) => match serde_json::to_value(&data) {
             Ok(v) => httpx::ok(v, &rid),
-            Err(_) => crate::respond(503, 5003, "仪表盘数据暂不可用", &rid),
+            Err(_) => crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "仪表盘数据暂不可用",
+                &rid,
+            ),
         },
-        Err(_) => crate::respond(503, 5003, "仪表盘数据暂不可用", &rid),
+        Err(_) => crate::respond(
+            503,
+            Code::ServiceUnavailable as i64,
+            "仪表盘数据暂不可用",
+            &rid,
+        ),
     }
 }
 

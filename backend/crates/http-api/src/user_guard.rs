@@ -5,6 +5,7 @@
 
 use axum::http::HeaderMap;
 use axum::response::Response;
+use chargepilot_platform::error::Code;
 
 use crate::errormap::{bearer, respond};
 use crate::state::UserSessionBase;
@@ -14,7 +15,12 @@ use crate::state::UserSessionBase;
 pub async fn user_id_from(base: &UserSessionBase, headers: &HeaderMap) -> Result<u64, Response> {
     let rid = chargepilot_platform::httpx::request_id_from(headers);
     let Some(token) = bearer(headers) else {
-        return Err(respond(401, 1001, "access token invalid", &rid));
+        return Err(respond(
+            401,
+            Code::Unauthorized as i64,
+            "access token invalid",
+            &rid,
+        ));
     };
     let svc = chargepilot_mod_identity::service::SessionService {
         db: &base.db,
@@ -25,9 +31,17 @@ pub async fn user_id_from(base: &UserSessionBase, headers: &HeaderMap) -> Result
     };
     match svc.authenticate(token).await {
         Ok(uid) => Ok(uid),
-        Err(chargepilot_mod_identity::IdentityError::SessionExpired) => {
-            Err(respond(401, 1001, "session expired", &rid))
-        }
-        Err(_) => Err(respond(401, 1001, "access token invalid", &rid)),
+        Err(chargepilot_mod_identity::IdentityError::SessionExpired) => Err(respond(
+            401,
+            Code::Unauthorized as i64,
+            "session expired",
+            &rid,
+        )),
+        Err(_) => Err(respond(
+            401,
+            Code::Unauthorized as i64,
+            "access token invalid",
+            &rid,
+        )),
     }
 }
