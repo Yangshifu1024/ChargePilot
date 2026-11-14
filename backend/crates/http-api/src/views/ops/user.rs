@@ -1,6 +1,6 @@
 //! 运营域用户端门面（票 18 冷区批：原 user_ops.rs 归位）。
 
-use crate::deps::ApiDeps;
+use crate::state::ApiDeps;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;

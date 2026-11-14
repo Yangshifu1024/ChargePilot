@@ -24,7 +24,7 @@
 //! `panic!`——集成轮（`--include-ignored`）中一律判失败，不静默跳过；
 //! 日常无环境变量轮由 `#[ignore]` 标记语义承担（不进入默认 `cargo test`）。
 
-use chargepilot_http_api::deps::{ApiDeps, WalletServices};
+use chargepilot_http_api::state::{ApiDeps, WalletServices};
 use chargepilot_platform::ids::SegmentAllocator;
 use serde_json::Value;
 use std::sync::Arc;
@@ -197,7 +197,7 @@ impl TestAppBuilder {
             // 默认 Development（与全部测试文件现状一致；集成轮不注入
             // LOGIN_MODE）；Wechat 分支测试经 with_exchanger 覆写。
             exchanger: Arc::new(self.exchanger.unwrap_or_else(|| {
-                chargepilot_http_api::deps::exchanger_of(
+                chargepilot_http_api::state::exchanger_of(
                     chargepilot_platform::config::LoginMode::Development,
                     &Default::default(),
                 )

@@ -1,8 +1,8 @@
 //! 后台实时鉴权 extractor：JWT → 会话存在 → 实时 Profile（权限不足由 handler 用 `has()` 判定）。
 
 use crate::bearer;
-use crate::deps::ApiDeps;
 use crate::errormap::ops_error;
+use crate::state::ApiDeps;
 use axum::response::Response;
 use chargepilot_mod_ops::OpsError;
 use std::sync::Arc;

@@ -231,25 +231,25 @@ async fn serve() -> anyhow::Result<()> {
     }
 
     // 业务路由装配（模式与凭据全部经统一配置，票 16）。
-    let payment_services = chargepilot_http_api::deps::PaymentServices::assemble(
+    let payment_services = chargepilot_http_api::state::PaymentServices::assemble(
         db.clone(),
         allocator.clone(),
         cfg.payment_mode,
         &cfg.wechat,
     )
     .context("支付域装配失败")?;
-    let deps = Arc::new(chargepilot_http_api::deps::ApiDeps {
+    let deps = Arc::new(chargepilot_http_api::state::ApiDeps {
         db: db.clone(),
         redis_url: Arc::new(cfg.redis_url.clone()),
         jwt_secret: Arc::new(cfg.auth.jwt_secret.clone()),
         allocator,
-        exchanger: Arc::new(chargepilot_http_api::deps::exchanger_of(
+        exchanger: Arc::new(chargepilot_http_api::state::exchanger_of(
             cfg.login_mode,
             &cfg.wechat,
         )),
-        wallet: Some(Arc::new(chargepilot_http_api::deps::WalletServices::build(
-            db.clone(),
-        ))),
+        wallet: Some(Arc::new(
+            chargepilot_http_api::state::WalletServices::build(db.clone()),
+        )),
         checkout: Some(payment_services.checkout),
         wallet_recharge: Some(payment_services.wallet_recharge),
         simulation_payment: payment_services.simulation_payment,

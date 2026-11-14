@@ -1,7 +1,7 @@
 //! 运营域后台门面·认证（票 18 冷区批：原 admin_auth.rs 归位）。
 
-use crate::deps::ApiDeps;
 use crate::errormap::{bearer, ops_error, respond};
+use crate::state::ApiDeps;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Response;

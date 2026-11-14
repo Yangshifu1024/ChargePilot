@@ -1,6 +1,6 @@
 //! 充电域用户端门面（票 18 冷区批：原 user_charging.rs 归位）。
 
-use crate::deps::{ApiDeps, ChargingStopState, UserSessionBase};
+use crate::state::{ApiDeps, ChargingStopState, UserSessionBase};
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;

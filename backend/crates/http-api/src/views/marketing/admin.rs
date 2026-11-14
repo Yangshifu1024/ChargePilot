@@ -1,7 +1,7 @@
 //! 营销域后台门面（票 18 冷区批：原 admin_marketing.rs 归位）。
 
-use crate::admin_guard::AdminGuard;
-use crate::deps::ApiDeps;
+use crate::guard::AdminGuard;
+use crate::state::ApiDeps;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::Response;

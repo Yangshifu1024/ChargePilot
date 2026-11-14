@@ -1,10 +1,12 @@
+//! 结算域用户端门面（票 19 热区批：原 user_settlement.rs 归位；admin 切片随本票并入）。
+
 //! C 端账单与发票路由：账单列表/详情/已读、开票申请与我的发票（路径与响应
 //! 形状对齐旧版 internal/http/user/settlement/{bill,invoice}.go）。
 //!
 //! 挂载行：.merge(user_settlement::router())
 //! （lib.rs build_router 中与其余 user 路由并列；模块声明 pub mod user_settlement;）
 
-use crate::deps::{ApiDeps, UserSessionBase};
+use crate::state::{ApiDeps, UserSessionBase};
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;

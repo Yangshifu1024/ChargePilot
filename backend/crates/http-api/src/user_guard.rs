@@ -6,8 +6,8 @@
 use axum::http::HeaderMap;
 use axum::response::Response;
 
-use crate::deps::UserSessionBase;
 use crate::errormap::{bearer, respond};
+use crate::state::UserSessionBase;
 
 /// 用户会话鉴权：Bearer 令牌 → user_id；失败即 401 信封。
 /// 收域组会话基础件（票 17：处理器单 State 提取自足）。

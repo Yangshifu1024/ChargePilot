@@ -222,14 +222,14 @@ async fn build() -> Router {
             provider: provider.clone(),
         },
     );
-    let deps = std::sync::Arc::new(chargepilot_http_api::deps::ApiDeps {
+    let deps = std::sync::Arc::new(chargepilot_http_api::state::ApiDeps {
         db: db.clone(),
         redis_url: std::sync::Arc::new("redis://127.0.0.1:1".into()),
         jwt_secret: std::sync::Arc::new("0123456789abcdef0123456789abcdef".into()),
         allocator: allocator.clone(),
         exchanger: std::sync::Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
         wallet: Some(std::sync::Arc::new(
-            chargepilot_http_api::deps::WalletServices::build(db.clone()),
+            chargepilot_http_api::state::WalletServices::build(db.clone()),
         )),
         checkout: Some(std::sync::Arc::new(
             chargepilot_mod_payment::CheckoutService {

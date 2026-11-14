@@ -1,19 +1,11 @@
 //! HTTP 适配：axum 路由合并 + 鉴权中间件 + 统一信封输出（测试主缝所在层）。
 //! 依赖方向：本层只调各域模块服务，不写业务 SQL、不持有业务表。
 
-pub mod admin_finance;
-pub mod admin_guard;
-pub mod admin_orders;
-pub mod admin_pricing_device;
-pub mod admin_users_cards;
-pub mod deps;
-pub mod device_and_user;
 pub mod errormap;
+pub mod guard;
 pub mod params;
-pub mod user_auth;
+pub mod state;
 pub mod user_guard;
-pub mod user_identity_cards;
-pub mod user_settlement;
 pub mod views;
 
 use axum::extract::State;
@@ -23,7 +15,7 @@ use chargepilot_platform::error::{ApiError, Code};
 /// 业务路由 + 健康检查 + 指标 + /admin 静态资源（SPA fallback）。
 /// `admin_static_dir` 为 None 时（开发未构建前端）静态路由不挂载。
 pub async fn build_router(
-    deps: std::sync::Arc<deps::ApiDeps>,
+    deps: std::sync::Arc<state::ApiDeps>,
     prometheus: metrics_exporter_prometheus::PrometheusHandle,
     admin_static_dir: Option<&str>,
     h5_static_dir: Option<&str>,
@@ -52,22 +44,27 @@ pub async fn build_router(
         .merge(views::ops::audit::router())
         .merge(views::export::admin::router())
         .merge(views::marketing::admin::router())
-        .merge(admin_finance::router())
+        .merge(views::wallet::admin::router())
+        .merge(views::settlement::admin::router())
         .merge(views::order::admin::router())
-        .merge(admin_orders::router())
-        .merge(admin_pricing_device::router())
+        .merge(views::order::admin::admin_router())
         .merge(views::pricing::admin::router())
+        .merge(views::pricing::admin::scheme_router())
         .merge(views::device::admin::router())
-        .merge(admin_users_cards::router())
-        .merge(device_and_user::router())
+        .merge(views::device::admin::station_router())
+        .merge(views::device::admin::device_admin_router())
+        .merge(views::identity::admin::router())
+        .merge(views::card::admin::router())
         .merge(views::marketing::user::router())
         .merge(views::ops::user::router())
         .merge(views::wallet::user::router())
         .merge(views::payment::user::simulation_router())
         .merge(views::charging::user::router())
-        .merge(user_settlement::router())
-        .merge(user_identity_cards::router())
-        .merge(user_auth::router())
+        .merge(views::settlement::user::router())
+        .merge(views::identity::user::router())
+        .merge(views::card::user::router())
+        .merge(views::order::user::router())
+        .merge(views::device::user::router())
         .route("/health/live", axum::routing::get(|| async { "ok" }))
         .route("/health/ready", axum::routing::get(readiness))
         .route(
@@ -154,7 +151,7 @@ impl tower::Service<axum::extract::Request> for SpaFallback {
     }
 }
 
-async fn readiness(State(state): State<std::sync::Arc<deps::ApiDeps>>) -> &'static str {
+async fn readiness(State(state): State<std::sync::Arc<state::ApiDeps>>) -> &'static str {
     let db_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
     let redis_ok = match redis::Client::open(state.redis_url.as_str()) {
         Ok(client) => match client.get_multiplexed_tokio_connection().await {

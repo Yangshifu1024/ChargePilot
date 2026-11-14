@@ -1,8 +1,8 @@
 //! 运营域后台门面（票 18 冷区批）：账号管理（原 admin_management.rs）。
 
-use crate::admin_guard::AdminGuard;
-use crate::deps::ApiDeps;
 use crate::errormap::ops_error;
+use crate::guard::AdminGuard;
+use crate::state::ApiDeps;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;

@@ -9,7 +9,7 @@
 
 mod support;
 
-use chargepilot_http_api::deps::ApiDeps;
+use chargepilot_http_api::state::ApiDeps;
 use std::sync::Arc;
 use tower::util::ServiceExt as _;
 

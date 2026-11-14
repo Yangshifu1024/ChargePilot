@@ -1,6 +1,6 @@
 //! 营销域用户端门面（票 18 冷区批：原 user_marketing.rs 归位）。
 
-use crate::deps::{ApiDeps, UserSessionBase};
+use crate::state::{ApiDeps, UserSessionBase};
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;

@@ -1,6 +1,6 @@
 //! 支付域用户端门面（票 18 冷区批：原 user_payment.rs 归位）。
 
-use crate::deps::{ApiDeps, PaymentState, UserSessionBase};
+use crate::state::{ApiDeps, PaymentState, UserSessionBase};
 use axum::Json as AxumJson;
 use axum::extract::State;
 use axum::http::HeaderMap;
