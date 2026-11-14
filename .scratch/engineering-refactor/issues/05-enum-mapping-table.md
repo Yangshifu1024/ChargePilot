@@ -18,3 +18,5 @@ Status: ready-for-agent
 - **重要更正（对票 06 与方案 4.1 的输入修正）**：逐常量核实发现「跨表混装」是方案初稿示例错误而非代码现状——现有 `PaymentStatus`（6 常量）恰为 `payment_order.status` 六值、`PaymentIntentStatus`（5 常量，注释明确分立）恰为 `charge_payment_intent.status` 五值，**无需拆分存量类型**；真正缺的是 `charge_order.payment_status`（4 值）的 `ChargePaymentStatus`（新建，已并入票 06 打样批）。票 06 开工时按对照表执行。
 - 关键裁决 8 条：BizType 一型三用；钱包四词表归 wallet 子树（防 money 反向依赖）；卡投递状态归 card；充电命令状态归 charging；导出词表迁 export 子树；TriggerType 更名 ActivityTriggerType；`migration_baseline` 为合法取值严格解码；生成列不建型。
 - 计数口径：63 列 = 62 建型 + 1 生成列；62 列去 BizType 二列重复 = **60 个目标枚举**，其中转正/更名 20、全新 40、保留 1（EventSource）；另登记非 DB 词表（ChargeMode 等）为第二批不阻塞主线。
+
+- **2026-11-14 收尾补记**：60 个目标枚举全量落地完成（票 06–13 主批次 + wallet 4/pricing 3/charging 2 三组拆票遗漏的收尾，落 domain/wallet.rs、pricing.rs、charging_command.rs）。对照表文首登记完成度；真库集成轮 189 通过 / 0 失败。

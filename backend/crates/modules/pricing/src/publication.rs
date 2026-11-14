@@ -98,9 +98,10 @@ pub async fn publish(
         (Some(tid), _) => {
             if let Some(expect_tv) = input.template_version {
                 let tv: Option<u64> = sqlx::query_scalar(
-                    "SELECT `version` FROM `pricing_template` WHERE `id` = ? AND `status` = 'active' AND `deleted_at` IS NULL FOR SHARE",
+                    "SELECT `version` FROM `pricing_template` WHERE `id` = ? AND `status` = ? AND `deleted_at` IS NULL FOR SHARE",
                 )
                 .bind(tid)
+                .bind(chargepilot_domain::pricing::PricingTemplateStatus::Active)
                 .fetch_optional(&mut *tx)
                 .await?;
                 let tv = tv.ok_or(PricingError::NotFound)?;
@@ -109,9 +110,10 @@ pub async fn publish(
                 }
             }
             let spec: Option<serde_json::Value> = sqlx::query_scalar(
-                "SELECT `spec_json` FROM `pricing_template` WHERE `id` = ? AND `status` = 'active' AND `deleted_at` IS NULL FOR SHARE",
+                "SELECT `spec_json` FROM `pricing_template` WHERE `id` = ? AND `status` = ? AND `deleted_at` IS NULL FOR SHARE",
             )
             .bind(tid)
+            .bind(chargepilot_domain::pricing::PricingTemplateStatus::Active)
             .fetch_optional(&mut *tx)
             .await?;
             let spec: crate::SpecWrapper =
@@ -139,18 +141,22 @@ pub async fn publish(
     match input.device_id.as_deref() {
         Some(device_id) => {
             sqlx::query(
-                "UPDATE `pricing_rule` SET `status` = 'disabled' WHERE `station_id` = ? AND `device_id` = ? AND `status` = 'active' AND `deleted_at` IS NULL",
+                "UPDATE `pricing_rule` SET `status` = ? WHERE `station_id` = ? AND `device_id` = ? AND `status` = ? AND `deleted_at` IS NULL",
             )
+            .bind(chargepilot_domain::pricing::PricingRuleStatus::Disabled)
             .bind(input.station_id)
             .bind(device_id)
+            .bind(chargepilot_domain::pricing::PricingRuleStatus::Active)
             .execute(&mut *tx)
             .await?;
         }
         None => {
             sqlx::query(
-                "UPDATE `pricing_rule` SET `status` = 'disabled' WHERE `station_id` = ? AND `device_id` IS NULL AND `status` = 'active' AND `deleted_at` IS NULL",
+                "UPDATE `pricing_rule` SET `status` = ? WHERE `station_id` = ? AND `device_id` IS NULL AND `status` = ? AND `deleted_at` IS NULL",
             )
+            .bind(chargepilot_domain::pricing::PricingRuleStatus::Disabled)
             .bind(input.station_id)
+            .bind(chargepilot_domain::pricing::PricingRuleStatus::Active)
             .execute(&mut *tx)
             .await?;
         }
@@ -165,7 +171,7 @@ pub async fn publish(
     let version = baseline + 1;
     sqlx::query(
         "INSERT INTO `pricing_rule` (`id`, `template_id`, `name`, `station_id`, `device_id`, `version`, `status`, `spec_json`, `channel`) \
-         VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 'default')",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(rule_id)
     .bind(input.template_id)
@@ -173,7 +179,9 @@ pub async fn publish(
     .bind(input.station_id)
     .bind(input.device_id.as_deref().filter(|d| !d.is_empty()))
     .bind(version)
+    .bind(chargepilot_domain::pricing::PricingRuleStatus::Active)
     .bind(serde_json::to_value(crate::SpecWrapper::of(scheme.clone())).map_err(|e| PricingError::Storage(e.into()))?)
+    .bind(chargepilot_domain::pricing::PricingChannel::Default)
     .execute(&mut *tx)
     .await?;
     // 8. 发布回执 + 审计（同事务）
@@ -236,10 +244,12 @@ pub async fn inherit_station_rule(
         return Err(PricingError::VersionConflict);
     }
     sqlx::query(
-        "UPDATE `pricing_rule` SET `status` = 'disabled' WHERE `station_id` = ? AND `device_id` = ? AND `status` = 'active' AND `deleted_at` IS NULL",
+        "UPDATE `pricing_rule` SET `status` = ? WHERE `station_id` = ? AND `device_id` = ? AND `status` = ? AND `deleted_at` IS NULL",
     )
+    .bind(chargepilot_domain::pricing::PricingRuleStatus::Disabled)
     .bind(station_id)
     .bind(&input.device_id)
+    .bind(chargepilot_domain::pricing::PricingRuleStatus::Active)
     .execute(&mut *tx)
     .await?;
     let after = json!({"station_id": station_id, "device_id": input.device_id, "inherited": true});
@@ -306,11 +316,12 @@ pub async fn effective_scheme(
         Some(d) => {
             sqlx::query_as(
                 "SELECT `id`, `version`, `spec_json` FROM `pricing_rule` \
-                 WHERE `station_id` = ? AND `device_id` = ? AND `status` = 'active' AND `deleted_at` IS NULL \
+                 WHERE `station_id` = ? AND `device_id` = ? AND `status` = ? AND `deleted_at` IS NULL \
                  ORDER BY `version` DESC, `id` DESC LIMIT 1",
             )
             .bind(station_id)
             .bind(d)
+            .bind(chargepilot_domain::pricing::PricingRuleStatus::Active)
             .fetch_optional(pool)
             .await?
         }
@@ -321,10 +332,11 @@ pub async fn effective_scheme(
         None => {
             let r: Option<(u64, u64, serde_json::Value)> = sqlx::query_as(
                 "SELECT `id`, `version`, `spec_json` FROM `pricing_rule` \
-                 WHERE `station_id` = ? AND `device_id` IS NULL AND `status` = 'active' AND `deleted_at` IS NULL \
+                 WHERE `station_id` = ? AND `device_id` IS NULL AND `status` = ? AND `deleted_at` IS NULL \
                  ORDER BY `version` DESC, `id` DESC LIMIT 1",
             )
             .bind(station_id)
+            .bind(chargepilot_domain::pricing::PricingRuleStatus::Active)
             .fetch_optional(pool)
             .await?;
             match r {
@@ -352,10 +364,11 @@ pub async fn effective_scheme(
     let inherited = match device_id.as_ref() {
         Some(d) => {
             sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM `pricing_rule` WHERE `station_id` = ? AND `device_id` = ? AND `status` = 'active' AND `deleted_at` IS NULL",
+                "SELECT COUNT(*) FROM `pricing_rule` WHERE `station_id` = ? AND `device_id` = ? AND `status` = ? AND `deleted_at` IS NULL",
             )
             .bind(station_id)
             .bind(d)
+            .bind(chargepilot_domain::pricing::PricingRuleStatus::Active)
             .fetch_one(pool)
             .await
             .map_err(PricingError::from)?

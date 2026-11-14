@@ -160,6 +160,8 @@
 | export_task.file_format | csv,xlsx | 新类型 `ExportFileFormat` | `ExportFileFormat`（迁 domain/export/） |
 | export_task.status | pending,running,completed,failed,expired | 新类型 `ExportStatus` | `ExportStatus`（迁 domain/export/） |
 
+**实施完成（2026-11-14，S3 批次票 06–13 + 收尾）**：60 个目标枚举全部落地——money 7（票 06，含新建 ChargePaymentStatus）、order 3+支付轴接线（票 07）、settlement 6（票 08）、payment_intent 1（票 09）、device 14+card 4（票 10）、identity 2+ops 4（票 11）、marketing 6+export 2（票 12）、events 2（票 13）、wallet 4 + pricing 3 + charging 2（拆票遗漏，随收尾补齐落 domain/wallet.rs、pricing.rs、charging_command.rs）。所有枚举配字面量对照测试；DB 词表 sqlx 三件套手写（见总则 1 更正）。收尾补记：wallet 四词表自 modules/wallet/lib.rs 迁入并补 sqlx 接线，行读取的静默回退（unknown→Active）改严格失败；旧版「未知范围类型静默忽略」「未知折扣类型返回 NotFound」语义由词表穷尽承接（登记于票 11/12 Comments）。
+
 **计数核对**：63 列 = 62 个建型列 + 1 个生成列（`business_status`）；62 列中 `BizType` 一型三列（payment_order/refund_record/invoice_request），故目标枚举 **60 个**，其中 20 个已有 String 新类型/容器形态转正（money 6 + marketing 6 + operations 3 + card 3 + payment_intent 1 + order 1，扣除 `BizType`/`PaymentOrderStatus` 等更名合并后见批次表）、40 个全新；`EventSource` 已是枚举保留不动（计入 60 内为「保留」）。
 
 ## 四、JSON 持久化词表（无 DB 独立列，透传约束）

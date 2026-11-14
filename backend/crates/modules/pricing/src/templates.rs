@@ -22,8 +22,9 @@ pub struct TemplateRow {
 pub async fn list_templates(pool: &MySqlPool) -> PricingResult<Vec<serde_json::Value>> {
     let rows = sqlx::query_as::<_, TemplateRow>(
         "SELECT `id`, `name`, `remark`, `spec_json` AS `spec`, `status`, `version` \
-         FROM `pricing_template` WHERE `deleted_at` IS NULL AND `status` = 'active' ORDER BY `id` DESC",
+         FROM `pricing_template` WHERE `deleted_at` IS NULL AND `status` = ? ORDER BY `id` DESC",
     )
+    .bind(chargepilot_domain::pricing::PricingTemplateStatus::Active)
     .fetch_all(pool)
     .await?;
     Ok(rows
@@ -76,13 +77,14 @@ pub async fn create_template(
         return Err(PricingError::Forbidden);
     }
     sqlx::query(
-        "INSERT INTO `pricing_template` (`id`, `name`, `remark`, `spec_json`, `display_json`, `status`, `version`) VALUES (?, ?, ?, ?, ?, 'active', 1)",
+        "INSERT INTO `pricing_template` (`id`, `name`, `remark`, `spec_json`, `display_json`, `status`, `version`) VALUES (?, ?, ?, ?, ?, ?, 1)",
     )
     .bind(id)
     .bind(&scheme.name)
     .bind(&scheme.remark)
     .bind(serde_json::to_value(&spec)?)
     .bind(serde_json::to_value(&scheme.display)?)
+    .bind(chargepilot_domain::pricing::PricingTemplateStatus::Active)
     .execute(&mut *tx)
     .await?;
     let after = json!({"id": id, "name": scheme.name, "version": 1});
@@ -206,7 +208,8 @@ pub async fn set_template_status(
         return Err(PricingError::VersionConflict);
     }
     if delete {
-        sqlx::query("UPDATE `pricing_template` SET `status` = 'disabled', `deleted_at` = UTC_TIMESTAMP(3) WHERE `id` = ?")
+        sqlx::query("UPDATE `pricing_template` SET `status` = ?, `deleted_at` = UTC_TIMESTAMP(3) WHERE `id` = ?")
+            .bind(chargepilot_domain::pricing::PricingTemplateStatus::Disabled)
             .bind(template_id)
             .execute(&mut *tx)
             .await?;

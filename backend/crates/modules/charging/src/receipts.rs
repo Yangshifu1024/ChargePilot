@@ -167,7 +167,8 @@ pub async fn apply_start_receipt(
         .await?;
         // 刷卡首购操作确认（非刷卡订单无行，天然幂等）。
         chargepilot_mod_card::confirm_start_operation_tx(&mut *c, id).await?;
-        sqlx::query("UPDATE `charge_command` SET `status` = 'acked', `result_code` = 0, `ack_at` = ?, `result_reported` = 1 WHERE `charge_order_id` = ?")
+        sqlx::query("UPDATE `charge_command` SET `status` = ?, `result_code` = 0, `ack_at` = ?, `result_reported` = 1 WHERE `charge_order_id` = ?")
+            .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Acked)
             .bind(occurred_at)
             .bind(id as i64)
             .execute(&mut *c)
@@ -215,7 +216,8 @@ pub async fn apply_start_receipt(
     .bind(id as i64)
     .execute(&mut *c)
     .await?;
-    sqlx::query("UPDATE `charge_command` SET `status` = 'rejected', `result_code` = ?, `result_reported` = 1, `error` = ? WHERE `charge_order_id` = ?")
+    sqlx::query("UPDATE `charge_command` SET `status` = ?, `result_code` = ?, `result_reported` = 1, `error` = ? WHERE `charge_order_id` = ?")
+        .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Rejected)
         .bind(input.result_code)
         .bind(&reason)
         .bind(id as i64)
@@ -395,10 +397,13 @@ pub async fn apply_end_receipt(
     )
     .await
     .map_err(|e| ReceiptError::Storage(e.to_string()))?;
-    sqlx::query("INSERT IGNORE INTO `charge_billing_job` (`charge_order_id`, `status`) VALUES (?, 'pending')")
-        .bind(input.charge_order_id as i64)
-        .execute(&mut *c)
-        .await?;
+    sqlx::query(
+        "INSERT IGNORE INTO `charge_billing_job` (`charge_order_id`, `status`) VALUES (?, ?)",
+    )
+    .bind(input.charge_order_id as i64)
+    .bind(chargepilot_domain::settlement::BillingJobStatus::Pending)
+    .execute(&mut *c)
+    .await?;
     chargepilot_mod_order::append_domain_event_tx(
         &mut *c,
         &input.stop_command_id,

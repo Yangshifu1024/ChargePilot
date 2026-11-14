@@ -114,7 +114,7 @@ impl StopService {
                 sqlx::query(
                     "INSERT INTO `charge_stop_command` (`command_id`, `start_command_id`, \
                      `charge_order_id`, `order_no`, `user_id`, `device_id`, `port_no`, `port_id`, `status`) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(&stop_command_id)
                 .bind(&active.start_command_id)
@@ -124,14 +124,14 @@ impl StopService {
                 .bind(&active.device_id)
                 .bind(active.port_no)
                 .bind(active.charge_order_id as i64)
+                .bind(chargepilot_domain::charging_command::ChargeStopCommandStatus::Pending)
                 .execute(&mut *c)
                 .await?;
-                sqlx::query(
-                    "UPDATE `charge_command` SET `status` = 'stopping' WHERE `charge_order_id` = ?",
-                )
-                .bind(active.charge_order_id as i64)
-                .execute(&mut *c)
-                .await?;
+                sqlx::query("UPDATE `charge_command` SET `status` = ? WHERE `charge_order_id` = ?")
+                    .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Stopping)
+                    .bind(active.charge_order_id as i64)
+                    .execute(&mut *c)
+                    .await?;
                 stop_command_id
             }
         };
@@ -143,9 +143,10 @@ impl StopService {
             .await
             .map_err(StopError::SendFailed)?;
         sqlx::query(
-            "UPDATE `charge_stop_command` SET `status` = 'sent', `sent_at` = UTC_TIMESTAMP(3) \
+            "UPDATE `charge_stop_command` SET `status` = ?, `sent_at` = UTC_TIMESTAMP(3) \
              WHERE `command_id` = ?",
         )
+        .bind(chargepilot_domain::charging_command::ChargeStopCommandStatus::Sent)
         .bind(&stop_command_id)
         .execute(&self.pool)
         .await?;

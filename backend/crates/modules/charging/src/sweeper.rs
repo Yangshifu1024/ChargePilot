@@ -20,11 +20,14 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
         "SELECT c.`id`, c.`order_no`, CAST(cmd.`command_id` AS CHAR) \
          FROM `charge_command` cmd \
          JOIN `charge_order` c ON c.`id` = cmd.`charge_order_id` \
-         WHERE cmd.`status` IN ('pending', 'sent') \
-           AND c.`status` = 'paid' \
+         WHERE cmd.`status` IN (?, ?) \
+           AND c.`status` = ? \
            AND cmd.`created_at` < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? MINUTE) \
          FOR UPDATE",
     )
+    .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Pending)
+    .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Sent)
+    .bind(chargepilot_domain::order::ChargeOrderStatus::Paid)
     .bind(timeout_minutes)
     .fetch_all(pool)
     .await?;
@@ -78,11 +81,14 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
             .execute(&mut *tx)
             .await?;
             sqlx::query(
-                "UPDATE `charge_command` SET `status` = 'rejected', `error` = ?, `result_reported` = 1 \
-                 WHERE `charge_order_id` = ? AND `status` IN ('pending', 'sent')",
+                "UPDATE `charge_command` SET `status` = ?, `error` = ?, `result_reported` = 1 \
+                 WHERE `charge_order_id` = ? AND `status` IN (?, ?)",
             )
+            .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Rejected)
             .bind(reason)
             .bind(id as i64)
+            .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Pending)
+            .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Sent)
             .execute(&mut *tx)
             .await?;
             // 释放端口与意图（同事务）。

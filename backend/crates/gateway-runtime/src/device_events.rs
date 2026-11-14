@@ -114,11 +114,12 @@ impl DeviceEventDispatcher {
             .unwrap_or(1) as u8;
         let row: Option<(String, u64, String, String, u8)> = sqlx::query_as(
             "SELECT CAST(`command_id` AS CHAR), `charge_order_id`, `order_no`, `device_id`, `port_no` \
-             FROM `charge_command` WHERE `device_id` = ? AND `port_no` = ? AND `status` = 'sent' \
+             FROM `charge_command` WHERE `device_id` = ? AND `port_no` = ? AND `status` = ? \
              ORDER BY `created_at` DESC LIMIT 1",
         )
         .bind(device_id)
         .bind(port)
+        .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Sent)
         .fetch_optional(&self.pool)
         .await?;
         let Some((command_id, charge_order_id, order_no, dev, port_no)) = row else {
@@ -159,12 +160,18 @@ impl DeviceEventDispatcher {
         let updated = sqlx::query(
             "UPDATE `charge_stop_command` SET `status` = ?, `result_code` = ?, \
              `next_retry_at` = NULL \
-             WHERE `device_id` = ? AND `port_no` = ? AND `status` IN ('pending','sent')",
+             WHERE `device_id` = ? AND `port_no` = ? AND `status` IN (?, ?)",
         )
-        .bind(if success { "acked" } else { "rejected" })
+        .bind(if success {
+            chargepilot_domain::charging_command::ChargeStopCommandStatus::Acked
+        } else {
+            chargepilot_domain::charging_command::ChargeStopCommandStatus::Rejected
+        })
         .bind(result_code)
         .bind(device_id)
         .bind(port)
+        .bind(chargepilot_domain::charging_command::ChargeStopCommandStatus::Pending)
+        .bind(chargepilot_domain::charging_command::ChargeStopCommandStatus::Sent)
         .execute(&self.pool)
         .await?
         .rows_affected();

@@ -61,7 +61,7 @@ pub async fn lock_wallet_account_tx(
     tx: &mut MySqlConnection,
     user_id: u64,
 ) -> Result<AccountRow, WalletError> {
-    let row: Option<(u64, u64, i64, i64, String, u64)> = sqlx::query_as(
+    let row: Option<(u64, u64, i64, i64, super::AccountStatus, u64)> = sqlx::query_as(
         "SELECT `id`, `user_id`, `balance_cents`, `frozen_cents`, `status`, `version` \
          FROM `wallet_account` WHERE `user_id` = ? AND `deleted_at` IS NULL LIMIT 1 FOR UPDATE",
     )
@@ -74,7 +74,7 @@ pub async fn lock_wallet_account_tx(
         user_id: uid,
         balance_cents: balance,
         frozen_cents: frozen,
-        status: super::AccountStatus::parse(&status).unwrap_or(super::AccountStatus::Active),
+        status,
         version,
     })
 }
@@ -86,9 +86,10 @@ pub async fn open_wallet_account_tx(
 ) -> Result<(), WalletError> {
     sqlx::query(
         "INSERT INTO `wallet_account` (`user_id`, `balance_cents`, `frozen_cents`, `status`) \
-         VALUES (?, 0, 0, 'active')",
+         VALUES (?, 0, 0, ?)",
     )
     .bind(user_id as i64)
+    .bind(super::AccountStatus::Active)
     .execute(&mut *tx)
     .await?;
     Ok(())
@@ -128,8 +129,9 @@ pub async fn lock_user_tx(tx: &mut MySqlConnection, user_id: u64) -> Result<(), 
 /// 不改变余额或已冻结金额（旧版 FreezeWallet）。
 pub async fn freeze_wallet_tx(tx: &mut MySqlConnection, wallet_id: u64) -> Result<(), WalletError> {
     sqlx::query(
-        "UPDATE `wallet_account` SET `status` = 'frozen', `version` = `version` + 1 WHERE `id` = ?",
+        "UPDATE `wallet_account` SET `status` = ?, `version` = `version` + 1 WHERE `id` = ?",
     )
+    .bind(super::AccountStatus::Frozen)
     .bind(wallet_id as i64)
     .execute(&mut *tx)
     .await?;
@@ -142,8 +144,9 @@ pub async fn activate_wallet_tx(
     wallet_id: u64,
 ) -> Result<(), WalletError> {
     sqlx::query(
-        "UPDATE `wallet_account` SET `status` = 'active', `version` = `version` + 1 WHERE `id` = ?",
+        "UPDATE `wallet_account` SET `status` = ?, `version` = `version` + 1 WHERE `id` = ?",
     )
+    .bind(super::AccountStatus::Active)
     .bind(wallet_id as i64)
     .execute(&mut *tx)
     .await?;

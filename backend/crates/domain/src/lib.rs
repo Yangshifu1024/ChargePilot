@@ -5,6 +5,7 @@
 
 pub mod card;
 pub mod charging_actual;
+pub mod charging_command;
 pub mod charging_cost;
 pub mod charging_measured;
 pub mod charging_order;
@@ -22,5 +23,7 @@ pub mod operations;
 pub mod order;
 pub mod page;
 pub mod payment_intent;
+pub mod pricing;
 pub mod settlement;
+pub mod wallet;
 pub mod wordlist;

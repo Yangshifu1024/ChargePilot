@@ -75,7 +75,7 @@ impl StartDispatcher {
              (`command_id`, `stop_command_id`, `charge_order_id`, `payment_order_id`, `order_no`, \
               `user_id`, `device_id`, `port_no`, `port_code`, `owns_port`, `status`, \
               `charge_mode`, `quantity`) \
-             SELECT ?, ?, ?, p.`payment_order_id`, ?, ?, ?, ?, ?, 1, 'pending', ?, ? \
+             SELECT ?, ?, ?, p.`payment_order_id`, ?, ?, ?, ?, ?, 1, ?, ?, ? \
              FROM `charge_payment_intent` p WHERE p.`charge_order_id` = ?",
         )
         .bind(&command_id)
@@ -86,6 +86,7 @@ impl StartDispatcher {
         .bind(&device_id)
         .bind(port_no)
         .bind(&port_code)
+        .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Pending)
         .bind(charge_mode)
         .bind(quantity as i64)
         .bind(id as i64)
@@ -103,7 +104,8 @@ impl StartDispatcher {
         // 命令落库即标记已发送；设备确认随回执推进（旧版 sent_at 语义）。
         // 端口占用不在受理时写：与旧版一致，成功回执（apply_start_receipt）
         // 才占 active_port_charge，结束回执按订单释放。
-        sqlx::query("UPDATE `charge_command` SET `status` = 'sent', `sent_at` = UTC_TIMESTAMP(3) WHERE `command_id` = ?")
+        sqlx::query("UPDATE `charge_command` SET `status` = ?, `sent_at` = UTC_TIMESTAMP(3) WHERE `command_id` = ?")
+            .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Sent)
             .bind(&command_id)
             .execute(&mut *conn)
             .await?;
@@ -143,11 +145,14 @@ impl StartDispatcher {
             }
             Err(e) => {
                 // 下发失败：命令标记 rejected，订单走失败路径（可重试由 sweeper 兜底）。
-                sqlx::query("UPDATE `charge_command` SET `status` = 'rejected', `error` = ? WHERE `command_id` = ?")
-                    .bind(&e)
-                    .bind(&cmd.command_id)
-                    .execute(&self.pool)
-                    .await?;
+                sqlx::query(
+                    "UPDATE `charge_command` SET `status` = ?, `error` = ? WHERE `command_id` = ?",
+                )
+                .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Rejected)
+                .bind(&e)
+                .bind(&cmd.command_id)
+                .execute(&self.pool)
+                .await?;
                 anyhow::bail!("启动命令下发失败: {e}")
             }
         }

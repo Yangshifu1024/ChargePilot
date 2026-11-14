@@ -3,7 +3,7 @@
 //! 审核不直接退款：批准走 ReserveInTx 预占，驳回只留记录；解冻不表示退款完成。
 
 use super::{
-    WalletError, account,
+    FreezeStatus, WalletError, account,
     refund::{RefundService, WalletRefundReservation},
 };
 use chargepilot_domain::money::{PriorReview, release_replay, review_replay, valid_review_comment};
@@ -148,7 +148,7 @@ impl RiskService {
                         .any(|p| p == "finance.wallet_risk.release")
                     && review.is_some()
                     && release.is_none()
-                    && raw.freeze_status.as_deref() == Some("frozen");
+                    && raw.freeze_status.as_deref() == Some(FreezeStatus::Frozen.as_str());
                 WalletRiskRow {
                     request_id: raw.request_id,
                     user_id: raw.user_id,
@@ -341,23 +341,25 @@ impl RiskService {
             .ok_or(WalletError::NotFound)?;
         if freeze_user != user_id
             || trigger_rule != "wallet_refund_frequency"
-            || freeze_status != "frozen"
+            || freeze_status != FreezeStatus::Frozen.as_str()
         {
             return Err(WalletError::RequestConflict);
         }
         sqlx::query(
-            "UPDATE `risk_freeze_log` SET `status` = 'unfrozen', `unfreeze_at` = UTC_TIMESTAMP(3) \
+            "UPDATE `risk_freeze_log` SET `status` = ?, `unfreeze_at` = UTC_TIMESTAMP(3) \
              WHERE `id` = ?",
         )
+        .bind(FreezeStatus::Unfrozen)
         .bind(freeze_id)
         .execute(&mut *tx)
         .await?;
         // 剩余生效冻结数与用户状态分别判定（两列取值串相同但事实不同）。
         let (active,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM `risk_freeze_log` \
-             WHERE `user_id` = ? AND `status` = 'frozen' FOR UPDATE",
+             WHERE `user_id` = ? AND `status` = ? FOR UPDATE",
         )
         .bind(user_id)
+        .bind(FreezeStatus::Frozen)
         .fetch_one(&mut *tx)
         .await?;
         let (user_status,): (chargepilot_domain::identity::UserStatus,) = sqlx::query_as(

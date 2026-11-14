@@ -24,14 +24,16 @@ pub async fn active_device_rule(
             sqlx::query_as(
                 "SELECT pr.`id`, pr.`version`, pr.`spec_json` \
                  FROM `pricing_rule` pr JOIN `station` s ON s.`id` = pr.`station_id` \
-                 WHERE pr.`station_id` = ? AND s.`status` = 'active' AND s.`deleted_at` IS NULL \
-                   AND pr.`status` = 'active' AND pr.`deleted_at` IS NULL \
+                 WHERE pr.`station_id` = ? AND s.`status` = ? AND s.`deleted_at` IS NULL \
+                   AND pr.`status` = ? AND pr.`deleted_at` IS NULL \
                    AND (pr.`effective_from` IS NULL OR pr.`effective_from` <= NOW(3)) \
                    AND (pr.`effective_to` IS NULL OR pr.`effective_to` > NOW(3)) \
                    AND (pr.`device_id` = ? OR pr.`device_id` IS NULL) \
                  ORDER BY pr.`device_id` IS NULL, pr.`version` DESC, pr.`id` DESC LIMIT 1",
             )
             .bind(station_id)
+            .bind(chargepilot_domain::device::StationStatus::Active)
+            .bind(chargepilot_domain::pricing::PricingRuleStatus::Active)
             .bind(d)
             .fetch_optional(pool)
             .await?
@@ -40,14 +42,16 @@ pub async fn active_device_rule(
             sqlx::query_as(
                 "SELECT pr.`id`, pr.`version`, pr.`spec_json` \
                  FROM `pricing_rule` pr JOIN `station` s ON s.`id` = pr.`station_id` \
-                 WHERE pr.`station_id` = ? AND s.`status` = 'active' AND s.`deleted_at` IS NULL \
-                   AND pr.`status` = 'active' AND pr.`deleted_at` IS NULL \
+                 WHERE pr.`station_id` = ? AND s.`status` = ? AND s.`deleted_at` IS NULL \
+                   AND pr.`status` = ? AND pr.`deleted_at` IS NULL \
                    AND (pr.`effective_from` IS NULL OR pr.`effective_from` <= NOW(3)) \
                    AND (pr.`effective_to` IS NULL OR pr.`effective_to` > NOW(3)) \
                    AND pr.`device_id` IS NULL \
                  ORDER BY pr.`version` DESC, pr.`id` DESC LIMIT 1",
             )
             .bind(station_id)
+            .bind(chargepilot_domain::device::StationStatus::Active)
+            .bind(chargepilot_domain::pricing::PricingRuleStatus::Active)
             .fetch_optional(pool)
             .await?
         }
