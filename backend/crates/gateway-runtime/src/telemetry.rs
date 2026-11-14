@@ -270,6 +270,8 @@ pub async fn run_flush_loop(
     loop {
         let samples = buffer.drain();
         metrics::gauge!("telemetry_flush_batch_last").set(samples.len() as f64);
+        // 对账恒等式（验收口径）：received = flushed(库明细) + dropped。
+        metrics::gauge!("telemetry_buffer_received_total").set(buffer.received() as f64);
         metrics::gauge!("telemetry_buffer_dropped_total").set(buffer.dropped() as f64);
         if !samples.is_empty() {
             // 单轮分片冲刷：单批样本过大时明细 SQL 参数超限，按 FLUSH_CHUNK 切。

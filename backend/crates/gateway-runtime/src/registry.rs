@@ -36,7 +36,7 @@ impl chargepilot_protocol::SessionRouter for SessionRegistry {
     ) -> BoxFut<bool> {
         let kicked = {
             let mut map = self.inner.lock().expect("会话表锁");
-            match map.insert(
+            let kicked = match map.insert(
                 device_id.to_string(),
                 Entry {
                     session: session.clone(),
@@ -49,7 +49,9 @@ impl chargepilot_protocol::SessionRouter for SessionRegistry {
                     Some(old.session)
                 }
                 _ => None,
-            }
+            };
+            metrics::gauge!("gateway_online_sessions").set(map.len() as f64);
+            kicked
         };
         Box::pin(async move {
             // 旧会话关闭在放锁后 await：close 只触发通知不阻塞，
@@ -81,6 +83,7 @@ impl chargepilot_protocol::SessionRouter for SessionRegistry {
                 map.remove(device_id);
             }
         }
+        metrics::gauge!("gateway_online_sessions").set(map.len() as f64);
         Box::pin(async {})
     }
 }
