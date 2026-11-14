@@ -117,14 +117,23 @@ async fn plain_login_flow() {
     assert_eq!(body["code"], 1001);
 
     // 4. refresh 轮换 → 新令牌；旧令牌失效
+    // 无凭据刷新 → 401/1001（票 23 补全此前丢弃的响应断言）。
     let (status, body) = post(router.clone(), "/api/v1/admin/auth/refresh", "null", &ip).await;
-    let _ = (status, body);
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "无凭据刷新应 401: {body}");
+    assert_eq!(body["code"], 1001);
     let router2 = router.clone();
     let (status, body) = refresh_with(router2, &refresh, &ip).await;
     assert_eq!(status, StatusCode::OK, "刷新应成功: {body}");
     let new_refresh = body["data"]["refresh_token"].as_str().unwrap().to_string();
     let (status, body) = refresh_with(router.clone(), &refresh, &ip).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "旧刷新令牌应失效: {body}");
+    // 轮换新令牌可继续消费且再下发（票 23 补全此前 let _ = new_refresh 的丢弃）。
+    let (status, body) = refresh_with(router.clone(), &new_refresh, &ip).await;
+    assert_eq!(status, StatusCode::OK, "轮换新令牌应可消费: {body}");
+    assert!(
+        body["data"]["refresh_token"].is_string(),
+        "链式轮换应再下发新刷新令牌: {body}"
+    );
     let (status, _body) = post(
         router.clone(),
         "/api/v1/admin/auth/login",
@@ -133,7 +142,6 @@ async fn plain_login_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let _ = new_refresh;
 }
 
 async fn refresh_with(router: axum::Router, token: &str, ip: &str) -> (StatusCode, Value) {

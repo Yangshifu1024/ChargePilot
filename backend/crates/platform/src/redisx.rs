@@ -1,4 +1,6 @@
 //! Redis 连接池（deadpool）。用途：会话/MFA/频次/租锁；事件投递不再使用 Redis（ADR 002）。
+//! 真实连通性不再单测探活（票 23 删除 ping_real_redis）：真库集成轮的会话/
+//! 频次/租锁流全部真实经过本池的取用与命令往返，连接故障即整轮红。
 
 use deadpool_redis::{Config as PoolConfig, Runtime};
 
@@ -10,22 +12,4 @@ pub fn open_pool(redis_url: &str, max_size: usize) -> anyhow::Result<Pool> {
     let pool = cfg.create_pool(Some(Runtime::Tokio1))?;
     pool.resize(max_size);
     Ok(pool)
-}
-
-#[cfg(test)]
-mod tests {
-    #[tokio::test]
-    #[allow(clippy::disallowed_methods)] // 票 16 豁免：测试模块的连接变量
-    async fn ping_real_redis() {
-        let Ok(url) = std::env::var("TEST_REDIS_URL") else {
-            return;
-        };
-        if url.is_empty() {
-            return;
-        }
-        let pool = super::open_pool(&url, 2).unwrap();
-        let mut conn = pool.get().await.unwrap();
-        let pong: String = redis::cmd("PING").query_async(&mut conn).await.unwrap();
-        assert_eq!(pong, "PONG");
-    }
 }

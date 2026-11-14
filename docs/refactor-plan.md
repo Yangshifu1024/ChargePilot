@@ -399,6 +399,8 @@ impl FromRef<AppState> for wallet::Handles { … }
 
 红线：资金/并发/幂等/协议黄金样本一律不动；删除合计约 60 行 + 裁剪 115 行；替代覆盖不存在即撤回该条。
 
+**S8 实施对照记录（票 23，2026-11-15）**：实际删除 152 行 / 新增 79 行（净 -73）。逐条落点——删除 `system_prefixes_do_not_shadow_known_vars`（`defaults_applied`、`frozen_list_covers_core_vars` 已随 S4 删除）与 `ping_real_redis`；裁剪 `settlement_admin_flow` 场景 A（`admin_billing_flow` 同路径严格超集，独有 `resolve_manual_amount` 保留）；加固 `admin_auth_flow` 两处丢弃断言（无凭据刷新 401/1001 + 轮换新令牌链式消费）；`warn_unknown_env_vars` 收集逻辑提纯 `unknown_env_var_names` 后直测；`charging_state` 主链补迁移 6 `restore_completed` 运行期锚点；计费分段守恒判定在域落批次已提取为 `charging_settle::settle_session` 纯函数并被 82 条 golden case 直测（原「内嵌 300 行 process_job」前提已被先行批次消除，本项以注记销项不重做）；PAYMENT_MODE/LOGIN_MODE fail-fast 随 S4 落地。另承接票 16/20 移交：`tasks.mjs test-integration` 入口加前置清场（孤儿退款记录 / 残留 domain_event / 登录限流键）。黄金样本未动。
+
 ---
 
 ## 八、实施批次

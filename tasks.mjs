@@ -59,6 +59,18 @@ const tasks = {
     run('cargo', ['run', '-p', 'chargepilot-app', '--', 'migrate'], {
       env: { ...envOf(), DATABASE_URL: TEST_MYSQL_URL },
     });
+    // 前置清场（票 23，承接票 16/20 登记的移交）：历史轮残留会挤占领取窗口
+    // （孤儿退款记录占 refund 领取 LIMIT、旧事件占 domain_event claim 窗口、
+    // 限流键污染频次断言）。只清 pending/failed 测试残留，不触业务终态数据。
+    spawnSync('docker', [
+      'exec', 'chargepilot-dev-mysql', 'mysql', '-uchargepilot', '-pchargepilot', 'chargepilot_dev', '-e',
+      "DELETE rr FROM refund_record rr LEFT JOIN payment_order po ON po.id = rr.payment_order_id"
+      + " WHERE po.id IS NULL AND rr.status IN ('pending','processing');"
+      + " DELETE FROM domain_event WHERE status IN ('pending','failed');",
+    ], { stdio: 'inherit' });
+    spawnSync('docker', [
+      'exec', 'chargepilot-dev-redis', 'redis-cli', 'DEL', 'admin:login-rate:10.0.0.1',
+    ], { stdio: 'inherit' });
     run('cargo', ['test', '--workspace', '--', '--include-ignored'], {
       env: { ...envOf(), TEST_MYSQL_URL, TEST_REDIS_URL },
     });

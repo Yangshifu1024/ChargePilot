@@ -408,118 +408,14 @@ async fn meter_review_and_manual_amount() {
     };
     let alloc = Arc::new(SegmentAllocator::new((*db).clone(), 60));
     alloc.warm_up().await.unwrap();
-    let (order_id, payment_id, user_id, rule_id) =
-        seed_completed_charge(db.as_ref(), &alloc, 200).await;
-
-    // 场景 A：分段守恒争议转人工 → 提案修正 → 双审批准 → 重排队重算入账。
-    // 分段合计 250Wh 与总量 200Wh 不一致（时长自洽）：转人工后走分段修正。
-    let now = chrono::Utc::now();
-    let bad_meter = json!({
-        "segments": [
-            {"started_at": (now - chrono::Duration::minutes(10)).to_rfc3339(),
-             "ended_at": (now - chrono::Duration::minutes(5)).to_rfc3339(), "energy_wh": 100, "peak_w": 1500},
-            {"started_at": (now - chrono::Duration::minutes(5)).to_rfc3339(),
-             "ended_at": now.to_rfc3339(), "energy_wh": 150, "peak_w": 1500}
-        ],
-        "charged_wh": 200, "charged_seconds": 600,
-        "ended_at": now.to_rfc3339(), "stop_reason": 0
-    });
-    sqlx::query("UPDATE `charge_end_receipt` SET `meter_json` = CAST(? AS JSON) WHERE `charge_order_id` = ?")
-        .bind(bad_meter.to_string())
-        .bind(order_id as i64)
-        .execute(db.as_ref())
-        .await
-        .unwrap();
-    let handled = chargepilot_mod_settlement::billing::process_job(db.as_ref(), order_id)
-        .await
-        .expect("异常计量应安全处理");
-    assert!(!handled, "应转人工");
-    let job: String =
-        sqlx::query_scalar("SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ?")
-            .bind(order_id as i64)
-            .fetch_one(db.as_ref())
-            .await
-            .unwrap();
-    assert_eq!(job, "manual_review");
-
-    // 提案：修正分段守恒（合计 200Wh，与总量一致）。
-    let review_id = chargepilot_mod_settlement::meter_review::propose_meter_review(
-        db.as_ref(),
-        None,
-        8001,
-        order_id,
-        &chargepilot_platform::ids::uuid_v4(),
-        "分段合计与总量不一致，修正分段读数",
-        &[
-            chargepilot_mod_settlement::meter_review::MeterSegmentInput {
-                started_at: now - chrono::Duration::minutes(10),
-                ended_at: now - chrono::Duration::minutes(5),
-                energy_wh: 100,
-                peak_w: 1500,
-            },
-            chargepilot_mod_settlement::meter_review::MeterSegmentInput {
-                started_at: now - chrono::Duration::minutes(5),
-                ended_at: now,
-                energy_wh: 100,
-                peak_w: 1500,
-            },
-        ],
-    )
-    .await
-    .expect("提案应成功");
-    assert!(review_id > 0);
-    // 首审人二审冲突。
-    let err = chargepilot_mod_settlement::meter_review::review_meter(
-        db.as_ref(),
-        None,
-        8001,
-        order_id,
-        review_id,
-        true,
-        "",
-        Some(true),
-    )
-    .await
-    .expect_err("首审人二审应冲突");
-    assert_eq!(
-        err,
-        chargepilot_mod_settlement::meter_review::ReviewError::Conflict
-    );
-    // 二审批准 → 任务重排队。
-    chargepilot_mod_settlement::meter_review::review_meter(
-        db.as_ref(),
-        None,
-        8002,
-        order_id,
-        review_id,
-        true,
-        "",
-        Some(true),
-    )
-    .await
-    .expect("二审批准应成功");
-    let job: String =
-        sqlx::query_scalar("SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ?")
-            .bind(order_id as i64)
-            .fetch_one(db.as_ref())
-            .await
-            .unwrap();
-    assert_eq!(job, "pending", "批准后应重排队");
-    // 重算入账（修正分段 10 分钟 200Wh → 16 分）。
-    let handled = chargepilot_mod_settlement::billing::process_job(db.as_ref(), order_id)
-        .await
-        .expect("重算应成功");
-    assert!(handled);
-    let total: i64 = sqlx::query_scalar("SELECT `total_cents` FROM `charge_order` WHERE `id` = ?")
-        .bind(order_id as i64)
-        .fetch_one(db.as_ref())
-        .await
-        .unwrap();
-    assert_eq!(total, 16, "修正计量后应按 200Wh 正常入账");
-
-    // 场景 B：人工最终金额（新订单转人工后登记 40+10 分 → 入账 50 分）。
+    // 票 23 裁剪：原场景 A（分段守恒争议转人工 → 提案 → 双审批准 → 重排队
+    // 重算入账）与 admin_billing_flow 的 meter_review_list_propose_decide_flow
+    // 严格超集重复（转人工/首审冲突/批准重排队/重算入账均已在彼处覆盖），
+    // 全仓独有的 resolve_manual_amount 人工金额分支保留在本测试。
     let (order_b, payment_b, user_b, rule_b) =
         seed_completed_charge(db.as_ref(), &alloc, 200).await;
+
+    // 人工最终金额（异常计量转人工后登记 40+10 分 → 入账 50 分）。
     let bad_b = json!({
         "segments": [{"started_at": (chrono::Utc::now() - chrono::Duration::minutes(1)).to_rfc3339(),
                       "ended_at": chrono::Utc::now().to_rfc3339(), "energy_wh": 9999, "peak_w": 1500}],
@@ -587,12 +483,5 @@ async fn meter_review_and_manual_amount() {
         chargepilot_mod_settlement::meter_review::ReviewError::Conflict
     );
 
-    cleanup(
-        db.as_ref(),
-        &[
-            (order_id, payment_id, user_id, rule_id),
-            (order_b, payment_b, user_b, rule_b),
-        ],
-    )
-    .await;
+    cleanup(db.as_ref(), &[(order_b, payment_b, user_b, rule_b)]).await;
 }

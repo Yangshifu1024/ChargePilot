@@ -321,18 +321,23 @@ const SYSTEM_ENV_PREFIXES: &[&str] = &[
     "ONEHEADER",
 ];
 
+/// 清单外且非系统前缀的变量名集合（告警判定谓词提纯，票 23：行为测试直测
+/// 该集合语义，替代被删清单字面考据测试的守护职责）。
+fn unknown_env_var_names(all: &[(String, String)]) -> Vec<&str> {
+    all.iter()
+        .map(|(name, _)| name.as_str())
+        .filter(|name| {
+            !KNOWN_ENV_VARS.contains(name)
+                && !SYSTEM_ENV_PREFIXES
+                    .iter()
+                    .any(|p| name.starts_with(p) || name == p)
+        })
+        .collect()
+}
+
 /// 对清单外变量打 WARN（不阻断启动：容器运行时变量难以穷举，漂移靠日志可查）。
 fn warn_unknown_env_vars(all: &[(String, String)]) {
-    for (name, _) in all {
-        if KNOWN_ENV_VARS.contains(&name.as_str()) {
-            continue;
-        }
-        if SYSTEM_ENV_PREFIXES
-            .iter()
-            .any(|p| name.starts_with(p) || name == *p)
-        {
-            continue;
-        }
+    for name in unknown_env_var_names(all) {
         tracing::warn!(
             var = %name,
             "未在冻结清单内的环境变量（若为配置项请核对拼写与 docs/operations.md）"
@@ -505,6 +510,9 @@ mod tests {
 
     /// 一致性测试（票 16，替代两个考据型测试）：`Config::load` 实际读取的
     /// 变量名集合 == 冻结清单 − RUST_LOG（日志层 EnvFilter 直读，不经 Config）。
+    /// 系统前缀吞掉清单变量的情形在此同样暴露（实际读取集合缺项即失败），
+    /// 故原清单字面考据测试（system_prefixes_do_not_shadow_known_vars，
+    /// 票 23 删除项）随一致性测试落地而退役。
     #[test]
     fn frozen_list_equals_actually_read_set() {
         let env = FakeEnv::new(&minimal_env());
@@ -520,10 +528,29 @@ mod tests {
         assert_eq!(read, frozen, "配置读取集合必须与冻结清单一致（漂移即失败）");
     }
 
+    /// 未知变量告警（票 23 补测承接）：`Config::load` 不因清单外变量阻断，
+    /// 告警集合恰好为「清单外且非系统前缀」的变量（清单内与系统注入不告警），
+    /// 直测提纯后的 `unknown_env_var_names`。
     #[test]
-    fn system_prefixes_do_not_shadow_known_vars() {
-        // 系统前缀不得吞掉清单内变量（RUST_LOG 同时在两侧时清单优先）。
-        assert!(KNOWN_ENV_VARS.contains(&"RUST_LOG"));
-        assert!(!SYSTEM_ENV_PREFIXES.contains(&"RUST_LOG"));
+    fn unknown_env_vars_warn_without_blocking() {
+        let mut pairs = minimal_env();
+        pairs.push(("MY_CUSTOM_SETTING", "x"));
+        pairs.push(("PATH", "/usr/bin"));
+        let env = FakeEnv::new(&pairs);
+        Config::load(&env).expect("清单外变量不应阻断启动");
+        let binding = env.all();
+        let warned = super::unknown_env_var_names(&binding);
+        assert!(
+            warned.contains(&"MY_CUSTOM_SETTING"),
+            "清单外自定义变量应告警: {warned:?}"
+        );
+        assert!(
+            !warned.contains(&"PATH"),
+            "系统前缀变量不应告警: {warned:?}"
+        );
+        assert!(
+            !warned.contains(&"DATABASE_URL"),
+            "清单内变量不应告警: {warned:?}"
+        );
     }
 }

@@ -213,6 +213,13 @@ mod tests {
         let completed = charging.complete(); // charging → completed
         let refunding = completed.request_channel_refund(); // completed → refunding
         let _refunded = refunding.settle_refunded(); // refunding → refunded
+        // 迁移 6（票 23 补运行期锚点）：渠道退款部分成功恢复完成态——
+        // refunding 的第二出口（运行期尚无写点，正例锚点锁定表达可达）。
+        let refunding2 = evidence_of(OrderId(1), ChargeOrderStatus::Completed)
+            .and_then(StateEvidence::into_completed)
+            .expect("completed 有证据")
+            .request_channel_refund();
+        let _completed_again = refunding2.restore_completed(); // refunding → completed
     }
 
     #[test]
