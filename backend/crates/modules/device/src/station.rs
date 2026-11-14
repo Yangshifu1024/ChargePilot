@@ -172,7 +172,7 @@ pub async fn update(
 
 pub async fn get(pool: &MySqlPool, station_id: u64) -> StationResult<Station> {
     sqlx::query_as::<_, Station>(
-        "SELECT `id`, `name`, `address`, `longitude`, `latitude`, `status`, `contact_phone` \
+        "SELECT `id`, `name`, `address`, CAST(`longitude` AS CHAR) AS `longitude`, CAST(`latitude` AS CHAR) AS `latitude`, `status`, `contact_phone` \
          FROM `station` WHERE `id` = ? AND `deleted_at` IS NULL LIMIT 1",
     )
     .bind(station_id)
@@ -211,7 +211,7 @@ pub async fn list(
     .fetch_one(pool)
     .await?;
     let items = sqlx::query_as::<_, Station>(
-        "SELECT `id`, `name`, `address`, `longitude`, `latitude`, `status`, `contact_phone` \
+        "SELECT `id`, `name`, `address`, CAST(`longitude` AS CHAR) AS `longitude`, CAST(`latitude` AS CHAR) AS `latitude`, `status`, `contact_phone` \
          FROM `station` WHERE `deleted_at` IS NULL \
          AND (`name` LIKE ? ESCAPE '!' OR `address` LIKE ? ESCAPE '!') AND (? IS NULL OR `status` = ?) \
          ORDER BY `id` DESC LIMIT ? OFFSET ?",
