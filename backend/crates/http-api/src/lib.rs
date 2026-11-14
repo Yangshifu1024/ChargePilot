@@ -12,13 +12,12 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use chargepilot_platform::error::{ApiError, Code};
 
-/// 业务路由 + 健康检查 + 指标 + /admin 静态资源（SPA fallback）。
-/// `admin_static_dir` 为 None 时（开发未构建前端）静态路由不挂载。
+/// 业务路由 + 健康检查 + 指标 + /admin 静态资源（SPA fallback，票 22 嵌入）。
+/// 前端产物经编译期嵌入（assets-admin / assets-h5 叶子 crate）；产物缺失
+/// （本地未构建前端）时嵌入为空集合，静态路由不挂载。
 pub async fn build_router(
     deps: std::sync::Arc<state::ApiDeps>,
     prometheus: metrics_exporter_prometheus::PrometheusHandle,
-    admin_static_dir: Option<&str>,
-    h5_static_dir: Option<&str>,
 ) -> axum::Router {
     let mut app = axum::Router::new()
         // 域路由注册绑定装配开关（票 17）：开关开启后该域路由才存在，
@@ -76,79 +75,129 @@ pub async fn build_router(
         )
         .fallback(not_found)
         .with_state(deps);
-    if let Some(dir) = admin_static_dir {
-        // SPA：资源存在则直出，其余 /admin/* 回落 index.html（history 路由）。
-        // ServeDir 的 not_found_service 会把 fallback 输出强制为 404（tower-http
-        // 语义），刷新深链拿 404 不符合「刷新不 404」——外包一层：404 时改答
-        // index（启动读入内存，产物与镜像同生命周期）。
-        match tokio::fs::read(format!("{dir}/index.html")).await {
-            Ok(bytes) => {
-                app = app.nest_service(
-                    "/admin",
-                    SpaFallback {
-                        inner: tower_http::services::ServeDir::new(dir),
-                        index: std::sync::Arc::new(bytes),
-                    },
-                );
-            }
-            Err(_) => {
-                // index 缺失属部署错误：只挂资源直出，深链 404 可见即可诊断。
-                tracing::warn!(dir, "admin index.html 缺失，SPA 深链回落未启用");
-                app = app.nest_service("/admin", tower_http::services::ServeDir::new(dir));
-            }
-        }
+    // 票 22：编译期嵌入静态产物（磁盘挂载与 ADMIN_STATIC_DIR/H5_STATIC_DIR
+    // 环境变量退役）。产物缺失时嵌入为空集合，路由不挂载（404 可见即诊断）。
+    if !chargepilot_assets_admin::is_empty() {
+        app = app
+            // 根路由显式登记：axum 0.8 通配 {*rest} 不匹配空尾，/admin 与
+            // /admin/ 是浏览器直接访问的入口，不能落到 fallback 404。
+            .route("/admin", axum::routing::get(admin_root))
+            .route("/admin/", axum::routing::get(admin_root))
+            .route("/admin/{*rest}", axum::routing::get(admin_asset));
     }
-    // H5 静态产物：hash 路由，资源直出即可（/h5/ 入口由 index.html 承载）。
-    if let Some(h5_dir) = h5_static_dir {
-        app = app.nest_service("/h5", tower_http::services::ServeDir::new(h5_dir));
+    if !chargepilot_assets_h5::is_empty() {
+        app = app
+            .route("/h5", axum::routing::get(h5_root))
+            .route("/h5/", axum::routing::get(h5_root))
+            .route("/h5/{*rest}", axum::routing::get(h5_asset));
     }
     app
 }
 
-/// SPA 服务：内层 ServeDir 直出静态资源；未命中（404）时改答 index.html（200）。
-/// index 在启动时读入内存（产物与镜像同生命周期，无需每次读盘）。
-#[derive(Clone)]
-struct SpaFallback {
-    inner: tower_http::services::ServeDir,
-    index: std::sync::Arc<Vec<u8>>,
+/// MIME 猜测（按扩展名；嵌入资源带完整内容类型响应）。
+fn mime_of(path: &str) -> &'static str {
+    let ext = path.rsplit('.').next().unwrap_or("");
+    match ext {
+        "html" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "application/javascript; charset=utf-8",
+        "json" => "application/json",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "map" => "application/json",
+        "txt" => "text/plain; charset=utf-8",
+        "wasm" => "application/wasm",
+        _ => "application/octet-stream",
+    }
 }
 
-type SpaFuture = std::pin::Pin<
-    Box<
-        dyn std::future::Future<Output = Result<axum::response::Response, std::convert::Infallible>>
-            + Send,
-    >,
->;
-
-impl tower::Service<axum::extract::Request> for SpaFallback {
-    type Response = axum::response::Response;
-    type Error = std::convert::Infallible;
-    type Future = SpaFuture;
-
-    fn poll_ready(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
-        tower::Service::<axum::extract::Request>::poll_ready(&mut self.inner, cx)
+async fn embedded_response(
+    get: impl Fn(&str) -> Option<Vec<u8>>,
+    index: impl Fn() -> Option<Vec<u8>>,
+    rest: Option<String>,
+    root_index: bool,
+) -> Response {
+    let path = match (&rest, root_index) {
+        (None, true) | (Some(_), true) if rest.as_deref().unwrap_or("").is_empty() => {
+            "index.html".to_string()
+        }
+        (Some(r), _) => r.clone(),
+        (None, _) => String::new(),
+    };
+    if let Some(bytes) = get(&path) {
+        return (
+            axum::http::StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, mime_of(&path))],
+            bytes,
+        )
+            .into_response();
     }
-
-    fn call(&mut self, req: axum::extract::Request) -> Self::Future {
-        let inner = self.inner.clone();
-        let index = self.index.clone();
-        Box::pin(async move {
-            let resp = tower::util::ServiceExt::oneshot(inner, req).await?;
-            if resp.status() == axum::http::StatusCode::NOT_FOUND {
-                Ok((
-                    [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
-                    (*index).clone(),
-                )
-                    .into_response())
-            } else {
-                // ServeDir 响应体（tower-http 专用 body）归一为 axum body。
-                Ok(resp.map(axum::body::Body::new))
-            }
-        })
+    // SPA 回退：未命中路径回落 index.html（history 路由「刷新不 404」）。
+    if let Some(bytes) = index() {
+        return (
+            axum::http::StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            bytes,
+        )
+            .into_response();
     }
+    Response::builder()
+        .status(axum::http::StatusCode::NOT_FOUND)
+        .body(axum::body::Body::empty())
+        .unwrap_or_else(|_| axum::http::StatusCode::NOT_FOUND.into_response())
+}
+
+/// 管理端 SPA 根：/admin 与 /admin/（wildcard 不匹配空尾，根入口显式登记）。
+async fn admin_root() -> Response {
+    embedded_response(
+        chargepilot_assets_admin::get,
+        chargepilot_assets_admin::index,
+        None,
+        true,
+    )
+    .await
+}
+
+/// 管理端 SPA：/admin/{*rest}（深链回落 index）。
+async fn admin_asset(rest: Option<axum::extract::Path<String>>) -> Response {
+    let rest = rest.map(|p| p.0);
+    embedded_response(
+        chargepilot_assets_admin::get,
+        chargepilot_assets_admin::index,
+        rest,
+        true,
+    )
+    .await
+}
+
+/// 用户端 H5 根：/h5 与 /h5/（根入口显式登记）。
+async fn h5_root() -> Response {
+    embedded_response(
+        chargepilot_assets_h5::get,
+        chargepilot_assets_h5::index,
+        None,
+        true,
+    )
+    .await
+}
+
+/// 用户端 H5：/h5/{*rest}（hash 路由，资源直出，未命中 404）。
+async fn h5_asset(rest: Option<axum::extract::Path<String>>) -> Response {
+    let rest = rest.map(|p| p.0);
+    embedded_response(
+        chargepilot_assets_h5::get,
+        chargepilot_assets_h5::index,
+        rest,
+        true,
+    )
+    .await
 }
 
 async fn readiness(State(state): State<std::sync::Arc<state::ApiDeps>>) -> &'static str {

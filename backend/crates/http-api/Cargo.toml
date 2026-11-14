@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+chargepilot-assets-admin.workspace = true
+chargepilot-assets-h5.workspace = true
 axum.workspace = true
 tower-http.workspace = true
 tower = { version = "0.5", features = ["util"] }

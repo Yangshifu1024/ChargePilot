@@ -46,7 +46,6 @@ impl TestApp {
             simulation_route: false,
             charging_stop: false,
             snapshots: false,
-            admin_static_dir: None,
             exchanger: None,
             export: None,
         }
@@ -62,7 +61,6 @@ pub struct TestAppBuilder {
     simulation_route: bool,
     charging_stop: bool,
     snapshots: bool,
-    admin_static_dir: Option<String>,
     /// 微信交换器覆写（Wechat 分支测试注入；默认 Development）。
     exchanger: Option<chargepilot_mod_identity::wechat::Exchanger>,
     /// 导出配置（export flow 注入目录；缺省空目录走 service 层临时目录回退）。
@@ -114,13 +112,6 @@ impl TestAppBuilder {
         exchanger: chargepilot_mod_identity::wechat::Exchanger,
     ) -> Self {
         self.exchanger = Some(exchanger);
-        self
-    }
-
-    /// 后台 SPA 静态目录（仅 admin_spa_fallback 使用）。
-    #[must_use]
-    pub fn with_admin_static(mut self, dir: impl Into<String>) -> Self {
-        self.admin_static_dir = Some(dir.into());
         self
     }
 
@@ -222,13 +213,7 @@ impl TestAppBuilder {
                 max_rows: 0,
             }),
         });
-        let router = chargepilot_http_api::build_router(
-            deps,
-            prometheus_handle(),
-            self.admin_static_dir.as_deref(),
-            None,
-        )
-        .await;
+        let router = chargepilot_http_api::build_router(deps, prometheus_handle()).await;
         TestApp {
             router,
             db,

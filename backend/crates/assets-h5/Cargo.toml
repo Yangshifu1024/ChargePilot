@@ -1,0 +1,10 @@
+[package]
+name = "chargepilot-assets-h5"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rust-embed.workspace = true
+
+[lints]
+workspace = true

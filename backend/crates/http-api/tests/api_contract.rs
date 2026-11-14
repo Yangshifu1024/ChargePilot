@@ -257,7 +257,7 @@ async fn build() -> Router {
         },
     });
     let prometheus = support::prometheus_handle();
-    chargepilot_http_api::build_router(deps, prometheus, None, None).await
+    chargepilot_http_api::build_router(deps, prometheus).await
 }
 
 fn request(method: &str, path: &str) -> Request<Body> {

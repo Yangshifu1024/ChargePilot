@@ -23,8 +23,6 @@ pub struct Config {
     pub login_mode: LoginMode,
     /// 微信凭据组（production 必填；development/simulation 模式可缺省）。
     pub wechat: WechatCreds,
-    /// 静态资源组（None 时对应静态路由不挂载，开发未构建前端）。
-    pub static_assets: StaticAssetsConfig,
     /// 导出组。
     pub export: ExportConfig,
     /// 引导账号组（user 为空则跳过引导）。
@@ -107,13 +105,6 @@ pub struct WechatCreds {
     pub notify_url: String,
 }
 
-/// 静态资源组。
-#[derive(Debug, Clone, Default)]
-pub struct StaticAssetsConfig {
-    pub admin_dir: Option<String>,
-    pub h5_dir: Option<String>,
-}
-
 /// 导出组（与 `chargepilot_mod_export::ExportConfig` 对齐；max_rows 非正数默认 50000）。
 #[derive(Debug, Clone)]
 pub struct ExportConfig {
@@ -184,10 +175,6 @@ impl Config {
             api_v3_key: optional(src, "WECHAT_APIV3_KEY", ""),
             notify_url: optional(src, "WECHAT_NOTIFY_URL", ""),
         };
-        let static_assets = StaticAssetsConfig {
-            admin_dir: non_empty(src.read("ADMIN_STATIC_DIR")),
-            h5_dir: non_empty(src.read("H5_STATIC_DIR")),
-        };
         let export = ExportConfig {
             dir: optional(src, "EXPORT_DIR", ""),
             max_rows: optional(src, "EXPORT_MAX_ROWS", "").parse().unwrap_or(0),
@@ -211,7 +198,6 @@ impl Config {
             payment_mode,
             login_mode,
             wechat,
-            static_assets,
             export,
             bootstrap,
         })
@@ -246,10 +232,6 @@ impl Config {
     }
 }
 
-fn non_empty(v: Option<String>) -> Option<String> {
-    v.filter(|s| !s.trim().is_empty())
-}
-
 /// 环境变量冻结清单（阶段 09）：应用可识别的全部变量。
 /// **一致性测试锁定**：`Config::load` 实际读取的变量名集合（含 RUST_LOG 的
 /// 日志层直读）必须与本清单相等——新增/删除变量两处同步，漂移即测试失败。
@@ -261,9 +243,7 @@ pub const KNOWN_ENV_VARS: &[&str] = &[
     "DEVICE_ADDR",
     "JWT_SECRET",
     "PAID_START_TIMEOUT_SECS",
-    // 静态产物与导出
-    "ADMIN_STATIC_DIR",
-    "H5_STATIC_DIR",
+    // 静态产物（票 22 后编译期嵌入，目录变量退役）与导出
     "EXPORT_DIR",
     "EXPORT_MAX_ROWS",
     // 引导账号
@@ -435,9 +415,7 @@ mod tests {
         // 模式默认值：simulation / development（旧版 unwrap_or 语义）。
         assert_eq!(cfg.payment_mode, PaymentMode::Simulation);
         assert_eq!(cfg.login_mode, LoginMode::Development);
-        // 静态资源/引导账号缺省为 None/空（开发形态）。
-        assert!(cfg.static_assets.admin_dir.is_none());
-        assert!(cfg.static_assets.h5_dir.is_none());
+        // 引导账号缺省为空（开发形态）。
         assert!(cfg.bootstrap.user.is_empty());
         // 导出缺省：空目录 + max_rows 0（service 层回退默认 50000）。
         assert_eq!(cfg.export.max_rows, 0);
@@ -510,18 +488,19 @@ mod tests {
     }
 
     #[test]
-    fn wechat_group_and_static_dirs_pass_through() {
+    fn wechat_group_passes_through() {
         let mut pairs = minimal_env();
-        pairs.push(("ADMIN_STATIC_DIR", " /srv/admin "));
         pairs.push(("WECHAT_APPID", "wx123"));
         let cfg = Config::load(&FakeEnv::new(&pairs)).unwrap();
-        // 与旧版 optional 语义一致：非空值原样保留（不 trim）。
-        assert_eq!(cfg.static_assets.admin_dir.as_deref(), Some(" /srv/admin "));
         assert_eq!(cfg.wechat.appid, "wx123");
-        // 空白值等价缺省（None）。
-        pairs.push(("H5_STATIC_DIR", "  "));
-        let cfg = Config::load(&FakeEnv::new(&pairs)).unwrap();
-        assert!(cfg.static_assets.h5_dir.is_none());
+        // 静态目录变量退役（票 22）：清单内不再读取。
+        pairs.push(("ADMIN_STATIC_DIR", " /srv/admin "));
+        let env = FakeEnv::new(&pairs);
+        Config::load(&env).unwrap();
+        assert!(
+            !env.queried.borrow().iter().any(|v| v == "ADMIN_STATIC_DIR"),
+            "静态目录变量不再被配置读取"
+        );
     }
 
     /// 一致性测试（票 16，替代两个考据型测试）：`Config::load` 实际读取的

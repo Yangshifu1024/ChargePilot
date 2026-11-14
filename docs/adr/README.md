@@ -9,5 +9,6 @@
 | [003](003-segment-id.md) | 号段模式 ID 分配 | 已接受 | 2026-11-14 |
 | [004](004-contract-boundary.md) | 契约边界：以前端实际消费为界 | 已接受 | 2026-11-14 |
 | [005](005-capacity-boundary.md) | 容量与可用性边界 | 已接受 | 2026-11-14 |
+| [006](006-static-embed.md) | 前端静态产物编译期嵌入 | 已接受 | 2026-11-15 |
 
 整体方案与实施计划见 [docs/rewrite-plan.md](../rewrite-plan.md)。

@@ -9,7 +9,11 @@ use std::sync::Arc;
 mod simulator_batch;
 
 #[derive(Parser)]
-#[command(name = "chargepilot", about = "充电桩运营平台单体服务（Rust）")]
+#[command(
+    name = "chargepilot",
+    version,
+    about = "充电桩运营平台单体服务（Rust）"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
@@ -265,13 +269,7 @@ async fn serve() -> anyhow::Result<()> {
         })),
         snapshots: Some(snapshots.clone()),
     });
-    let app = chargepilot_http_api::build_router(
-        deps,
-        prometheus,
-        cfg.static_assets.admin_dir.as_deref(),
-        cfg.static_assets.h5_dir.as_deref(),
-    )
-    .await;
+    let app = chargepilot_http_api::build_router(deps, prometheus).await;
     let listener = tokio::net::TcpListener::bind(&cfg.listen.http_addr).await?;
     tracing::info!(addr = %cfg.listen.http_addr, "HTTP 服务启动");
 

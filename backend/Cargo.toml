@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "crates/app",
+    "crates/assets-admin",
+    "crates/assets-h5",
     "crates/domain",
     "crates/events",
     "crates/gateway-runtime",
@@ -30,10 +32,13 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+chargepilot-assets-admin = { path = "crates/assets-admin" }
+chargepilot-assets-h5 = { path = "crates/assets-h5" }
 # 异步运行时与 HTTP
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync", "net", "io-util"] }
 axum = { version = "0.8", features = ["json"] }
 tower-http = { version = "0.6", features = ["fs"] }
+rust-embed = { version = "8.14.0" }
 # 数据库（手写 SQL，不开编译期校验宏）
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "mysql", "chrono", "migrate", "json", "derive"] }
 # Redis（会话/MFA/频次/锁）
