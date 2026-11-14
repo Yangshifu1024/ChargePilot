@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 差分对照（辅缝 2）：以旧版 Go discountFor 批量产出的黄金样本逐条比对
 //! Rust 实现。样本由旧仓库临时生成器一次性产出（生成期人工预期已核对，
 //! 生成器即删），本测试只读快照。覆盖：三种优惠类型、阈值边界、

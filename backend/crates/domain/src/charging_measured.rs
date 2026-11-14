@@ -117,11 +117,11 @@ pub fn measured_segments(
                 peak_w: 0,
                 power_w: None,
             };
-            if let Some(v) = previous_power {
-                if at - cursor <= POWER_JOIN_WINDOW {
-                    segment.power_w = Some(v);
-                    segment.peak_w = reading.power_w.max(v);
-                }
+            if let Some(v) = previous_power
+                && at - cursor <= POWER_JOIN_WINDOW
+            {
+                segment.power_w = Some(v);
+                segment.peak_w = reading.power_w.max(v);
             }
             segments.push(segment);
             previous_power = Some(reading.power_w);
@@ -144,11 +144,11 @@ pub fn measured_segments(
             peak_w: 0,
             power_w: None,
         };
-        if let Some(v) = previous_power {
-            if span.ended_at - cursor <= POWER_JOIN_WINDOW {
-                segment.power_w = Some(v);
-                segment.peak_w = v;
-            }
+        if let Some(v) = previous_power
+            && span.ended_at - cursor <= POWER_JOIN_WINDOW
+        {
+            segment.power_w = Some(v);
+            segment.peak_w = v;
         }
         segments.push(segment);
     }

@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! /admin SPA 深链回归：深链回落 index.html 且状态 200（spec 用户故事 4）。
 //! 业务路由不触发（请求只打 /admin/*），连接池用 lazy 占位即可。
 

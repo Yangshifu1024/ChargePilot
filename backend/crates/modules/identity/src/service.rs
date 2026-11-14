@@ -87,7 +87,7 @@ impl<'a> SessionService<'a> {
             .await
             .map_err(IdentityError::from)?;
         let jwt = sign_access(self.jwt_secret, &user, refresh_token_part(&refresh_token))
-            .map_err(|e| IdentityError::Storage(e))?;
+            .map_err(IdentityError::Storage)?;
         Ok(LoginResult {
             token: jwt.clone(),
             jwt,
@@ -121,7 +121,7 @@ impl<'a> SessionService<'a> {
             &user,
             refresh_token_part(&rotated.refresh_token),
         )
-        .map_err(|e| IdentityError::Storage(e))?;
+        .map_err(IdentityError::Storage)?;
         Ok(AccessResult {
             token: jwt.clone(),
             jwt,

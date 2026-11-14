@@ -287,8 +287,14 @@ async fn serve() -> anyhow::Result<()> {
 
 async fn wait_stop_signal() {
     use tokio::signal::unix::{SignalKind, signal};
-    let mut term = signal(SignalKind::terminate()).expect("注册 SIGTERM");
-    let mut int = signal(SignalKind::interrupt()).expect("注册 SIGINT");
+    let mut term = match signal(SignalKind::terminate()) {
+        Ok(s) => s,
+        Err(e) => panic!("注册 SIGTERM 失败: {e}"),
+    };
+    let mut int = match signal(SignalKind::interrupt()) {
+        Ok(s) => s,
+        Err(e) => panic!("注册 SIGINT 失败: {e}"),
+    };
     tokio::select! {
         _ = term.recv() => {}
         _ = int.recv() => {}

@@ -21,20 +21,28 @@ fn valid_task_no(task_no: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_lowercase())
 }
 
+/// 文件名校验未通过（载荷无信息，调用方只区分成败；旧版语义）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileNameRejected;
+
 /// 按格式和合法任务号生成内容文件与校验文件名（不含目录）。
 /// 历史 PDF 仅允许清理；下载只支持 CSV/XLSX。
-pub fn file_names(task_no: &str, format: &str, cleanup: bool) -> Result<(String, String), ()> {
+pub fn file_names(
+    task_no: &str,
+    format: &str,
+    cleanup: bool,
+) -> Result<(String, String), FileNameRejected> {
     let format = if format.is_empty() {
         operations::ExportFileFormat::CSV
     } else {
         format
     };
     if !valid_task_no(task_no) {
-        return Err(());
+        return Err(FileNameRejected);
     }
     let known = operations::ExportFileFormat(format.to_string()).known();
     if !known && !(cleanup && format == operations::ExportFileFormat::LEGACY_PDF) {
-        return Err(());
+        return Err(FileNameRejected);
     }
     Ok((
         format!("{task_no}.{format}"),
@@ -117,12 +125,15 @@ fn cell_text(record: &serde_json::Value, column: &str) -> String {
         serde_json::Value::String(v) => v.clone(),
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::Bool(b) => b.to_string(),
-        other => other.to_string(),
+        serde_json::Value::Array(a) => serde_json::Value::Array(a.clone()).to_string(),
+        serde_json::Value::Object(o) => serde_json::Value::Object(o.clone()).to_string(),
     }
 }
 
 /// 发布导出文件：生成内容与校验文件（先 .partial 再改名），返回内容文件
 /// 相对路径（v1/<name>）。调用方须在任务锁事务内写完成状态。
+/// 发布参数即旧版契约字段，不引入参数对象。
+#[allow(clippy::too_many_arguments)]
 pub fn publish(
     root: &Path,
     task_no: &str,
@@ -135,7 +146,7 @@ pub fn publish(
     mask: &FieldMask,
 ) -> anyhow::Result<String> {
     let (name, proof_name) =
-        file_names(task_no, format, false).map_err(|()| anyhow::anyhow!("导出文件名不可用"))?;
+        file_names(task_no, format, false).map_err(|_| anyhow::anyhow!("导出文件名不可用"))?;
     std::fs::create_dir_all(root.join("v1"))?;
     let v1_name = PathBuf::from("v1").join(&name);
     let v1_proof = PathBuf::from("v1").join(&proof_name);
@@ -232,6 +243,8 @@ pub struct VerifiedArtifact {
 
 /// 校验已发布文件：路径与数据库一致、校验文件任务/范围/脱敏匹配、SHA-256 一致
 /// （旧版 verifyArtifact + expectedPath；versioned 恒为 true——新仓库只发布 v1）。
+/// 校验参数即旧版契约字段，不引入参数对象。
+#[allow(clippy::too_many_arguments)]
 pub fn verify_artifact(
     root: &Path,
     export_dir: &str,

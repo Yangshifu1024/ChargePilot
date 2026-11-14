@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! ops 尾款主缝集成测试：账号/角色管理、越权、最后管理员保护、公告、仪表盘。
 
 use axum::body::Body;

@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 阶段 03 批 1 主缝集成测试：计费方案发布幂等/版本基线/继承、站点、厂商。
 
 use axum::body::Body;
@@ -106,7 +112,7 @@ async fn login_super(
     let id = alloc.next_id().await.unwrap();
     let hash = chargepilot_platform::password::hash("super-pass-123").unwrap();
     sqlx::query("INSERT INTO `admin_user` (`id`, `username`, `password_hash`, `role_id`) VALUES (?, ?, ?, 1)")
-        .bind(id).bind(&username).bind(hash).execute(&*db).await.unwrap();
+        .bind(id).bind(&username).bind(hash).execute(db).await.unwrap();
     let (status, body) = req(
         router.clone(),
         "POST",

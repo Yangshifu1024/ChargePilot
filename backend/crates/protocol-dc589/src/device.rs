@@ -225,10 +225,11 @@ pub fn parse_heartbeat_interval(data: &[u8]) -> Result<(u16, bool), PayloadError
     Ok((u16::from_le_bytes([data[0], data[1]]), data[2] == 1))
 }
 
+/// B7 启动命令解析结果（模式码、订单 BCD、充电模式、数量、端口、金额分、时长分钟）。
+pub type StartCommandParts = (u8, [u8; 8], ChargeMode, u16, u8, u32, u16);
+
 /// 解析 B7 启动命令（模拟器用）：提取模式、额度、端口及订单标识。
-pub fn parse_start_command(
-    data: &[u8],
-) -> Result<(u8, [u8; 8], ChargeMode, u16, u8, u32, u16), PayloadError> {
+pub fn parse_start_command(data: &[u8]) -> Result<StartCommandParts, PayloadError> {
     if data.len() != 19 || data[0] == 0 {
         return Err(PayloadError);
     }

@@ -230,6 +230,10 @@ pub fn build_refund_body(
 /// HTTP 执行器窄接口：wechat_direct 模式的真实外呼点。
 /// 返回 (状态码, 响应体)；超时与网络错误映射为 Err（渠道未知结果，
 /// 调用方按批次语义重查，不得直接判定失败）。
+/// 外呼应答 Future（状态码 + 响应体文本；错误以 String 描述，见 trait 契约）。
+pub type WechatHttpFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(u16, String), String>> + Send + 'a>>;
+
 pub trait HttpExecutor: Send + Sync {
     fn execute<'a>(
         &'a self,
@@ -237,9 +241,7 @@ pub trait HttpExecutor: Send + Sync {
         url: &'a str,
         authorization: &'a str,
         body: &'a str,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(u16, String), String>> + Send + 'a>,
-    >;
+    ) -> WechatHttpFuture<'a>;
 }
 
 /// 真实外呼执行器：显式未实现（旧版原则——适配器存在不代表外呼可用）。

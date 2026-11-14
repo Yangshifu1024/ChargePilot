@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 阶段 08 故障注入端到端（真库 + 真实时钟）：
 //! 1. 回执迟到：启动命令超时 → 兜底扫描推进 failed + 退款登记 + 命令拒绝。
 //! 2. 事件丢失/投递器故障：mark_failed 退避 → 重放成功 → 命令生成且标记 published。

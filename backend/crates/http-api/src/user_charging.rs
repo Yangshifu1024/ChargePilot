@@ -203,10 +203,10 @@ async fn charge_history(
         "refunded",
     ];
     let status = q.status.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    if let Some(s) = status {
-        if !STATUSES.contains(&s) {
-            return crate::respond(400, 1005, "订单状态无效", &rid);
-        }
+    if let Some(s) = status
+        && !STATUSES.contains(&s)
+    {
+        return crate::respond(400, 1005, "订单状态无效", &rid);
     }
     match user_query::list_history(&deps.db, uid, status, page, size).await {
         Ok((items, total)) => httpx::ok(
@@ -235,10 +235,10 @@ async fn charge_detail(
     let out = match async {
         let mut out = user_query::base_view(&deps.db, &row).await?;
         // 支付摘要缺失按无支付处理（旧版 Funds：缺失不是数据库故障，字段省略）。
-        if let Some(pid) = row.payment_order_id {
-            if let Some(v) = user_query::payment_brief(&deps.db, pid).await? {
-                out["payment"] = v;
-            }
+        if let Some(pid) = row.payment_order_id
+            && let Some(v) = user_query::payment_brief(&deps.db, pid).await?
+        {
+            out["payment"] = v;
         }
         out["refunds"] = json!(user_query::order_refunds(&deps.db, row.id).await?);
         Ok::<_, sqlx::Error>(out)
@@ -335,22 +335,19 @@ async fn build_snapshot(deps: &ApiDeps, row: &OrderRecord) -> Result<Value, sqlx
                 })
             })
             .await
+            && let Some(p) = snap.port(row.port_no)
+            && (p.power_deci_watts > 0 || p.charged_mwh > 0 || p.charged_seconds > 0)
         {
-            if let Some(p) = snap.port(row.port_no) {
-                if p.power_deci_watts > 0 || p.charged_mwh > 0 || p.charged_seconds > 0 {
-                    available = true;
-                    out["telemetry_at"] =
-                        json!(now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
-                    if p.power_deci_watts > 0 {
-                        out["current_power_w"] = json!(f64::from(p.power_deci_watts) / 10.0);
-                    }
-                    if p.charged_mwh > 0 {
-                        out["charged_kwh"] = json!(f64::from(p.charged_mwh) / 1_000_000.0);
-                    }
-                    if snap.voltage_v > 0 {
-                        out["voltage_v"] = json!(f64::from(snap.voltage_v));
-                    }
-                }
+            available = true;
+            out["telemetry_at"] = json!(now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+            if p.power_deci_watts > 0 {
+                out["current_power_w"] = json!(f64::from(p.power_deci_watts) / 10.0);
+            }
+            if p.charged_mwh > 0 {
+                out["charged_kwh"] = json!(f64::from(p.charged_mwh) / 1_000_000.0);
+            }
+            if snap.voltage_v > 0 {
+                out["voltage_v"] = json!(f64::from(snap.voltage_v));
             }
         }
     }

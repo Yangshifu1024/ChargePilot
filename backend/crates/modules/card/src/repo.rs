@@ -66,7 +66,8 @@ pub async fn find_card_charge(
     pool: &MySqlPool,
     charge_order_id: u64,
 ) -> Result<Option<CardChargeRow>, sqlx::Error> {
-    let row: Option<(
+    // 卡扣行投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type CardChargeTuple = (
         u64,
         u64,
         String,
@@ -77,7 +78,8 @@ pub async fn find_card_charge(
         String,
         i64,
         serde_json::Value,
-    )> = sqlx::query_as(
+    );
+    let row: Option<CardChargeTuple> = sqlx::query_as(
         "SELECT `charge_order_id`, `card_id`, `port_code`, `active_port`, `paid_cents`, \
                     `purchased_minutes`, `max_minutes`, CAST(`card_no` AS CHAR) AS `card_no`, \
                     `wallet_after_cents`, CAST(`package_json` AS JSON) \

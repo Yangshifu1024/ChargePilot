@@ -348,16 +348,21 @@ pub async fn effective_scheme(
     };
     let wrapped: crate::SpecWrapper =
         serde_json::from_value(spec).map_err(|e| PricingError::InvalidScheme(e.to_string()))?;
-    let inherited = device_id.is_some()
-        && sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM `pricing_rule` WHERE `station_id` = ? AND `device_id` = ? AND `status` = 'active' AND `deleted_at` IS NULL",
-        )
-        .bind(station_id)
-        .bind(device_id.unwrap())
-        .fetch_one(pool)
-        .await
-        .map_err(PricingError::from)?
-        == 0;
+    // 显式分支替代 is_some+unwrap：None 时无从判断设备级继承，直接视为不继承。
+    let inherited = match device_id.as_ref() {
+        Some(d) => {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM `pricing_rule` WHERE `station_id` = ? AND `device_id` = ? AND `status` = 'active' AND `deleted_at` IS NULL",
+            )
+            .bind(station_id)
+            .bind(d)
+            .fetch_one(pool)
+            .await
+            .map_err(PricingError::from)?
+                == 0
+        }
+        None => false,
+    };
     Ok(EffectiveScheme {
         scheme: wrapped.scheme,
         version,

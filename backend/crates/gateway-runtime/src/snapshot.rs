@@ -77,7 +77,9 @@ impl SnapshotStore {
         Self::default()
     }
 
-    /// 更新心跳快照（帧到达先更新，实时读数据源）。
+    /// 更新心跳快照（帧到达先更新，实时读数据源）；
+    /// 参数即帧字段契约（信号/状态/电压/温度/端口态），不引入参数对象。
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_heartbeat(
         &self,
         device_id: &str,
@@ -89,7 +91,7 @@ impl SnapshotStore {
         port_states: &[u8],
         charging: &[chargepilot_protocol::PortTelemetry],
     ) {
-        let mut map = self.map.write().expect("快照锁");
+        let mut map = self.map.write().unwrap_or_else(|e| e.into_inner());
         let snap = map
             .entry(device_id.to_string())
             .or_insert_with(|| DeviceSnapshot {
@@ -140,7 +142,7 @@ impl SnapshotStore {
         device_id: &str,
         port: &chargepilot_protocol::PortTelemetry,
     ) {
-        let mut map = self.map.write().expect("快照锁");
+        let mut map = self.map.write().unwrap_or_else(|e| e.into_inner());
         let snap = map
             .entry(device_id.to_string())
             .or_insert_with(|| DeviceSnapshot {
@@ -160,7 +162,12 @@ impl SnapshotStore {
 
     /// 设备离线：快照标记下线（保留最后遥测供显示回退）。
     pub fn mark_offline(&self, device_id: &str) {
-        if let Some(snap) = self.map.write().expect("快照锁").get_mut(device_id) {
+        if let Some(snap) = self
+            .map
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(device_id)
+        {
             snap.online = false;
         }
     }
@@ -171,7 +178,12 @@ impl SnapshotStore {
         F: FnOnce(String) -> Fut,
         Fut: std::future::Future<Output = Option<DeviceSnapshot>>,
     {
-        if let Some(snap) = self.map.read().expect("快照锁").get(device_id) {
+        if let Some(snap) = self
+            .map
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(device_id)
+        {
             return Some(snap.clone());
         }
         // 快照缺失回退查库（设备重启后首次查询）。
@@ -180,7 +192,7 @@ impl SnapshotStore {
         if let Some(snap) = &loaded {
             self.map
                 .write()
-                .expect("快照锁")
+                .unwrap_or_else(|e| e.into_inner())
                 .insert(device_id.to_string(), snap.clone());
         }
         loaded

@@ -247,7 +247,7 @@ pub async fn change_card_status(
         .bind(id as i64)
         .execute(&mut *tx)
         .await?;
-    append_audit_tx(&mut *tx, id, actor.id, status, reason).await?;
+    append_audit_tx(&mut tx, id, actor.id, status, reason).await?;
     tx.commit().await?;
     Ok(())
 }

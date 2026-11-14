@@ -206,10 +206,10 @@ pub async fn update(
 }
 
 fn unique_conflict(e: sqlx::Error, msg: &str) -> DeviceError {
-    if let sqlx::Error::Database(db) = &e {
-        if db.is_unique_violation() {
-            return DeviceError::Conflict(msg.into());
-        }
+    if let sqlx::Error::Database(db) = &e
+        && db.is_unique_violation()
+    {
+        return DeviceError::Conflict(msg.into());
     }
     DeviceError::Storage(e.into())
 }

@@ -190,15 +190,14 @@ impl Scheme {
                 ));
             }
         }
-        if let Some(energy) = &s.energy {
-            if energy.electric_cents < 0
+        if let Some(energy) = &s.energy
+            && (energy.electric_cents < 0
                 || energy.service_cents < 0
                 || energy.electric_cents + energy.service_cents <= 0
                 || energy.electric_cents > MAX_RATE_CENTS
-                || energy.service_cents > MAX_RATE_CENTS
-            {
-                return Err(SchemeError("请填写设备电量的固定电费与服务费单价".into()));
-            }
+                || energy.service_cents > MAX_RATE_CENTS)
+        {
+            return Err(SchemeError("请填写设备电量的固定电费与服务费单价".into()));
         }
         let mut ids = std::collections::HashSet::new();
         let (mut amount, mut energy, mut card) = (false, false, s.card.package_id == 0);
@@ -425,16 +424,15 @@ impl Scheme {
             offer.duration_minutes = (p.minutes as u16).saturating_mul(count);
             offer.purchase_count = count;
         }
-        if p.mode == "amount" {
-            if let (Some(started), Some(ended)) = (meter.started_at, meter.ended_at) {
-                if ended - started >= chrono::Duration::minutes(n.policy.max_minutes as i64) {
-                    result.reason = "达到最长时长".into();
-                    let cutoff = started + chrono::Duration::minutes(n.policy.max_minutes as i64);
-                    match cutoff_meter(&spec, &meter, cutoff) {
-                        Ok(clipped) => meter = clipped,
-                        Err(_) => meter.review_required = true,
-                    }
-                }
+        if p.mode == "amount"
+            && let (Some(started), Some(ended)) = (meter.started_at, meter.ended_at)
+            && ended - started >= chrono::Duration::minutes(n.policy.max_minutes as i64)
+        {
+            result.reason = "达到最长时长".into();
+            let cutoff = started + chrono::Duration::minutes(n.policy.max_minutes as i64);
+            match cutoff_meter(&spec, &meter, cutoff) {
+                Ok(clipped) => meter = clipped,
+                Err(_) => meter.review_required = true,
             }
         }
         // 仅在提供的实测读数处判断是否停机，不插补电量或预测读数间的变化。
@@ -605,23 +603,21 @@ impl Scheme {
         if n.stop.stop_when_full && !c.stop_when_full {
             return Err(SchemeError("设备协议不支持满充停止".into()));
         }
-        if self.energy.is_some()
-            || (self.amount.is_some()
-                && self.amount.as_ref().unwrap().algorithm
-                    == ChargeMode::new(ChargeMode::SERVER_ENERGY))
-                && !c.reports_energy
-        {
+        let amount_is_energy_billing = self
+            .amount
+            .as_ref()
+            .is_some_and(|a| a.algorithm == ChargeMode::new(ChargeMode::SERVER_ENERGY));
+        if self.energy.is_some() || amount_is_energy_billing && !c.reports_energy {
             return Err(SchemeError("设备协议不支持电量上报".into()));
         }
-        if let Some(amount) = &self.amount {
-            if amount.algorithm != ChargeMode::new(ChargeMode::SERVER_ENERGY)
-                && !c.reports_segmented_power
-            {
-                return Err(SchemeError("设备协议不支持功率上报".into()));
-            }
+        if let Some(amount) = &self.amount
+            && amount.algorithm != ChargeMode::new(ChargeMode::SERVER_ENERGY)
+            && !c.reports_segmented_power
+        {
+            return Err(SchemeError("设备协议不支持功率上报".into()));
         }
         for p in &n.packages {
-            let mut minutes = p.minutes as u64;
+            let mut minutes = p.minutes;
             if p.mode == "amount" {
                 minutes = n.policy.max_minutes as u64;
             }

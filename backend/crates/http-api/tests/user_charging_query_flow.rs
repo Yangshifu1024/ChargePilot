@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 用户端充电查询族与扫码端点真库集成测试：历史/详情、充电中与快照回退、
 //! 曲线窗口、扫码解析与端口查询、旧形状停止。对照小程序 formatOrder /
 //! scan.js / curve.js 消费字段与旧版响应形状断言。
@@ -275,7 +283,7 @@ async fn create_paid_order(
     let result = chargepilot_mod_payment::apply::apply_payment(db, &payment)
         .await
         .expect("支付成功事务应成功");
-    assert_eq!(result.replayed, false);
+    assert!(!result.replayed);
     (
         result.charge_order_id,
         result.charge_order_no,

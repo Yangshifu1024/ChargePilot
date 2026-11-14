@@ -192,7 +192,7 @@ fn require(name: &str) -> anyhow::Result<String> {
     }
 }
 
-fn optional<'a>(name: &str, default: &'a str) -> String {
+fn optional(name: &str, default: &str) -> String {
     match std::env::var(name) {
         Ok(v) if !v.trim().is_empty() => v,
         _ => default.to_string(),

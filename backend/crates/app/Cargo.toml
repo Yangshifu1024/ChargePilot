@@ -29,3 +29,6 @@ chargepilot-mod-settlement.workspace = true
 chargepilot-platform.workspace = true
 chargepilot-storage.workspace = true
 chargepilot-http-api.workspace = true
+
+[lints]
+workspace = true

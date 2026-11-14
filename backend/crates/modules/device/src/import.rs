@@ -84,7 +84,7 @@ pub async fn import_devices(
     }
     // 忽略大小写排序（锁定顺序，防死锁）
     let mut devices = input.devices.clone();
-    devices.sort_by(|a, b| a.device_id.to_lowercase().cmp(&b.device_id.to_lowercase()));
+    devices.sort_by_key(|a| a.device_id.to_lowercase());
 
     let mut tx = pool.begin().await?;
     let actor_locked = repo::lock_actor_tx(&mut tx, actor.id)
@@ -160,7 +160,7 @@ pub async fn import_devices(
             "INSERT IGNORE INTO `device_import_identity` (`device_id`, `request_json`) VALUES (?, ?)",
         )
         .bind(&d.device_id)
-        .bind(serde_json::to_value(&d)?)
+        .bind(serde_json::to_value(d)?)
         .execute(&mut *tx)
         .await?
         .rows_affected();
@@ -171,7 +171,7 @@ pub async fn import_devices(
         .fetch_optional(&mut *tx)
         .await?;
         match (fresh, known) {
-            (0, Some(prev)) if prev != serde_json::to_value(&d)? => {
+            (0, Some(prev)) if prev != serde_json::to_value(d)? => {
                 return Err(DeviceError::Conflict(format!(
                     "设备 {} 与既有导入配置不一致",
                     d.device_id
@@ -195,13 +195,13 @@ pub async fn import_devices(
         .bind(&d.device_id)
         .fetch_optional(&mut *tx)
         .await?;
-        if let Some(prev) = prov_known {
-            if prev != provision_request {
-                return Err(DeviceError::Conflict(format!(
-                    "设备 {} 与既有开通配置不一致",
-                    d.device_id
-                )));
-            }
+        if let Some(prev) = prov_known
+            && prev != provision_request
+        {
+            return Err(DeviceError::Conflict(format!(
+                "设备 {} 与既有开通配置不一致",
+                d.device_id
+            )));
         }
         // device 台账（gateway 运行时读）：已存在则核对归属，不存在则创建 + 端口
         let device_row: Option<(u64, u64)> = sqlx::query_as(

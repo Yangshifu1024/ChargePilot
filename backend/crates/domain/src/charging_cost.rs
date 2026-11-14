@@ -131,7 +131,9 @@ pub fn cost(spec: &Spec, usage: &Usage) -> Result<Fee, BillingError> {
         return Ok(fee);
     }
     let end_full_minutes = start + Duration::minutes(minutes);
-    let mut samples: Vec<(DateTime<Utc>, DateTime<Utc>, u64, u32, bool)> = usage
+    // 采样点五元组（起止时刻、电量 Wh、功率 W、功率是否实测）——type_complexity 要求具名。
+    type SampleTuple = (DateTime<Utc>, DateTime<Utc>, u64, u32, bool);
+    let mut samples: Vec<SampleTuple> = usage
         .samples
         .iter()
         .map(|s| (s.start, s.end, s.energy_wh, s.power_w, s.power_known))
@@ -189,10 +191,14 @@ pub fn cost(spec: &Spec, usage: &Usage) -> Result<Fee, BillingError> {
         while at < *sample_end && at < end_full_minutes {
             let period = period_at(spec, at);
             let local = at.with_timezone(&bj);
-            let day_start = bj
+            // 北京无夏令时，当日零点恒存在。
+            let day_start = match bj
                 .with_ymd_and_hms(local.year(), local.month(), local.day(), 0, 0, 0)
                 .single()
-                .expect("当日零点合法");
+            {
+                Some(d) => d,
+                None => panic!("北京时区当日零点恒存在"),
+            };
             let boundary = (day_start + Duration::minutes(period.end_minute)).with_timezone(&Utc);
             let mut next = *sample_end;
             if next > end_full_minutes {
@@ -327,10 +333,10 @@ pub fn cutoff_meter(
             // 仅缩短功率计费区间，保留该段电量原值，不按时长估算电量。
             s.ended_at = cutoff;
         }
+        wh += s.energy_wh;
         segments.push(s);
-        wh += segments.last().unwrap().energy_wh;
     }
-    if segments.is_empty() || segments.last().unwrap().ended_at != cutoff {
+    if segments.last().map(|s| s.ended_at) != Some(cutoff) {
         return Err(BillingError::MeterReview);
     }
     let mut m2 = m.clone();

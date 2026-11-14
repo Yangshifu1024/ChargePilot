@@ -234,10 +234,10 @@ async fn list_orders(
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    if let (Some(f), Some(t)) = (from, to) {
-        if f > t {
-            return crate::respond(400, 1005, "开始时间不能晚于结束时间", &rid);
-        }
+    if let (Some(f), Some(t)) = (from, to)
+        && f > t
+    {
+        return crate::respond(400, 1005, "开始时间不能晚于结束时间", &rid);
     }
     let query = AdminOrderListQuery {
         page: page.page,
@@ -365,7 +365,7 @@ struct ProcessParams {
 fn parse_process_params(q: &ProcessParams, rid: &str) -> Result<(u64, u32), Response> {
     let after_id = match q.after_id.as_deref() {
         None => 0,
-        Some("") => return Err(crate::respond(400, 1005, "过程游标或分页参数无效", &rid)),
+        Some("") => return Err(crate::respond(400, 1005, "过程游标或分页参数无效", rid)),
         Some(raw) => match raw.parse::<u64>() {
             Ok(v) => v,
             Err(_) => {
@@ -373,14 +373,14 @@ fn parse_process_params(q: &ProcessParams, rid: &str) -> Result<(u64, u32), Resp
                     400,
                     1005,
                     "过程游标必须非负，limit 为 1–2000",
-                    &rid,
+                    rid,
                 ));
             }
         },
     };
     let limit = match q.limit.as_deref() {
         None => 1000,
-        Some("") => return Err(crate::respond(400, 1005, "过程游标或分页参数无效", &rid)),
+        Some("") => return Err(crate::respond(400, 1005, "过程游标或分页参数无效", rid)),
         Some(raw) => match raw.parse::<u64>() {
             Ok(v) if (1..=2000).contains(&v) => v as u32,
             _ => {
@@ -388,7 +388,7 @@ fn parse_process_params(q: &ProcessParams, rid: &str) -> Result<(u64, u32), Resp
                     400,
                     1005,
                     "过程游标必须非负，limit 为 1–2000",
-                    &rid,
+                    rid,
                 ));
             }
         },
@@ -540,10 +540,10 @@ async fn payment_orders(
             return crate::respond(400, 1005, "时间格式须为 ISO 8601，且在有效日期范围内", &rid);
         }
     }
-    if let (Some(f), Some(t)) = (from, to) {
-        if f > t {
-            return crate::respond(400, 1005, "开始时间不能晚于结束时间", &rid);
-        }
+    if let (Some(f), Some(t)) = (from, to)
+        && f > t
+    {
+        return crate::respond(400, 1005, "开始时间不能晚于结束时间", &rid);
     }
     let query = PaymentOrderListQuery {
         page: page.page,

@@ -7,3 +7,6 @@ edition.workspace = true
 sqlx.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
+
+[lints]
+workspace = true

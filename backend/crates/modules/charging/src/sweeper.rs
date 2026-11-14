@@ -41,7 +41,7 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
         let _refunding = chargepilot_domain::charging_state::PaidOrder {
             id: chargepilot_domain::charging_state::OrderId(id),
         }
-        .mark_start_rejected(&reason);
+        .mark_start_rejected(reason);
         let updated = sqlx::query(
             "UPDATE `charge_order` SET `status` = 'refunding', `failure_reason` = ? \
              WHERE `id` = ? AND `order_no` = ? AND `status` = 'paid'",
@@ -91,7 +91,7 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
                     .bind(id as i64)
                     .fetch_one(&mut *tx)
                     .await?;
-            let _ = chargepilot_mod_order::release_port_tx(&mut *tx, &device.0, device.1, id).await;
+            let _ = chargepilot_mod_order::release_port_tx(&mut tx, &device.0, device.1, id).await;
             sqlx::query(
                 "UPDATE `charge_payment_intent` SET `status` = ? \
                  WHERE `charge_order_id` = ? AND `status` = ?",
@@ -104,7 +104,7 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
             let cleaned = command_id.replace('-', "");
             let event_id = format!("T{}", &cleaned[..cleaned.len().min(32)]);
             chargepilot_mod_order::append_domain_event_tx(
-                &mut *tx,
+                &mut tx,
                 &event_id,
                 "gateway",
                 "charge_start_timeout",

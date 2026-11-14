@@ -143,7 +143,9 @@ pub async fn review_invoice(
         return Err(InvoiceAdminError::Conflict);
     }
     // 双审进度表：awaiting_second 表示已首审待复核；无记录表示尚未有任何审核。
-    let review: Option<(String, Option<u64>, Option<u64>, Option<String>)> = sqlx::query_as(
+    // 投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type InvoiceReviewRow = (String, Option<u64>, Option<u64>, Option<String>);
+    let review: Option<InvoiceReviewRow> = sqlx::query_as(
         "SELECT CAST(`review_status` AS CHAR) AS `review_status`, \
                 `first_reviewer_id`, `second_reviewer_id`, `invoice_url` \
          FROM `invoice_admin_review` WHERE `invoice_request_id` = ?",
@@ -157,10 +159,10 @@ pub async fn review_invoice(
     });
     if !approve {
         // 尚无审核记录或已首审待复核时允许单人驳回。
-        if let Some((review_status, _, _, _)) = &review {
-            if review_status != "awaiting_second" {
-                return Err(InvoiceAdminError::Conflict);
-            }
+        if let Some((review_status, _, _, _)) = &review
+            && review_status != "awaiting_second"
+        {
+            return Err(InvoiceAdminError::Conflict);
         }
         sqlx::query(
             "INSERT INTO `invoice_admin_review` \

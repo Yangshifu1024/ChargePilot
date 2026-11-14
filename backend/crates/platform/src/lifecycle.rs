@@ -60,7 +60,10 @@ impl TaskManager {
     /// 当前取消令牌（spawn 的任务持它响应停机）。
     pub fn token(&self) -> CancelToken {
         CancelToken {
-            rx: self.tx.as_ref().expect("manager 未关闭").subscribe(),
+            rx: match self.tx.as_ref() {
+                Some(tx) => tx.subscribe(),
+                None => panic!("TaskManager 已关闭后再取 token()"),
+            },
         }
     }
 

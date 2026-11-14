@@ -51,7 +51,7 @@ fn paging(q: &Paging) -> (u32, u32) {
 fn bill_id_of(raw: &str, rid: &str) -> Result<u64, Response> {
     match raw.parse::<u64>() {
         Ok(id) if id > 0 => Ok(id),
-        _ => Err(crate::respond(400, 1005, "账单编号无效", &rid)),
+        _ => Err(crate::respond(400, 1005, "账单编号无效", rid)),
     }
 }
 

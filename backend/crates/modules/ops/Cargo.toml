@@ -14,3 +14,6 @@ chrono.workspace = true
 redis.workspace = true
 tracing.workspace = true
 chargepilot-platform.workspace = true
+
+[lints]
+workspace = true

@@ -268,7 +268,8 @@ impl CheckoutService {
         user_id: u64,
         input: &CheckoutInput,
     ) -> Result<Option<FrozenIntent>, CheckoutError> {
-        let row: Option<(
+        // 意图冻结投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+        type FrozenIntentRow = (
             String,
             String,
             u64,
@@ -285,7 +286,8 @@ impl CheckoutService {
             u64,
             chrono::DateTime<chrono::Utc>,
             serde_json::Value,
-        )> = sqlx::query_as(
+        );
+        let row: Option<FrozenIntentRow> = sqlx::query_as(
             "SELECT CAST(i.`intent_id` AS CHAR), i.`merchant_order_no`, i.`station_id`, i.`device_id`, \
                     i.`port_no`, i.`offer_id`, i.`discount_cents`, i.`electric_cents`, \
                     i.`service_cents`, i.`total_cents`, i.`estimated_minutes`, \

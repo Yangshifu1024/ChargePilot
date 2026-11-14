@@ -110,10 +110,10 @@ impl RechargeService {
             }
             Err(e) => return Err(e),
         };
-        if let Some(row) = account_row {
-            if row.status != super::AccountStatus::Active {
-                return Err(WalletError::Frozen);
-            }
+        if let Some(row) = account_row
+            && row.status != super::AccountStatus::Active
+        {
+            return Err(WalletError::Frozen);
         }
         // 幂等重放：同请求号读取既有申请，归属与金额一致则复用支付单。
         let prior: Option<(u64, i64, u64)> = sqlx::query_as(

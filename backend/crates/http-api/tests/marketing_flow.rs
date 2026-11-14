@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 阶段 05 批 2 主缝集成测试：优惠券建券 → 人工发放（幂等）→ 持券视图 →
 //! 过期/停用不参与 → 发放统计。发放条件与请求重放断言走 HTTP（spec 测试决策）。
 

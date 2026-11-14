@@ -141,6 +141,8 @@ pub enum WalletError {
 }
 
 impl From<sqlx::Error> for WalletError {
+    // sqlx::Error 标记 non_exhaustive，通配不可避免（wildcard_enum_match_arm）。
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn from(e: sqlx::Error) -> Self {
         match &e {
             sqlx::Error::RowNotFound => WalletError::NotFound,

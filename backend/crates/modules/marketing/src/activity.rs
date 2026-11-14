@@ -355,10 +355,10 @@ async fn save_grant(
     let result = match inserted {
         Ok(r) => r,
         Err(e) => {
-            if let sqlx::Error::Database(db) = &e {
-                if db.code().as_deref() == Some("23000") {
-                    return Ok(true);
-                }
+            if let sqlx::Error::Database(db) = &e
+                && db.code().as_deref() == Some("23000")
+            {
+                return Ok(true);
             }
             return Err(e.into());
         }
@@ -381,11 +381,10 @@ async fn save_grant(
     {
         Ok(_) => Ok(false),
         Err(e) => {
-            if let sqlx::Error::Database(db) = &e {
-                if db.code().as_deref() == Some("23000") {
+            if let sqlx::Error::Database(db) = &e
+                && db.code().as_deref() == Some("23000") {
                     return Ok(true);
                 }
-            }
             Err(e.into())
         }
     }
@@ -513,33 +512,33 @@ async fn grant_from_rule(
         return Ok(Some(out));
     }
     // 邀请人奖励：券不可用或份数用尽只跳过邀请人部分，受益人券保持发放。
-    if rule.trigger_type == chargepilot_domain::marketing::TriggerType::INVITE_REWARD {
-        if let Some(inviter_coupon_id) = rule.inviter_coupon_id.filter(|v| *v > 0) {
-            let Some(inviter_coupon) = coupons.get(&inviter_coupon_id) else {
-                return Ok(Some(out));
-            };
-            if !usable_coupon(inviter_coupon, event.now) {
-                return Ok(Some(out));
-            }
-            let n = count_user_grants(c, inviter_coupon_id, event.inviter_id).await?;
-            if n >= allowance {
-                return Ok(Some(out));
-            }
-            let inviter_event_id =
-                activity_event_id(rule.id, event.inviter_id, &event.event_key, &["inviter"]);
-            let expires_at = activity_expiry(rule, inviter_coupon, event.now);
-            let _ = save_grant(
-                c,
-                inviter_coupon_id,
-                event.inviter_id,
-                GrantSource::INVITE_REWARD,
-                expires_at,
-                &inviter_event_id,
-                false,
-            )
-            .await?;
-            out.inviter_rewarded = true;
+    if rule.trigger_type == chargepilot_domain::marketing::TriggerType::INVITE_REWARD
+        && let Some(inviter_coupon_id) = rule.inviter_coupon_id.filter(|v| *v > 0)
+    {
+        let Some(inviter_coupon) = coupons.get(&inviter_coupon_id) else {
+            return Ok(Some(out));
+        };
+        if !usable_coupon(inviter_coupon, event.now) {
+            return Ok(Some(out));
         }
+        let n = count_user_grants(c, inviter_coupon_id, event.inviter_id).await?;
+        if n >= allowance {
+            return Ok(Some(out));
+        }
+        let inviter_event_id =
+            activity_event_id(rule.id, event.inviter_id, &event.event_key, &["inviter"]);
+        let expires_at = activity_expiry(rule, inviter_coupon, event.now);
+        let _ = save_grant(
+            c,
+            inviter_coupon_id,
+            event.inviter_id,
+            GrantSource::INVITE_REWARD,
+            expires_at,
+            &inviter_event_id,
+            false,
+        )
+        .await?;
+        out.inviter_rewarded = true;
     }
     Ok(Some(out))
 }
@@ -929,10 +928,10 @@ async fn require_activity_coupons(
     if !usable.get(&coupon_id).copied().unwrap_or(false) {
         return Err(CouponError::Input("活动券不存在或已停用".into()));
     }
-    if let Some(v) = inviter_coupon_id.filter(|v| *v != 0) {
-        if !usable.get(&v).copied().unwrap_or(false) {
-            return Err(CouponError::Input("邀请人券不存在或已停用".into()));
-        }
+    if let Some(v) = inviter_coupon_id.filter(|v| *v != 0)
+        && !usable.get(&v).copied().unwrap_or(false)
+    {
+        return Err(CouponError::Input("邀请人券不存在或已停用".into()));
     }
     Ok(())
 }

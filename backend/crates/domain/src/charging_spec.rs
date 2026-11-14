@@ -9,7 +9,10 @@ use serde::{Deserialize, Serialize};
 
 /// 北京时区（固定 +8，旧版 time.FixedZone）。
 pub fn beijing() -> FixedOffset {
-    FixedOffset::east_opt(8 * 3600).expect("北京时区偏移固定")
+    match FixedOffset::east_opt(8 * 3600) {
+        Some(o) => o,
+        None => panic!("北京时区偏移固定为 +8"),
+    }
 }
 
 /// 单价上限（旧版 maxRateCents）：所有单价与封顶的合法上界。
@@ -205,7 +208,7 @@ pub struct Tier {
 }
 
 /// 一天内一个费率时段：开始分钟取上一时段结束，第一段从零点起。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Period {
     #[serde(default, skip_serializing_if = "is_zero_i64")]
     pub service_cents: i64,
@@ -217,17 +220,6 @@ pub struct Period {
     /// 该时段适用的功率阶梯；电量计价方式下为空。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tiers: Vec<Tier>,
-}
-
-impl Default for Period {
-    fn default() -> Self {
-        Period {
-            service_cents: 0,
-            end_minute: 0,
-            electric_cents: 0,
-            tiers: Vec::new(),
-        }
-    }
 }
 
 /// 服务端电价配置：算法 + 全天时段。
@@ -424,10 +416,10 @@ pub fn validate_spec(spec: &Spec) -> Result<(), BillingError> {
         // 刷卡时长使用 uint16 分钟字段，超出范围时拒绝，不截断数值。
         return Err(BillingError::InvalidPricing);
     }
-    if let Some(tc) = &spec.time_charge {
-        if tc.max_minutes > 4320 || tc.float_seconds > 10800 || tc.float_power_deci_watts > 500 {
-            return Err(BillingError::InvalidPricing);
-        }
+    if let Some(tc) = &spec.time_charge
+        && (tc.max_minutes > 4320 || tc.float_seconds > 10800 || tc.float_power_deci_watts > 500)
+    {
+        return Err(BillingError::InvalidPricing);
     }
     if let Some(service) = &spec.service {
         if !service.basis.valid() {
@@ -513,7 +505,10 @@ pub fn spec_is_uniform_over(spec: &Spec, start: DateTime<Utc>, end: DateTime<Utc
     if basis_is_relevant {
         return true;
     }
-    let Some(schedule) = compile_periods(&spec.electric.as_ref().unwrap().periods) else {
+    let Some(electric) = spec.electric.as_ref() else {
+        return true;
+    };
+    let Some(schedule) = compile_periods(&electric.periods) else {
         return false;
     };
     let bj = beijing();

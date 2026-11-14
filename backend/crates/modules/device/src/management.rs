@@ -60,10 +60,10 @@ pub async fn list(
     status: Option<&str>,
     keyword: Option<&str>,
 ) -> StationResult<(Vec<DeviceRow>, i64)> {
-    if let Some(s) = status {
-        if !matches!(s, "enabled" | "disabled" | "retired" | "fault") {
-            return Err(DeviceError::Input("设备状态无效".into()));
-        }
+    if let Some(s) = status
+        && !matches!(s, "enabled" | "disabled" | "retired" | "fault")
+    {
+        return Err(DeviceError::Input("设备状态无效".into()));
     }
     let kw = format!(
         "%{}%",

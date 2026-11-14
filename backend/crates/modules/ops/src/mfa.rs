@@ -465,7 +465,10 @@ async fn apply_locked(
             if !account.mfa_enabled || account.mfa_secret.is_none() {
                 return Err(MfaError::State);
             }
-            let secret = account.mfa_secret.clone().expect("已判定存在");
+            let secret = match account.mfa_secret.clone() {
+                Some(s) => s,
+                None => panic!("mfa_secret 已判定存在"),
+            };
             let Some(step) = verify_with_step(&secret, code, now.timestamp()) else {
                 return Err(MfaError::Proof);
             };
@@ -520,6 +523,8 @@ fn to_admin_account(a: &MfaAccount) -> super::AdminAccount {
 
 /// 管理端 MFA 重置（旧版 AccountService.MFA）：不能操作本人；确认密钥须与
 /// 锁定账号后读出的密钥一致。登记响应含当前验证码；审计不保存任何材料。
+/// MFA 管理端重置参数即旧版契约字段，不引入参数对象。
+#[allow(clippy::too_many_arguments)]
 pub async fn managed(
     pool: &MySqlPool,
     actor: &Profile,
@@ -601,7 +606,10 @@ pub async fn managed(
             {
                 return Err(MfaError::InputMsg("验证码校验失败".into()));
             }
-            let step = step.expect("已判定存在");
+            let step = match step {
+                Some(s) => s,
+                None => panic!("验证步长已判定存在"),
+            };
             consume_totp_step_tx(&mut *c, &account, step)
                 .await
                 .map_err(|_| MfaError::InputMsg("验证码校验失败".into()))?;

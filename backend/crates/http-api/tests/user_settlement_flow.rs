@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 用户端账单与发票流集成测试：计费入账同事务签发账单（生产接线验证）、
 //! 列表/详情/已读幂等、开票申请幂等与一单一份、越权 404（契约对齐旧版）。
 //! 数据准备用 SQL 直插 + settlement 的 process_job 真实入账（断言账单由
@@ -182,8 +190,8 @@ struct Seed {
     device_id: String,
 }
 
-/// 种子：一笔完成充电的订单（paid 支付单 + completed 订单 + 计费快照 + 结束计量
-/// + 计费任务）。用户为已登录的真实用户（不插 user 行）。
+/// 种子：一笔完成充电的订单（paid 支付单与 completed 订单，附计费快照、
+/// 结束计量与计费任务）。用户为已登录的真实用户（不插 user 行）。
 /// 快照形态与真实 checkout 冻结一致：rule.spec 为套餐引擎规格，offer 携带 station_id。
 #[allow(clippy::too_many_arguments)]
 async fn seed_completed_charge(

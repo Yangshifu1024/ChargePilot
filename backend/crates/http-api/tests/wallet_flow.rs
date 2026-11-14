@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 阶段 04 批 2 主缝集成测试：钱包退款申请（预占拆单）、频次冻结、风控审核/解冻全链。
 //! 数据准备用 SQL 直插 + 服务级入账函数（credit_recharge_in_tx，真库事务）；
 //! 断言 HTTP 响应与库中资金行（spec 测试决策）。
@@ -467,7 +475,7 @@ async fn wallet_refund_flow() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(
-        body["data"]["items"].as_array().unwrap().len() >= 1,
+        !body["data"]["items"].as_array().unwrap().is_empty(),
         "风控列表应有记录"
     );
     // 客服（仅 review 权限）也在列表可见；解冻端点则拒

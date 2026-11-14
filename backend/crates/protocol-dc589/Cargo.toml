@@ -14,3 +14,6 @@ anyhow = { workspace = true }
 [dev-dependencies]
 chargepilot-gateway-runtime = { path = "../gateway-runtime" }
 tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true

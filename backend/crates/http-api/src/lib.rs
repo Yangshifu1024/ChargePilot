@@ -88,10 +88,10 @@ pub async fn build_router(
         }
     }
     // H5 静态产物：hash 路由，资源直出即可（/h5/ 入口由 index.html 承载）。
-    if let Ok(h5_dir) = std::env::var("H5_STATIC_DIR") {
-        if !h5_dir.is_empty() {
-            app = app.nest_service("/h5", tower_http::services::ServeDir::new(h5_dir));
-        }
+    if let Ok(h5_dir) = std::env::var("H5_STATIC_DIR")
+        && !h5_dir.is_empty()
+    {
+        app = app.nest_service("/h5", tower_http::services::ServeDir::new(h5_dir));
     }
     app
 }
@@ -202,7 +202,8 @@ pub fn respond(status: u16, code: i64, message: &str, request_id: &str) -> Respo
     };
     let _ = Code::BadRequest; // 保持错误码模块可见
     let mut resp = (
-        axum::http::StatusCode::from_u16(status).unwrap(),
+        axum::http::StatusCode::from_u16(status)
+            .unwrap_or_else(|_| panic!("契约内状态码非法: {status}")),
         axum::Json(body),
     )
         .into_response();

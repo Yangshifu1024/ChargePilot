@@ -8,7 +8,7 @@ pub type Pool = deadpool_redis::Pool;
 pub fn open_pool(redis_url: &str, max_size: usize) -> anyhow::Result<Pool> {
     let cfg = PoolConfig::from_url(redis_url);
     let pool = cfg.create_pool(Some(Runtime::Tokio1))?;
-    let _ = pool.resize(max_size);
+    pool.resize(max_size);
     Ok(pool)
 }
 

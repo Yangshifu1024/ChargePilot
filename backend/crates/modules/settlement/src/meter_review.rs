@@ -2,7 +2,7 @@
 //! 计费任务 manual_review 后的两条人工出口：
 //! 1. 修正计量分段（双人审核，批准后重排队计费重算）；
 //! 2. 直接登记最终金额（合计不超过套餐价格，重排队按人工金额入账）。
-//! 权限与审计由 HTTP 层负责；首审人实时权限由调用方传入。
+//!    权限与审计由 HTTP 层负责；首审人实时权限由调用方传入。
 
 use chargepilot_domain::charging_actual::price_actual;
 use chargepilot_domain::charging_actual::{ActualMeter, EndMeter, Rule};
@@ -209,10 +209,10 @@ pub async fn list_manual_fee_reviews(
 
 /// 把对象内的 user_id 数字字段转成字符串（旧版 DecimalizeIDField 语义）。
 fn decimalize_user_id(mut v: serde_json::Value) -> serde_json::Value {
-    if let Some(id) = v.get("user_id").and_then(|x| x.as_u64()) {
-        if let Some(obj) = v.as_object_mut() {
-            obj.insert("user_id".into(), serde_json::Value::String(id.to_string()));
-        }
+    if let Some(id) = v.get("user_id").and_then(|x| x.as_u64())
+        && let Some(obj) = v.as_object_mut()
+    {
+        obj.insert("user_id".into(), serde_json::Value::String(id.to_string()));
     }
     v
 }

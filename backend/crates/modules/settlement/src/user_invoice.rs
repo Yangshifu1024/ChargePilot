@@ -158,7 +158,8 @@ pub async fn apply_invoice(
         return Err(UserInvoiceError::Unfinished);
     }
     // 幂等重放：同发票号必须复用相同身份和内容（旧版 ApplyInvoice 前半）。
-    let existing: Option<(
+    // 发票幂等投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type InvoiceExistingRow = (
         u64,
         String,
         String,
@@ -168,7 +169,8 @@ pub async fn apply_invoice(
         String,
         String,
         String,
-    )> = sqlx::query_as(
+    );
+    let existing: Option<InvoiceExistingRow> = sqlx::query_as(
         "SELECT `id`, CAST(`user_id` AS CHAR), CAST(`biz_type` AS CHAR), \
              CAST(`biz_id` AS CHAR), `total_cents`, CAST(`invoice_type` AS CHAR), \
              CAST(`title` AS CHAR), COALESCE(CAST(`tax_no` AS CHAR), ''), \
@@ -269,7 +271,8 @@ pub async fn list_user_invoices(
     .bind(user_id as i64)
     .fetch_one(pool)
     .await?;
-    let rows: Vec<(
+    // 发票列表投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type InvoiceListRow = (
         String,         // CAST(id AS CHAR)
         String,         // invoice_no
         String,         // biz_type
@@ -283,7 +286,8 @@ pub async fn list_user_invoices(
         Option<String>, // reject_reason
         Option<String>, // invoice_url
         String,         // created_at
-    )> = sqlx::query_as(
+    );
+    let rows: Vec<InvoiceListRow> = sqlx::query_as(
         "SELECT CAST(`id` AS CHAR), CAST(`invoice_no` AS CHAR), CAST(`biz_type` AS CHAR), \
          CAST(`biz_id` AS CHAR), `total_cents`, CAST(`invoice_type` AS CHAR), \
          CAST(`title` AS CHAR), CAST(`tax_no` AS CHAR), CAST(`email` AS CHAR), \

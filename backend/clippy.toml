@@ -1,0 +1,11 @@
+# 工作区 clippy 配置（二期票 03/16）。
+# 测试代码允许 unwrap/expect（生产代码由 workspace.lints 的 unwrap_used/expect_used=deny 把守）；
+# 票 16 将在此追加 disallowed-methods（std::env::var 直读禁令及两类登记豁免）。
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+
+disallowed-methods = []
+
+# ApiError 按契约携带字段级错误数组与内部原因（code+message+fields+cause），
+# HTTP 处理器调用后立即转响应，不 Box（result_large_err 阈值上调为工程决策）。
+large-error-threshold = 512

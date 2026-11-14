@@ -9,6 +9,8 @@ use sqlx::MySqlPool;
 pub const ACCESS_TTL_SECS: u64 = chargepilot_platform::jwt::ADMIN_TTL_SECS;
 
 /// 登录结果：MFA 账号返回挑战，非 MFA 账号返回完整回执。
+/// 每次登录构造后立即序列化返回，变体尺寸差无热路径影响（large_enum_variant）。
+#[allow(clippy::large_enum_variant)]
 pub enum LoginOutcome {
     Challenge(String),
     Access(AccessReply),

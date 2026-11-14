@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 阶段 02 主缝集成测试：后台登录链路（真 MySQL + 真 Redis）。
 //! 覆盖：bootstrap、密码登录、MFA 挑战/校验/重放拒绝、会话轮换、实时鉴权、错误映射。
 

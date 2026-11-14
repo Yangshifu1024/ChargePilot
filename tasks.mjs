@@ -29,9 +29,16 @@ const tasks = {
   test() { run('cargo', ['test', '--workspace']); },
   fmt() { run('cargo', ['fmt', '--all']); },
   'fmt-check'() { run('cargo', ['fmt', '--all', '--', '--check']); },
+  // 静态门禁（二期票 03）：workspace.lints 让 rustc 警告即错误，clippy 失败级
+  // 三组（correctness/suspicious/perf）+ unwrap/expect/wildcard 禁令在此把守。
+  clippy() { run('cargo', ['clippy', '--workspace', '--all-targets']); },
+  // 前后端契约对账（纯静态：扫前端调用点与后端路由注册，免服务）。
+  'api-contract'() { run('python3', ['scripts/ops/check-api-contract.py'], { cwd: '.' }); },
   check() {
     tasks['fmt-check']();
+    tasks.clippy();
     tasks.test();
+    tasks['api-contract']();
   },
   migrate() { run('cargo', ['run', '-p', 'chargepilot-app', '--', 'migrate'], { env: envOf() }); },
   // 真库集成测试（票 01，.scratch/engineering-refactor/issues/01）：

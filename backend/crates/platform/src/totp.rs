@@ -5,7 +5,10 @@ use hmac::{Hmac, Mac};
 use sha1::Sha1;
 
 fn hotp(secret: &[u8], counter: u64) -> u32 {
-    let mut mac = Hmac::<Sha1>::new_from_slice(secret).expect("HMAC 接受任意长度密钥");
+    let mut mac = match Hmac::<Sha1>::new_from_slice(secret) {
+        Ok(m) => m,
+        Err(_) => panic!("TOTP 密钥不能为空"),
+    };
     mac.update(&counter.to_be_bytes());
     let digest = mac.finalize().into_bytes();
     let offset = (digest[19] & 0x0f) as usize;

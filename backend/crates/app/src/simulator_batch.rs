@@ -184,9 +184,12 @@ async fn device_task(
         let Ok(reg) = device::build_registration(&identity) else {
             return;
         };
-        if write_frame(&writer, &frame::encode(&reg).unwrap())
-            .await
-            .is_err()
+        if write_frame(
+            &writer,
+            &frame::encode(&reg).unwrap_or_else(|e| panic!("黄金注册帧编码失败: {e}")),
+        )
+        .await
+        .is_err()
         {
             stats.conn_errors.fetch_add(1, Ordering::Relaxed);
             tokio::time::sleep(Duration::from_millis(rng.random_range(500..2000))).await;
@@ -375,9 +378,12 @@ async fn send_heartbeat(
         })
     };
     let Some(frame) = frame else { return };
-    if write_frame(writer, &frame::encode(&frame).unwrap())
-        .await
-        .is_ok()
+    if write_frame(
+        writer,
+        &frame::encode(&frame).unwrap_or_else(|e| panic!("帧编码失败: {e}")),
+    )
+    .await
+    .is_ok()
     {
         stats.frames_sent.fetch_add(1, Ordering::Relaxed);
     }
@@ -407,9 +413,12 @@ async fn send_charge_end(
         return;
     };
     f.session = session;
-    if write_frame(writer, &frame::encode(&f).unwrap())
-        .await
-        .is_ok()
+    if write_frame(
+        writer,
+        &frame::encode(&f).unwrap_or_else(|e| panic!("帧编码失败: {e}")),
+    )
+    .await
+    .is_ok()
     {
         stats.end_frames_sent.fetch_add(1, Ordering::Relaxed);
         stats.frames_sent.fetch_add(1, Ordering::Relaxed);
@@ -440,9 +449,12 @@ async fn handle_inbound(
     }
     let mut reply = device::build_command_result(reply_command, 0, 1).ok()?;
     reply.session = session;
-    if write_frame(writer, &frame::encode(&reply).unwrap())
-        .await
-        .is_ok()
+    if write_frame(
+        writer,
+        &frame::encode(&reply).unwrap_or_else(|e| panic!("回执帧编码失败: {e}")),
+    )
+    .await
+    .is_ok()
     {
         stats.acks_sent.fetch_add(1, Ordering::Relaxed);
         stats.frames_sent.fetch_add(1, Ordering::Relaxed);

@@ -75,7 +75,7 @@ pub async fn lock_wallet_account_tx(
         balance_cents: balance,
         frozen_cents: frozen,
         status: super::AccountStatus::parse(&status).unwrap_or(super::AccountStatus::Active),
-        version: version as u64,
+        version,
     })
 }
 

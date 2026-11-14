@@ -187,10 +187,10 @@ pub async fn list(
     keyword: Option<&str>,
     status: Option<&str>,
 ) -> StationResult<(Vec<Station>, i64)> {
-    if let Some(s) = status {
-        if !matches!(s, "active" | "disabled" | "construction") {
-            return Err(DeviceError::Input("站点状态无效".into()));
-        }
+    if let Some(s) = status
+        && !matches!(s, "active" | "disabled" | "construction")
+    {
+        return Err(DeviceError::Input("站点状态无效".into()));
     }
     let kw = format!(
         "%{}%",

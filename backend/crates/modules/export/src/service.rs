@@ -159,21 +159,12 @@ pub(crate) fn task_from(t: TaskTup) -> ExportTaskRow {
 }
 
 /// 导出服务配置（旧版 ExportService 的配置部分）。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ExportConfig {
     /// 导出根目录；空值使用系统临时目录下的 chargepilot-exports。
     pub export_dir: String,
     /// 单次上限，非正数默认 50000。
     pub max_rows: i64,
-}
-
-impl Default for ExportConfig {
-    fn default() -> Self {
-        Self {
-            export_dir: String::new(),
-            max_rows: 0,
-        }
-    }
 }
 
 impl ExportConfig {
@@ -500,27 +491,25 @@ pub async fn create_export(
     let needs_generate = row.status == ExportStatus::PENDING || row.status == ExportStatus::RUNNING;
     tx.commit().await?;
 
-    if needs_generate {
-        if let Err(e) = generate(pool, &task_no, &p, config).await {
-            // 生成失败已在库中标记 failed：HTTP 仍返回 200 + failed 结果
-            // （旧版 generationFailure 语义）。
-            if matches!(e, ExportError::Storage(_)) {
-                let row = find_by_no(pool, &task_no).await?;
-                let failed = row.status == ExportStatus::FAILED;
-                return Ok(CreateResult {
-                    task_no,
-                    status: row.status,
-                    row_count: row.row_count,
-                    expires_at: row.expires_at,
-                    message: if failed {
-                        "导出失败，请稍后重试".into()
-                    } else {
-                        String::new()
-                    },
-                });
-            }
-            return Err(e);
+    if needs_generate && let Err(e) = generate(pool, &task_no, &p, config).await {
+        // 生成失败已在库中标记 failed：HTTP 仍返回 200 + failed 结果
+        // （旧版 generationFailure 语义）。
+        if matches!(e, ExportError::Storage(_)) {
+            let row = find_by_no(pool, &task_no).await?;
+            let failed = row.status == ExportStatus::FAILED;
+            return Ok(CreateResult {
+                task_no,
+                status: row.status,
+                row_count: row.row_count,
+                expires_at: row.expires_at,
+                message: if failed {
+                    "导出失败，请稍后重试".into()
+                } else {
+                    String::new()
+                },
+            });
         }
+        return Err(e);
     }
     let row = find_by_no(pool, &task_no).await?;
     Ok(CreateResult {

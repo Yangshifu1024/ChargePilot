@@ -62,7 +62,8 @@ pub async fn list(
     .bind(q.to)
     .fetch_one(pool)
     .await?;
-    let rows: Vec<(
+    // 审计行投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type AuditRow = (
         u64,
         u64,
         Option<String>,
@@ -75,7 +76,8 @@ pub async fn list(
         Option<String>,
         Option<String>,
         Option<String>,
-    )> = sqlx::query_as(
+    );
+    let rows: Vec<AuditRow> = sqlx::query_as(
         "SELECT `id`, `actor_id`, `actor_name`, `module`, `action`, \
                 `target_type`, `target_id`, `request_id`, `client_ip`, \
                 CAST(`before_json` AS CHAR) AS `before_json`, \

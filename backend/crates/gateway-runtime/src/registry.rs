@@ -35,7 +35,7 @@ impl chargepilot_protocol::SessionRouter for SessionRegistry {
         on_replaced: Arc<dyn Fn() + Send + Sync>,
     ) -> BoxFut<bool> {
         let kicked = {
-            let mut map = self.inner.lock().expect("会话表锁");
+            let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let kicked = match map.insert(
                 device_id.to_string(),
                 Entry {
@@ -70,18 +70,18 @@ impl chargepilot_protocol::SessionRouter for SessionRegistry {
         let found = self
             .inner
             .lock()
-            .expect("会话表锁")
+            .unwrap_or_else(|e| e.into_inner())
             .get(device_id)
             .map(|e| e.session.clone());
         Box::pin(async move { found })
     }
 
     fn detach(&self, device_id: &str, session: &Arc<dyn DeviceSession>) -> BoxFut<()> {
-        let mut map = self.inner.lock().expect("会话表锁");
-        if let Some(entry) = map.get(device_id) {
-            if Arc::ptr_eq(&entry.session, session) {
-                map.remove(device_id);
-            }
+        let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = map.get(device_id)
+            && Arc::ptr_eq(&entry.session, session)
+        {
+            map.remove(device_id);
         }
         metrics::gauge!("gateway_online_sessions").set(map.len() as f64);
         Box::pin(async {})

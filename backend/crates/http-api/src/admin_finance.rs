@@ -502,10 +502,10 @@ async fn decide_meter(
     };
     let reason = input.reason.trim().to_string();
     // review_id 必填、approve 必须显式提交（缺失与 false 用 Option 区分）、驳回必填依据。
-    if input.review_id == 0
-        || input.approve.is_none()
-        || (!input.approve.unwrap() && !valid_text(&reason, 500))
-    {
+    let Some(approve) = input.approve else {
+        return crate::respond(400, 1005, "请提供审核记录、决定和拒绝依据", &rid);
+    };
+    if input.review_id == 0 || (!approve && !valid_text(&reason, 500)) {
         return crate::respond(400, 1005, "请提供审核记录、决定和拒绝依据", &rid);
     }
     let ip = real_ip(&headers);
@@ -520,14 +520,14 @@ async fn decide_meter(
         guard.profile.id,
         id,
         input.review_id,
-        input.approve.unwrap(),
+        approve,
         &reason,
         // 首审人实时权限由模块内事务一致读取（旧版 LookupReviewer 语义）。
         None,
     )
     .await
     {
-        Ok(()) => httpx::ok(json!({ "approved": input.approve.unwrap() }), &rid),
+        Ok(()) => httpx::ok(json!({ "approved": approve }), &rid),
         Err(e) => meter_error(e, &rid),
     }
 }
@@ -973,6 +973,8 @@ fn decode_strict<T: serde::de::DeserializeOwned>(body: &[u8]) -> Option<T> {
 }
 
 /// 风控错误映射：预占业务冲突 → 后台冲突契约（旧版 riskFailure）。
+/// 钱包错误兜底分支须覆盖后续新增变体（wildcard_enum_match_arm）。
+#[allow(clippy::wildcard_enum_match_arm)]
 fn risk_error(e: chargepilot_mod_wallet::WalletError, rid: &str) -> Response {
     use chargepilot_mod_wallet::WalletError as E;
     match &e {

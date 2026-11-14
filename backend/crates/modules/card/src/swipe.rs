@@ -268,7 +268,7 @@ impl SwipeService {
                     CAST(`operation_id` AS CHAR) AS `operation_id` \
              FROM `card_operation` WHERE `device_id` = ? AND `event_id` = ? FOR SHARE",
         )
-        .bind(&resolved_device_id(&port))
+        .bind(resolved_device_id(&port))
         .bind(&input.event_id)
         .fetch_optional(&mut *c)
         .await?;
@@ -344,13 +344,15 @@ impl SwipeService {
                 // 续购：沿用冻结套餐，不读当前价格。
                 let package: chargepilot_domain::charging_scheme::Package =
                     serde_json::from_str(&package_json).map_err(|_| SwipeError::CardDeclined)?;
-                let order: Option<(
+                // 刷卡订单投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+                type SwipeOrderRow = (
                     String,
                     u64,
                     Option<chrono::DateTime<chrono::Utc>>,
                     String,
                     Option<u64>,
-                )> = sqlx::query_as(
+                );
+                let order: Option<SwipeOrderRow> = sqlx::query_as(
                     "SELECT `order_no`, `user_id`, `started_at`, `status`, `payment_order_id` \
                              FROM `charge_order` WHERE `id` = ? FOR UPDATE",
                 )
@@ -692,10 +694,10 @@ async fn start_purchase_in_tx(
     .execute(&mut *c)
     .await;
     if let Err(e) = inserted {
-        if let sqlx::Error::Database(db) = &e {
-            if db.code().as_deref() == Some("23000") {
-                return Err(SwipeError::CardDeclined);
-            }
+        if let sqlx::Error::Database(db) = &e
+            && db.code().as_deref() == Some("23000")
+        {
+            return Err(SwipeError::CardDeclined);
         }
         return Err(SwipeError::Persist(e.to_string()));
     }
@@ -769,6 +771,8 @@ fn resolved_device_id(port: &chargepilot_mod_payment::scan::ScanPort) -> String 
 }
 
 /// 钱包错误映射（旧版 mapWalletMoveError）。
+// 钱包错误通配：非余额/未激活统一进存储错误（wildcard_enum_match_arm）。
+#[allow(clippy::wildcard_enum_match_arm)]
 fn map_wallet_error(e: chargepilot_mod_wallet::WalletError) -> SwipeError {
     match e {
         chargepilot_mod_wallet::WalletError::InsufficientBalance => SwipeError::CardBalance,

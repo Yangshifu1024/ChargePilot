@@ -65,7 +65,7 @@ pub fn parse_heartbeat(data: &[u8]) -> Result<HeartbeatData, PayloadError> {
     result.port_states = data[22..22 + port_count].to_vec();
     let charged_total = data[22 + port_count] as usize;
     let mut remaining = &data[23 + port_count..];
-    if remaining.len() % 13 != 0
+    if !remaining.len().is_multiple_of(13)
         || remaining.len() / 13 > charged_total
         || charged_total > port_count
     {

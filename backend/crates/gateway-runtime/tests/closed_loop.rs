@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 阶段 06 批 5 主缝闭环测试（spec：模拟器单台闭环）：
 //! 设备 TCP 注册 → 支付订单 → 启动命令经会话下发（B7 帧核对）→
 //! B8 回执推进订单 charging → BB 结束回执推进 completed + 计费任务 →

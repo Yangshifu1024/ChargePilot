@@ -29,26 +29,24 @@ impl Registry {
 }
 
 /// 投递循环。每轮：领取批次 → 逐条投递 → 标记。节拍 1s（有事件时连续处理）。
-pub fn spawn_dispatch_loop(
+pub async fn spawn_dispatch_loop(
     pool: MySqlPool,
     registry: Arc<Registry>,
     token: CancelToken,
-) -> impl std::future::Future<Output = anyhow::Result<()>> + Send {
-    async move {
-        loop {
-            if token.is_cancelled() {
-                return Ok(());
-            }
-            let batch = repo::claim_batch(&pool, 100).await?;
-            if batch.is_empty() {
-                token
-                    .sleep_or_cancelled(std::time::Duration::from_secs(1))
-                    .await;
-                continue;
-            }
-            for event in &batch {
-                dispatch_one(&pool, &registry, event).await;
-            }
+) -> anyhow::Result<()> {
+    loop {
+        if token.is_cancelled() {
+            return Ok(());
+        }
+        let batch = repo::claim_batch(&pool, 100).await?;
+        if batch.is_empty() {
+            token
+                .sleep_or_cancelled(std::time::Duration::from_secs(1))
+                .await;
+            continue;
+        }
+        for event in &batch {
+            dispatch_one(&pool, &registry, event).await;
         }
     }
 }

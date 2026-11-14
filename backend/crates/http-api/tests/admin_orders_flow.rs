@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 后台订单查询主缝集成测试：列表筛选与分页、详情（冻结套餐/计费单号/退款申请人）、
 //! 事件时间线、过程采样游标、订单关联退款与支付单列表（对齐旧版契约的响应形状）。
 //! 依赖真实 MySQL（TEST_MYSQL_URL）与 Redis（TEST_REDIS_URL），种子尾部自清理。
@@ -169,12 +175,6 @@ struct OrderSeed {
     payment_id: u64,
     /// 充电过程行主键（按插入序）。
     process_ids: Vec<u64>,
-}
-
-impl Seed {
-    fn order_ids(&self) -> [u64; 3] {
-        [self.order_1.id, self.order_2.id, self.order_3.id]
-    }
 }
 
 /// 月份分区键（charge_order / payment_order / refund_record 插入必带）。
@@ -607,7 +607,7 @@ async fn cleanup(db: &sqlx::MySqlPool, seed: &Seed) {
 }
 
 /// 在响应 items 中找本批订单（按 order_id）。
-fn find_item<'a>(body: &'a Value, order_id: u64) -> &'a Value {
+fn find_item(body: &Value, order_id: u64) -> &Value {
     body["data"]["items"]
         .as_array()
         .expect("items 应为数组")
@@ -629,7 +629,10 @@ async fn admin_orders_flow() {
         .expect("种子应成功");
 
     // ---- 列表：按本批次站点过滤（station_id 为本轮专属，隔离库内历史残留）----
-    let path = format!("/api/v1/admin/orders?station_id={}&page=1&page_size=100", seed.station_id);
+    let path = format!(
+        "/api/v1/admin/orders?station_id={}&page=1&page_size=100",
+        seed.station_id
+    );
     let (status, body) = req(router.clone(), "GET", &path, None, Some(&token)).await;
     assert_eq!(status, StatusCode::OK, "列表应成功: {body}");
     assert_eq!(body["code"], 0);
@@ -1301,9 +1304,7 @@ async fn admin_orders_flow() {
     let (status, body) = req(
         router.clone(),
         "GET",
-        &format!(
-            "/api/v1/admin/payment-orders?payment_status=pending&pay_method=wechat&page_size=100"
-        ),
+        "/api/v1/admin/payment-orders?payment_status=pending&pay_method=wechat&page_size=100",
         None,
         Some(&token),
     )

@@ -496,47 +496,51 @@ pub struct ActivityRuleInput {
 /// 校验活动并将时间统一为 UTC，空状态默认 active（旧版 NormalizeActivity）。
 /// 满减门槛须为正，首充和节日门槛须为零；邀请奖励须配置邀请人券，金额门槛只要求非负。
 /// 结束时间不得超过当前时间 365 天后。
+/// 活动规则校验未通过（错误载荷无信息，调用方只区分成败；旧版语义）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActivityRejected;
+
 pub fn normalize_activity(
     rule: &ActivityRuleInput,
     now: chrono::DateTime<Utc>,
-) -> Result<(DateTime<Utc>, DateTime<Utc>, String), ()> {
+) -> Result<(DateTime<Utc>, DateTime<Utc>, String), ActivityRejected> {
     if rule.name.is_empty() || rule.name.chars().count() > MAX_ACTIVITY_NAME_LENGTH {
-        return Err(());
+        return Err(ActivityRejected);
     }
     if !TriggerType(rule.trigger_type.clone()).known() {
-        return Err(());
+        return Err(ActivityRejected);
     }
     if rule.coupon_id == 0 {
-        return Err(());
+        return Err(ActivityRejected);
     }
     let start = chrono::DateTime::parse_from_rfc3339(&rule.start_at)
-        .map_err(|_| ())?
+        .map_err(|_| ActivityRejected)?
         .with_timezone(&Utc);
     let end = chrono::DateTime::parse_from_rfc3339(&rule.end_at)
-        .map_err(|_| ())?
+        .map_err(|_| ActivityRejected)?
         .with_timezone(&Utc);
     if !(start < end) {
-        return Err(());
+        return Err(ActivityRejected);
     }
     if end > now + MAX_ACTIVITY_HORIZON {
-        return Err(());
+        return Err(ActivityRejected);
     }
     if rule.threshold_cents < 0 || rule.max_grants < 0 || rule.per_user_limit < 0 {
-        return Err(());
+        return Err(ActivityRejected);
     }
     match rule.trigger_type.as_str() {
         TriggerType::THRESHOLD_REDEEM => {
             if rule.threshold_cents <= 0 {
-                return Err(());
+                return Err(ActivityRejected);
             }
         }
         TriggerType::INVITE_REWARD => match rule.inviter_coupon_id {
             Some(id) if id != 0 => {}
-            _ => return Err(()),
+            _ => return Err(ActivityRejected),
         },
         _ => {
             if rule.threshold_cents != 0 {
-                return Err(());
+                return Err(ActivityRejected);
             }
         }
     }
@@ -546,7 +550,7 @@ pub fn normalize_activity(
         rule.status.clone()
     };
     if !ActivityStatus(status.clone()).known() {
-        return Err(());
+        return Err(ActivityRejected);
     }
     Ok((start, end, status))
 }
@@ -560,10 +564,10 @@ pub fn activity_grant_expiry(
     rule_end: DateTime<Utc>,
 ) -> DateTime<Utc> {
     let mut expires = now + chrono::Duration::hours(valid_hours as i64);
-    if let Some(end) = coupon_end {
-        if end < expires {
-            expires = end;
-        }
+    if let Some(end) = coupon_end
+        && end < expires
+    {
+        expires = end;
     }
     if rule_end < expires {
         expires = rule_end;

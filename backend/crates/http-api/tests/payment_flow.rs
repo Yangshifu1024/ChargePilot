@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 阶段 04 批 3 主缝集成测试：下单冻结（意图+快照+端口预占）、模拟确认
 //! （支付成功事务：订单 paid + 快照冻结 + 事件出站）、迟到支付退款与
 //! 钱包充值全链（批 2 缝合）。断言 HTTP 响应与库中资金行。

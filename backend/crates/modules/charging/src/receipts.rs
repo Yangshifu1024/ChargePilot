@@ -99,7 +99,9 @@ pub async fn apply_start_receipt(
         return Err(ReceiptError::Conflict);
     }
     // 幂等：同命令已登记。同内容静默确认，不同内容冲突（旧版逐列核对）。
-    let existing: Option<(u64, Option<String>, Option<String>, Option<u8>, bool)> = sqlx::query_as(
+    // 启动回执幂等投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type StartReceiptRow = (u64, Option<String>, Option<String>, Option<u8>, bool);
+    let existing: Option<StartReceiptRow> = sqlx::query_as(
         "SELECT `charge_order_id`, `order_no`, `device_id`, `port_no`, `success` \
          FROM `charge_start_receipt` WHERE `command_id` = ?",
     )

@@ -91,12 +91,11 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         let corrected: serde_json::Value =
             serde_json::from_str(&corrected_json).map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let current = serde_json::json!({ "meter": meter });
-        if current == original {
-            if let Ok(corrected_meter) =
+        if current == original
+            && let Ok(corrected_meter) =
                 serde_json::from_value::<EndMeter>(corrected["meter"].clone())
-            {
-                meter = corrected_meter;
-            }
+        {
+            meter = corrected_meter;
         }
     }
 
@@ -170,7 +169,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         .execute(&mut *conn)
         .await?;
     let mut tx = conn.begin().await?;
-    let mut c = tx.acquire().await?;
+    let c = tx.acquire().await?;
 
     // 支付单锁定并核对（旧版 Apply 的核心核对集合）。
     let payment: Option<(String, i64, i64, u64)> = sqlx::query_as(
@@ -221,7 +220,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         .execute(&mut *c)
         .await?;
         // 账单签发接线：重放路径同事务幂等补签（uk_order 复用，已有账单零写入）。
-        crate::bill::issue_bill_in_tx(&mut c, charge_order_id).await?;
+        crate::bill::issue_bill_in_tx(c, charge_order_id).await?;
         tx.commit().await?;
         return Ok(true);
     }
@@ -352,7 +351,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     .await?;
     // 账单签发接线：费用入账与账单同一事务落地（旧版生产链路的账单缺口由
     // Missing 补偿循环兜底，此处直接消除缺口；total<=0 时签发内部返回 None 跳过）。
-    crate::bill::issue_bill_in_tx(&mut c, charge_order_id).await?;
+    crate::bill::issue_bill_in_tx(c, charge_order_id).await?;
     tx.commit().await?;
     Ok(true)
 }

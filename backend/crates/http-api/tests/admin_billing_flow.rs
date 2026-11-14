@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 后台财务端点主缝集成测试：发票列表与双审、计量核实 propose→decide 全流程
 //! 与权限分支、人工退款列表/申请/双审/重试（路径、响应形状与权限码对齐旧版契约）。
 
@@ -550,7 +556,7 @@ async fn invoice_list_and_review_flow() {
     let (status, _) = req(
         &router,
         "POST",
-        &format!("/api/v1/admin/billing/invoices/0/approve"),
+        "/api/v1/admin/billing/invoices/0/approve",
         Some(r#"{"invoice_url":"https://example.test/a.pdf"}"#),
         Some(&t1),
     )
@@ -1296,9 +1302,8 @@ async fn refund_list_create_review_retry_flow() {
     let row = &body["data"]["items"].as_array().unwrap()[0];
     assert_eq!(row["first_signer"], fin2.admin_id);
     assert_eq!(row["first_comment"], "核实金额无误");
-    assert_eq!(
+    assert!(
         row["snapshot_json"].as_str().is_some(),
-        true,
         "首审快照应为 JSON 文本"
     );
     // 不同人二审通过。

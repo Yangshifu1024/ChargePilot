@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 差分对照（辅缝 2）：以旧版 Go 计费纯函数批量产出的黄金样本逐条比对 Rust 实现。
 //! 样本由旧仓库 cmd/goldengen 一次性生成（生成期人工预期已核对），本测试只读快照。
 //! 覆盖：Cost / PriceActual / SettleSession / MeasuredSegments / Estimate /

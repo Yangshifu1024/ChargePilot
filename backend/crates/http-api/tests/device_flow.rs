@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 阶段 03 批 2 主缝集成测试：设备导入→台账、故障工单全流转、告警认领、C 端站点。
 
 use axum::body::Body;
@@ -107,7 +115,7 @@ async fn login_super(
     let id = alloc.next_id().await.unwrap();
     let hash = chargepilot_platform::password::hash("super-pass-123").unwrap();
     sqlx::query("INSERT INTO `admin_user` (`id`, `username`, `password_hash`, `role_id`) VALUES (?, ?, ?, 1)")
-        .bind(id).bind(&username).bind(hash).execute(&*db).await.unwrap();
+        .bind(id).bind(&username).bind(hash).execute(db).await.unwrap();
     let (status, body) = req(
         router.clone(),
         "POST",

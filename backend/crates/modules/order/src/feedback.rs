@@ -58,7 +58,8 @@ pub async fn list(
     .bind(status)
     .fetch_one(pool)
     .await?;
-    let rows: Vec<(
+    // 评价列表投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type FeedbackRow = (
         u64,
         u64,
         Option<u64>,
@@ -73,7 +74,8 @@ pub async fn list(
         Option<String>,
         Option<String>,
         Option<String>,
-    )> = sqlx::query_as(
+    );
+    let rows: Vec<FeedbackRow> = sqlx::query_as(
         "SELECT `id`, `user_id`, `order_id`, `device_id`, `rating`, \
                 CAST(`category` AS CHAR) AS `category`, `content`, \
                 CAST(`images_json` AS CHAR) AS `images_json`, \
@@ -295,10 +297,10 @@ pub async fn resolve_reference(
     user_id: u64,
     raw: &str,
 ) -> Result<u64, FeedbackSubmitError> {
-    if let Ok(id) = raw.parse::<u64>() {
-        if id > 0 {
-            return Ok(id);
-        }
+    if let Ok(id) = raw.parse::<u64>()
+        && id > 0
+    {
+        return Ok(id);
     }
     let order_no = raw.trim();
     if order_no.is_empty() || order_no.len() > 64 {
@@ -324,10 +326,10 @@ pub fn validate_feedback(input: &FeedbackSubmitInput) -> Result<(), FeedbackSubm
         Some("rating" | "complaint" | "suggestion") => {}
         _ => return Err(FeedbackSubmitError::Input("评分或反馈类型无效".into())),
     }
-    if let Some(content) = &input.content {
-        if content.chars().count() > 2000 {
-            return Err(FeedbackSubmitError::Input("反馈内容过长".into()));
-        }
+    if let Some(content) = &input.content
+        && content.chars().count() > 2000
+    {
+        return Err(FeedbackSubmitError::Input("反馈内容过长".into()));
     }
     let images = input.images.as_deref().unwrap_or(&[]);
     if images.len() > 5 {

@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! API 契约缝（二期票 02）：路由集合快照 + 信封与错误码契约。
 //!
 //! 与 `scripts/ops/check-api-contract.py` 的分工：该脚本管「前端实际调用 ↔ 后端路由」

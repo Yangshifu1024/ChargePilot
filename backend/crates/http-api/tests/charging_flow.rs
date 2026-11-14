@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 阶段 04 批 4 主缝集成测试：充电状态机事件驱动全链——支付确认事件 →
 //! 启动命令与端口预占 → 设备回执 charging → 用户停止（计费截止冻结）→
 //! 结束回执（订单完成 + 计费任务 + 出站事件）。
@@ -266,7 +274,7 @@ async fn create_paid_order(
     let result = chargepilot_mod_payment::apply::apply_payment(db, &payment)
         .await
         .expect("支付成功事务应成功");
-    assert_eq!(result.replayed, false);
+    assert!(!result.replayed);
     (
         result.charge_order_id,
         result.charge_order_no,
@@ -432,7 +440,7 @@ async fn state_machine_full_flow() {
     )
     .await
     .expect("结束回执应成功");
-    assert_eq!(replayed, false);
+    assert!(!replayed);
     let (final_status, kwh): (String, String) = sqlx::query_as(
         "SELECT `status`, CAST(`charged_kwh` AS CHAR) FROM `charge_order` WHERE `id` = ?",
     )
@@ -493,11 +501,11 @@ async fn state_machine_full_flow() {
     )
     .await
     .expect("重放回执应成功");
-    assert_eq!(replayed2, true, "同内容重放应静默确认");
+    assert!(replayed2, "同内容重放应静默确认");
 
     // 清理维表（流水保留）。
     let _ = sqlx::query("DELETE FROM `device_port` WHERE `device_id` = ?")
-        .bind(&format!("dev-c4-{}", rand_suffix()))
+        .bind(format!("dev-c4-{}", rand_suffix()))
         .execute(db.as_ref())
         .await;
     let _ = station_id;

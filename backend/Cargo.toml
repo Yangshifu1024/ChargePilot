@@ -95,3 +95,17 @@ chargepilot-mod-wallet = { path = "crates/modules/wallet" }
 [profile.release]
 lto = "thin"
 strip = "debuginfo"
+
+# 工作区门禁（二期票 03）：rustc 警告即错误；clippy 失败级三组 + 解包禁令 +
+# 通配枚举分支（护住 S3 枚举化的穷尽收益）。渐进路线（vector 式）：pedantic 不启用。
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+correctness = "deny"
+suspicious = "deny"
+perf = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+wildcard_enum_match_arm = "deny"

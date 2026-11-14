@@ -173,6 +173,8 @@ pub async fn update_template(
 }
 
 /// 状态切换 / 软删（DELETE 固定写 disabled+deleted_at，旧版语义）。
+/// 状态切换参数即旧版契约字段，不引入参数对象。
+#[allow(clippy::too_many_arguments)]
 pub async fn set_template_status(
     pool: &MySqlPool,
     actor: &Profile,

@@ -216,10 +216,11 @@ pub async fn update_admin(
             return Err(OpsError::bad_input("邮箱格式无效"));
         }
     }
-    if let Some(s) = &input.status {
-        if s != "active" && s != "disabled" {
-            return Err(OpsError::bad_input("账号状态无效"));
-        }
+    if let Some(s) = &input.status
+        && s != "active"
+        && s != "disabled"
+    {
+        return Err(OpsError::bad_input("账号状态无效"));
     }
     if input.display_name.is_none()
         && input.phone.is_none()
@@ -286,14 +287,14 @@ pub async fn update_admin(
             .map_err(OpsError::from)?;
     }
     // 最后管理员保护：目标是 active 的 customer_admin 且无其他有效客户管理员 → 拒绝
-    if status_changed && input.status.as_deref() == Some("disabled") || role_changed {
-        if is_customer_admin_role(&target.role_id) {
-            let others = repo::count_other_active_customer_admins_tx(&mut tx, target.id)
-                .await
-                .map_err(OpsError::from)?;
-            if others == 0 {
-                return Err(OpsError::conflict("必须保留至少一个有效的客户管理员账号"));
-            }
+    if (status_changed && input.status.as_deref() == Some("disabled") || role_changed)
+        && is_customer_admin_role(&target.role_id)
+    {
+        let others = repo::count_other_active_customer_admins_tx(&mut tx, target.id)
+            .await
+            .map_err(OpsError::from)?;
+        if others == 0 {
+            return Err(OpsError::conflict("必须保留至少一个有效的客户管理员账号"));
         }
     }
     let before = admin_snapshot(&target);
@@ -834,10 +835,10 @@ fn admin_snapshot(a: &super::AdminAccount) -> Value {
 }
 
 fn duplicate_or(e: sqlx::Error, msg: &str) -> OpsError {
-    if let sqlx::Error::Database(db) = &e {
-        if db.is_unique_violation() {
-            return OpsError::conflict(msg);
-        }
+    if let sqlx::Error::Database(db) = &e
+        && db.is_unique_violation()
+    {
+        return OpsError::conflict(msg);
     }
     OpsError::Storage(e.into())
 }

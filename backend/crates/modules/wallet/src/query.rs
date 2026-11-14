@@ -58,10 +58,11 @@ pub async fn transactions(
     page: u32,
     page_size: u32,
 ) -> Result<Page<TxnRow>, WalletError> {
-    if let Some(d) = direction {
-        if d != "in" && d != "out" {
-            return Err(WalletError::RequestConflict);
-        }
+    if let Some(d) = direction
+        && d != "in"
+        && d != "out"
+    {
+        return Err(WalletError::RequestConflict);
     }
     let offset = ((page.max(1) - 1) * page_size.max(1)) as i64;
     let dir_clause = match direction {
@@ -335,10 +336,8 @@ fn compose_refund_view(
             "success" => view.refunded_cents += part.refund_cents,
             // failed 或 needs_review（部分渠道终态存疑）→ 需要复核展示态。
             "failed" | "needs_review" => view.status = "needs_review".into(),
-            "processing" => {
-                if view.status != "needs_review" {
-                    view.status = "processing".into();
-                }
+            "processing" if view.status != "needs_review" => {
+                view.status = "processing".into();
             }
             _ => {}
         }

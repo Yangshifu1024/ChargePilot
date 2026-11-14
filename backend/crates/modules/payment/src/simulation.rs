@@ -62,8 +62,16 @@ async fn find_development_payment(
     ),
     SimulationError,
 > {
-    let row: Option<(u64, String, i64, Option<String>, chrono::DateTime<chrono::Utc>, String)> =
-        sqlx::query_as(
+    // 模拟确认读投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type SimulationPayRow = (
+        u64,
+        String,
+        i64,
+        Option<String>,
+        chrono::DateTime<chrono::Utc>,
+        String,
+    );
+    let row: Option<SimulationPayRow> = sqlx::query_as(
             "SELECT p.`id`, p.`biz_type`, p.`total_cents`, CAST(u.`openid` AS CHAR), p.`created_at`, p.`status` \
              FROM `payment_order` p JOIN `user` u ON u.`id` = p.`user_id` \
              WHERE p.`order_no` = ? AND p.`user_id` = ? AND p.`pay_method` = ? LIMIT 1",

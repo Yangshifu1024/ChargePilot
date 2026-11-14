@@ -27,7 +27,7 @@ impl Layout {
     }
 
     /// 解析令牌：前缀、两段长度（22/43）与 base64url 合法性。格式错误无需查 Redis。
-    pub fn parse<'a>(&self, token: &'a str) -> Option<(String, String)> {
+    pub fn parse(&self, token: &str) -> Option<(String, String)> {
         let rest = token.strip_prefix(self.token_prefix)?;
         let (sid, secret) = rest.split_once('.')?;
         if sid.len() != 22 || secret.len() != 43 {
@@ -94,6 +94,18 @@ for _, digest in ipairs(record.previous or {}) do
 end
 return 0
 "#;
+
+/// 生成随机挑战码（base64url，无填充）——MFA 挑战等场景。
+pub fn random_token(byte_len: usize) -> String {
+    // 复用 mint 的随机源：直接生成
+    fn inner(n: usize) -> anyhow::Result<String> {
+        use rand::RngCore;
+        let mut b = vec![0u8; n];
+        rand::rng().fill_bytes(&mut b);
+        Ok(B64.encode(b))
+    }
+    inner(byte_len).unwrap_or_default()
+}
 
 #[cfg(test)]
 mod tests {
@@ -189,16 +201,4 @@ mod tests {
         assert!(gone.is_none());
         let _ = sid2;
     }
-}
-
-/// 生成随机挑战码（base64url，无填充）——MFA 挑战等场景。
-pub fn random_token(byte_len: usize) -> String {
-    // 复用 mint 的随机源：直接生成
-    fn inner(n: usize) -> anyhow::Result<String> {
-        use rand::RngCore;
-        let mut b = vec![0u8; n];
-        rand::rng().fill_bytes(&mut b);
-        Ok(B64.encode(b))
-    }
-    inner(byte_len).unwrap_or_default()
 }

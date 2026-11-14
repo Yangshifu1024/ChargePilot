@@ -322,10 +322,10 @@ async fn fill_order_stations(
     let stations: Vec<(u64, String)> = qb.build_query_as().fetch_all(pool).await?;
     let names: std::collections::HashMap<u64, String> = stations.into_iter().collect();
     for row in rows.iter_mut() {
-        if let Some(id) = row.station_id {
-            if let Some(name) = names.get(&id) {
-                row.station_name = Some(name.clone());
-            }
+        if let Some(id) = row.station_id
+            && let Some(name) = names.get(&id)
+        {
+            row.station_name = Some(name.clone());
         }
     }
     Ok(())

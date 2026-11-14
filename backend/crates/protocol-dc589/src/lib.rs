@@ -23,7 +23,10 @@ use chrono::FixedOffset;
 /// 不依赖宿主机 TZ。
 #[must_use]
 pub fn china_offset() -> FixedOffset {
-    FixedOffset::east_opt(8 * 3600).expect("UTC+8 固定偏移合法")
+    match FixedOffset::east_opt(8 * 3600) {
+        Some(o) => o,
+        None => panic!("UTC+8 固定偏移合法"),
+    }
 }
 
 /// BCD 解码错误：出现非十进制半字节。
@@ -58,7 +61,7 @@ pub(crate) fn decode_bcd(data: &[u8]) -> Result<String, BcdError> {
 /// 十进制数字串 BCD 编码；奇数长度或非数字报错。
 pub(crate) fn encode_bcd(digits: &str) -> Result<Vec<u8>, BcdError> {
     let bytes = digits.as_bytes();
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(BcdError);
     }
     let mut out = Vec::with_capacity(bytes.len() / 2);

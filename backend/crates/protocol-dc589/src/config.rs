@@ -102,7 +102,7 @@ impl ConfigTable {
         if self.card_amount_cents > 2500 {
             return Err(ConfigError("刷卡扣费金额超出范围 0.0-25.0 元"));
         }
-        if self.card_amount_cents % 10 != 0 {
+        if !self.card_amount_cents.is_multiple_of(10) {
             return Err(ConfigError("刷卡扣费金额必须为 10 分的整数倍"));
         }
         if self.card_refund > 1 || self.stop_when_full > 1 {

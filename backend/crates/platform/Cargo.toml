@@ -26,3 +26,6 @@ tracing.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 chrono.workspace = true
+
+[lints]
+workspace = true

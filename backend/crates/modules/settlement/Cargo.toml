@@ -17,3 +17,6 @@ chargepilot-mod-ops.workspace = true
 chargepilot-mod-wallet.workspace = true
 chargepilot-mod-order.workspace = true
 chargepilot-mod-payment.workspace = true
+
+[lints]
+workspace = true

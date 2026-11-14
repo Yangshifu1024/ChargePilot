@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 阶段 04 批 6b 主缝集成测试：账单签发/已读、人工退款双人审核（批准后由
 //! 退款执行器接手）、仪表审核修正重排队与人工最终金额入账。
 

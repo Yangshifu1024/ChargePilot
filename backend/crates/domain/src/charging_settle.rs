@@ -162,7 +162,7 @@ impl Offer {
             "energy" => {
                 self.duration_minutes == 0
                     && (1000..=65000).contains(&self.energy_wh)
-                    && self.energy_wh % 1000 == 0
+                    && self.energy_wh.is_multiple_of(1000)
             }
             _ => false,
         };
@@ -220,57 +220,58 @@ pub fn settle_session(
     if let Some(a) = actual {
         settlement.stop_reason = a.stop_reason.0.clone();
     }
-    if let Some(paid) = paid {
-        if paid.server_duration {
-            settlement.executor = "server".to_string();
-        }
+    if let Some(paid) = paid
+        && paid.server_duration
+    {
+        settlement.executor = "server".to_string();
     }
     // 固定时长套餐按购买快照的售价结算，与站点费率和功率无关。
     // 延迟停机也不超收；提前停止延续未使用时长退款规则。
-    if let Some(paid) = paid {
-        if paid.mode == "duration" {
-            if !paid.valid() {
-                return Err(BillingError::InvalidPricing);
-            }
-            let mut used = meter.charged_seconds as i64;
-            if !spec.mode.server_billed() && actual.is_some() {
-                used = actual.unwrap().used_seconds as i64;
-            }
-            used /= 60;
-            let limit = paid.duration_minutes as i64;
-            let mut amount = paid.price_cents;
-            if used < limit {
-                amount = amount * used / limit;
-            }
-            // 套餐总价不含单独约定的电费拆分，与支付报价一致记入套餐服务费。
-            settlement.service_cents = amount;
-            settlement.total_cents = amount;
-            settlement.estimated = actual.is_none() || !actual.unwrap().reported;
-            return Ok(settlement);
+    if let Some(paid) = paid
+        && paid.mode == "duration"
+    {
+        if !paid.valid() {
+            return Err(BillingError::InvalidPricing);
         }
+        let mut used = meter.charged_seconds as i64;
+        if !spec.mode.server_billed()
+            && let Some(a) = actual
+        {
+            used = a.used_seconds as i64;
+        }
+        used /= 60;
+        let limit = paid.duration_minutes as i64;
+        let mut amount = paid.price_cents;
+        if used < limit {
+            amount = amount * used / limit;
+        }
+        // 套餐总价不含单独约定的电费拆分，与支付报价一致记入套餐服务费。
+        settlement.service_cents = amount;
+        settlement.total_cents = amount;
+        settlement.estimated = actual.map(|a| !a.reported).unwrap_or(true);
+        return Ok(settlement);
     }
-    if let Some(paid) = paid {
-        if paid.mode == "energy" {
-            if !paid.valid() {
-                return Err(BillingError::InvalidPricing);
-            }
-            let rate = spec
-                .scheme
-                .as_ref()
-                .and_then(|s| s.energy.clone())
-                .ok_or(BillingError::InvalidPricing)?;
-            let wh = meter.charged_wh as u64;
-            let amount = std::cmp::min(
-                (wh as i64) * (rate.electric_cents + rate.service_cents) / 1000,
-                paid.price_cents,
-            );
-            let electric =
-                amount * rate.electric_cents / (rate.electric_cents + rate.service_cents);
-            settlement.electric_cents = electric;
-            settlement.service_cents = amount - electric;
-            settlement.total_cents = amount;
-            return Ok(settlement);
+    if let Some(paid) = paid
+        && paid.mode == "energy"
+    {
+        if !paid.valid() {
+            return Err(BillingError::InvalidPricing);
         }
+        let rate = spec
+            .scheme
+            .as_ref()
+            .and_then(|s| s.energy.clone())
+            .ok_or(BillingError::InvalidPricing)?;
+        let wh = meter.charged_wh as u64;
+        let amount = std::cmp::min(
+            (wh as i64) * (rate.electric_cents + rate.service_cents) / 1000,
+            paid.price_cents,
+        );
+        let electric = amount * rate.electric_cents / (rate.electric_cents + rate.service_cents);
+        settlement.electric_cents = electric;
+        settlement.service_cents = amount - electric;
+        settlement.total_cents = amount;
+        return Ok(settlement);
     }
     if spec.mode.server_billed() {
         let rule = Rule {
@@ -311,13 +312,14 @@ pub fn settle_session(
     }
     let amount = paid.price_cents;
     settlement.total_cents = amount;
-    settlement.estimated = actual.is_none() || !actual.unwrap().reported;
-    if let Some(a) = actual {
-        if spec.mode == ChargeMode::new(ChargeMode::DEVICE_POWER) && a.spent_cents > 0 {
-            settlement.residual_cents = amount - a.spent_cents;
-            if settlement.residual_cents < 0 {
-                return Err(BillingError::InvalidPricing);
-            }
+    settlement.estimated = actual.map(|a| !a.reported).unwrap_or(true);
+    if let Some(a) = actual
+        && spec.mode == ChargeMode::new(ChargeMode::DEVICE_POWER)
+        && a.spent_cents > 0
+    {
+        settlement.residual_cents = amount - a.spent_cents;
+        if settlement.residual_cents < 0 {
+            return Err(BillingError::InvalidPricing);
         }
     }
     Ok(settlement)
@@ -349,14 +351,15 @@ pub fn decide_stop(
             ..Default::default()
         });
     }
-    if let Some(tc) = &spec.time_charge {
-        if tc.max_minutes > 0 && elapsed >= Duration::minutes(tc.max_minutes as i64) {
-            return Ok(StopPlan {
-                should_stop: true,
-                reason: "达到最长时长".to_string(),
-                ..Default::default()
-            });
-        }
+    if let Some(tc) = &spec.time_charge
+        && tc.max_minutes > 0
+        && elapsed >= Duration::minutes(tc.max_minutes as i64)
+    {
+        return Ok(StopPlan {
+            should_stop: true,
+            reason: "达到最长时长".to_string(),
+            ..Default::default()
+        });
     }
     let fee = cost(spec, usage)?;
     let mut plan = StopPlan {

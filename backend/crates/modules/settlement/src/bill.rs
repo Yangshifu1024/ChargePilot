@@ -34,8 +34,8 @@ pub async fn issue_bill(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resul
         .execute(&mut *conn)
         .await?;
     let mut tx = conn.begin().await?;
-    let mut c = tx.acquire().await?;
-    let row = issue_bill_in_tx(&mut c, charge_order_id).await?;
+    let c = tx.acquire().await?;
+    let row = issue_bill_in_tx(c, charge_order_id).await?;
     tx.commit().await?;
     Ok(row)
 }
@@ -51,7 +51,9 @@ pub async fn issue_bill_in_tx(
     charge_order_id: u64,
 ) -> anyhow::Result<Option<BillRow>> {
     // 订单（已结束）与计费回执。
-    let order: Option<(String, u64, Option<u64>, Option<String>, Option<String>)> = sqlx::query_as(
+    // 投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type BillOrderRow = (String, u64, Option<u64>, Option<String>, Option<String>);
+    let order: Option<BillOrderRow> = sqlx::query_as(
         "SELECT `order_no`, `user_id`, `payment_order_id`, \
                 DATE_FORMAT(`started_at`, '%Y-%m-%d %H:%i:%s.%f'), CAST(`charged_kwh` AS CHAR) \
          FROM `charge_order` WHERE `id` = ? AND `deleted_at` IS NULL",

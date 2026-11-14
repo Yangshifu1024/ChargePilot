@@ -226,7 +226,8 @@ pub async fn list_history(
         df("`started_at`"),
         df("`ended_at`"),
     );
-    let rows: Vec<(
+    // 订单列表投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type OrderListRow = (
         u64,
         String,
         String,
@@ -237,7 +238,8 @@ pub async fn list_history(
         Option<String>,
         Option<u32>,
         i64,
-    )> = query_as(&sql)
+    );
+    let rows: Vec<OrderListRow> = query_as(&sql)
         .bind(user_id as i64)
         .bind(status)
         .bind(status)
@@ -289,7 +291,9 @@ pub async fn billing_status(pool: &MySqlPool, order_id: u64) -> Result<String, s
 
 /// 订单刷卡操作数组（旧版 ListOrderOperations：按创建时间升序，无操作为空数组）。
 pub async fn card_operations(pool: &MySqlPool, order_id: u64) -> Result<Vec<Value>, sqlx::Error> {
-    let rows: Vec<(String, String, String, u64, u64, String, i64, u16, String)> = query_as(
+    // 刷卡操作投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type CardOpRow = (String, String, String, u64, u64, String, i64, u16, String);
+    let rows: Vec<CardOpRow> = query_as(
         "SELECT CAST(`operation_id` AS CHAR), CAST(`device_id` AS CHAR), CAST(`event_id` AS CHAR), \
                 `charge_order_id`, `card_id`, CAST(`kind` AS CHAR), `price_cents`, `minutes`, \
                 CAST(`status` AS CHAR) \
@@ -400,7 +404,9 @@ pub async fn payment_brief(
 
 /// 订单退款列表（旧版 ListOrderRefunds：按支付业务过滤，倒序，无记录空数组）。
 pub async fn order_refunds(pool: &MySqlPool, order_id: u64) -> Result<Vec<Value>, sqlx::Error> {
-    let rows: Vec<(String, i64, String, Option<String>, Option<String>)> = query_as(&format!(
+    // 退款列表投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type RefundListRow = (String, i64, String, Option<String>, Option<String>);
+    let rows: Vec<RefundListRow> = query_as(&format!(
         "SELECT `refund_no`, `refund_cents`, CAST(`status` AS CHAR), `reason`, {} AS `created_at` \
          FROM `refund_record` \
          WHERE `biz_type` = 'charge' AND `biz_id` = ? AND `deleted_at` IS NULL \

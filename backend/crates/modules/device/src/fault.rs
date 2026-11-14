@@ -228,10 +228,10 @@ pub async fn dispatch(
     ip: &str,
     request_id: &str,
 ) -> StationResult<u64> {
-    if let Some(n) = &note {
-        if n.chars().count() > 2000 {
-            return Err(DeviceError::Input("备注最多 2000 字".into()));
-        }
+    if let Some(n) = &note
+        && n.chars().count() > 2000
+    {
+        return Err(DeviceError::Input("备注最多 2000 字".into()));
     }
     let mut tx = pool.begin().await?;
     let actor_locked = repo::lock_actor_tx(&mut tx, actor.id)

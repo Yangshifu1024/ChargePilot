@@ -49,7 +49,7 @@ impl SegmentAllocator {
             if rows == 0 {
                 continue; // 被并发写者抢先：重读重试
             }
-            *self.seg.lock().unwrap() = Some(Segment {
+            *self.seg.lock().unwrap_or_else(|e| e.into_inner()) = Some(Segment {
                 next: watermark + 1,
                 max: new_max,
             });
@@ -61,13 +61,13 @@ impl SegmentAllocator {
     pub async fn next_id(&self) -> anyhow::Result<u64> {
         loop {
             {
-                let mut guard = self.seg.lock().unwrap();
-                if let Some(seg) = guard.as_mut() {
-                    if seg.next <= seg.max {
-                        let id = seg.next;
-                        seg.next += 1;
-                        return Ok(id as u64);
-                    }
+                let mut guard = self.seg.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(seg) = guard.as_mut()
+                    && seg.next <= seg.max
+                {
+                    let id = seg.next;
+                    seg.next += 1;
+                    return Ok(id);
                 }
             }
             // 号段耗尽：补号段（锁外执行 IO）
@@ -88,7 +88,7 @@ impl SegmentAllocator {
             // 有并发写者已推进水位：重读重试（正常仅单实例，此为防御路径）
             return Ok(());
         }
-        let mut guard = self.seg.lock().unwrap();
+        let mut guard = self.seg.lock().unwrap_or_else(|e| e.into_inner());
         let start = guard.as_ref().map(|s| s.next).unwrap_or(watermark + 1);
         let new_next = start.max(watermark + 1);
         *guard = Some(Segment {
@@ -150,10 +150,13 @@ pub fn uuid_v4() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    /// 号段测试共享 snowflake_state 水位行，必须串行执行（进程级互斥）。
-    static ID_TEST_LOCK: Mutex<()> = Mutex::new(());
+    /// 号段测试共享 snowflake_state 水位行，必须串行执行（进程级互斥）；
+    /// 用 tokio 异步锁：测试体持锁跨多个 await，std 锁会触发 await_holding_lock。
+    fn id_test_lock() -> &'static tokio::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
 
     fn test_pool_url() -> String {
         std::env::var("TEST_MYSQL_URL").unwrap_or_default()
@@ -176,7 +179,7 @@ mod tests {
     #[ignore = "真库集成：node tasks.mjs test-integration"]
     #[tokio::test]
     async fn concurrent_ids_unique_and_monotonic() {
-        let _guard = ID_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = id_test_lock().lock().await;
         let pool = fresh_pool().await;
         let alloc = SegmentAllocator::new(pool.clone(), 100);
         alloc.warm_up().await.unwrap();
@@ -206,7 +209,7 @@ mod tests {
     #[ignore = "真库集成：node tasks.mjs test-integration"]
     #[tokio::test]
     async fn watermark_survives_restart() {
-        let _guard = ID_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = id_test_lock().lock().await;
         let pool = fresh_pool().await;
         let a1 = SegmentAllocator::new(pool.clone(), 10);
         a1.warm_up().await.unwrap();

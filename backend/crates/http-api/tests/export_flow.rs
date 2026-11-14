@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 阶段 05 批 5 主缝集成测试：导出受理（同步生成）→ 列表/详情 → CSV/XLSX
 //! 下载（表头与行数，不逐字节比对）→ 同请求号重放不换任务号 → 换参数冲突
 //! → 受限范围拒绝账单导出、订单经设备表过滤 → 到期后下载 410 并即时清理

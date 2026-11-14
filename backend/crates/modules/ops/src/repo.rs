@@ -76,13 +76,13 @@ pub async fn verify_login(
     if account.status == "disabled" {
         return Err(OpsError::Credentials);
     }
-    if let Some(until) = account.locked_until {
-        if until > now {
-            return Err(OpsError::Locked(format!(
-                "账号已临时锁定，请于 {} 后重试",
-                until.to_rfc3339()
-            )));
-        }
+    if let Some(until) = account.locked_until
+        && until > now
+    {
+        return Err(OpsError::Locked(format!(
+            "账号已临时锁定，请于 {} 后重试",
+            until.to_rfc3339()
+        )));
     }
     if !chargepilot_platform::password::verify(password, &account.password_hash) {
         let attempts = account.failed_login_count + 1;
@@ -132,10 +132,10 @@ pub async fn verify_mfa(
     if account.status == "disabled" {
         return Err(OpsError::Credentials);
     }
-    if let Some(until) = account.locked_until {
-        if until > now {
-            return Err(OpsError::Locked("账号已临时锁定".into()));
-        }
+    if let Some(until) = account.locked_until
+        && until > now
+    {
+        return Err(OpsError::Locked("账号已临时锁定".into()));
     }
     let Some(secret) = account.mfa_secret.as_deref() else {
         return Err(OpsError::InvalidChallenge);
@@ -262,7 +262,7 @@ pub async fn write_auth_audit_tx(
     ip: &str,
 ) -> anyhow::Result<()> {
     let now = chrono::Utc::now();
-    let month = now.date_naive().with_day(1).expect("月首日必然存在");
+    let month = month_start(now.date_naive());
     sqlx::query(
         "INSERT INTO `audit_log` (`actor_id`, `actor_name`, `module`, `action`, `target_type`, `target_id`, `client_ip`, `created_month`) \
          VALUES (?, ?, 'auth', ?, 'admin_user', ?, ?, ?)",
@@ -286,7 +286,7 @@ pub async fn write_diagnostics_audit(
     ip: &str,
 ) -> anyhow::Result<()> {
     let now = chrono::Utc::now();
-    let month = now.date_naive().with_day(1).expect("月首日必然存在");
+    let month = month_start(now.date_naive());
     sqlx::query(
         "INSERT INTO `audit_log` (`actor_id`, `actor_name`, `module`, `action`, `target_type`, `target_id`, `client_ip`, `created_month`) \
          VALUES (?, ?, 'ops', 'diagnostics', 'system', '', ?, ?)",
@@ -325,13 +325,26 @@ pub async fn ensure_bootstrap(
     .bind(hash)
     .execute(pool)
     .await?;
-    let account = find_by_username(pool, username).await?.expect("刚创建");
+    let account = match find_by_username(pool, username).await? {
+        Some(a) => a,
+        None => panic!("刚创建的后台账号必然可查"),
+    };
     write_auth_audit(pool, &account, "bootstrap", "").await?;
     tracing::info!(username, "后台引导账号已创建");
     Ok(())
 }
 
 /// 通用审计写入（业务事务内调用）：before/after 为完整快照 JSON，nil 传 Value::Null。
+/// 当月首日（with_day(1) 对合法日期恒存在）。
+fn month_start(now: chrono::NaiveDate) -> chrono::NaiveDate {
+    match now.with_day(1) {
+        Some(d) => d,
+        None => panic!("月首日必然存在"),
+    }
+}
+
+/// 审计行字段即表列契约，不引入参数对象。
+#[allow(clippy::too_many_arguments)]
 pub async fn append_audit_tx(
     tx: &mut sqlx::MySqlConnection,
     actor: &Profile,
@@ -345,7 +358,7 @@ pub async fn append_audit_tx(
     request_id: &str,
 ) -> anyhow::Result<()> {
     let now = chrono::Utc::now();
-    let month = now.date_naive().with_day(1).expect("月首日必然存在");
+    let month = month_start(now.date_naive());
     sqlx::query(
         "INSERT INTO `audit_log` (`actor_id`, `actor_name`, `module`, `action`, `target_type`, `target_id`, \
          `before_json`, `after_json`, `client_ip`, `request_id`, `created_month`) \
@@ -508,7 +521,9 @@ pub async fn lock_active_admin_tx(
     tx: &mut sqlx::MySqlConnection,
     id: u64,
 ) -> anyhow::Result<Option<AdminAccount>> {
-    let row: Option<(u64, String, Option<String>, String, Option<u64>, u64)> = sqlx::query_as(
+    // 管理账号锁读投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type AdminLockRow = (u64, String, Option<String>, String, Option<u64>, u64);
+    let row: Option<AdminLockRow> = sqlx::query_as(
         "SELECT `id`, `username`, `display_name`, `password_hash`, `role_id`, `auth_version` \
          FROM `admin_user` WHERE `id` = ? AND `status` = 'active' AND `deleted_at` IS NULL FOR UPDATE",
     )
@@ -528,7 +543,7 @@ pub async fn lock_active_admin_tx(
             status: "active".into(),
             failed_login_count: 0,
             locked_until: None,
-            auth_version: auth_version as u64,
+            auth_version,
         },
     ))
 }

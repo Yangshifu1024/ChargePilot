@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 阶段 04 批 6a 主缝集成测试：在线卡刷卡首购/续购/幂等重放/拒绝路径，
 //! 以及刷卡会话端口占用随结束回执释放的联动。
 

@@ -95,17 +95,17 @@ impl SessionAudit {
     fn inbound(&self, data_len: usize) {
         self.bytes_in.fetch_add(data_len as i64, Ordering::Relaxed);
         self.frames_in.fetch_add(1, Ordering::Relaxed);
-        *self.last_seen.lock().expect("审计锁") = std::time::SystemTime::now();
+        *self.last_seen.lock().unwrap_or_else(|e| e.into_inner()) = std::time::SystemTime::now();
     }
 
     fn outbound(&self, data_len: usize) {
         self.bytes_out.fetch_add(data_len as i64, Ordering::Relaxed);
         self.frames_out.fetch_add(1, Ordering::Relaxed);
-        *self.last_seen.lock().expect("审计锁") = std::time::SystemTime::now();
+        *self.last_seen.lock().unwrap_or_else(|e| e.into_inner()) = std::time::SystemTime::now();
     }
 
     fn mark_unknown(&self, command: u8) {
-        let mut list = self.unknown.lock().expect("审计锁");
+        let mut list = self.unknown.lock().unwrap_or_else(|e| e.into_inner());
         if !list.contains(&command) {
             list.push(command);
             list.sort_unstable();
@@ -417,9 +417,7 @@ async fn run_loop(
             result = read => match result {
                 Ok(Ok(f)) => {
                     audit_inbound(session, &f);
-                    if let Err(e) = dispatch(session, sink, device_id, f).await {
-                        return Err(e);
-                    }
+                    dispatch(session, sink, device_id, f).await?;
                 }
                 Ok(Err(e)) => return Err(e),
                 Err(_) => {
@@ -472,7 +470,7 @@ async fn dispatch(
                     .charging_ports
                     .iter()
                     .any(|p| p.charged_seconds > 0 || p.power_deci_watts > 0)
-                    || hb.port_states.iter().any(|&s| s == 1);
+                    || hb.port_states.contains(&1);
                 let seconds = if charging {
                     u32::from(CHARGING_HEARTBEAT_SECONDS)
                 } else {
@@ -607,7 +605,7 @@ async fn dispatch(
                     Err(_) => event.result_code = 0xFF,
                 },
                 0xC4 => match parse_config_ack(f.command, &f.data) {
-                    Ok(code) if code == 0 => event.result_code = 0,
+                    Ok(0) => event.result_code = 0,
                     Ok(code) => {
                         event.result_code = code;
                         if let Some(field) = config_error_field(code) {
@@ -689,14 +687,20 @@ async fn finish(
         device_id: device_id.to_string(),
         remote_addr: audit.remote_addr.clone(),
         started_at: Some(to_utc(audit.started_at)),
-        last_active: Some(to_utc(*audit.last_seen.lock().expect("审计锁"))),
+        last_active: Some(to_utc(
+            *audit.last_seen.lock().unwrap_or_else(|e| e.into_inner()),
+        )),
         ended_at: Some(ended),
         close_reason: reason.as_str().to_string(),
         bytes_in: audit.bytes_in.load(Ordering::Relaxed),
         bytes_out: audit.bytes_out.load(Ordering::Relaxed),
         frames_in: audit.frames_in.load(Ordering::Relaxed),
         frames_out: audit.frames_out.load(Ordering::Relaxed),
-        unknown_commands: audit.unknown.lock().expect("审计锁").clone(),
+        unknown_commands: audit
+            .unknown
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone(),
     };
     if let Err(e) = recorder.record_session(record).await {
         tracing::warn!(device = %device_id, error = %e, "会话审计落库失败");

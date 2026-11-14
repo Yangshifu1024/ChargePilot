@@ -88,7 +88,7 @@ impl TelemetryBuffer {
     /// 入队一条样本；缓冲满时丢弃最旧并计数。
     pub fn push(&self, sample: Sample) {
         self.received.fetch_add(1, Ordering::Relaxed);
-        let mut queue = self.queue.lock().expect("遥测缓冲锁");
+        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
         if queue.len() >= BUFFER_CAPACITY {
             queue.pop_front();
             self.dropped.fetch_add(1, Ordering::Relaxed);
@@ -98,14 +98,14 @@ impl TelemetryBuffer {
 
     /// 取出全部样本（flush 用）。
     pub fn drain(&self) -> Vec<Sample> {
-        let mut queue = self.queue.lock().expect("遥测缓冲锁");
+        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
         queue.drain(..).collect()
     }
 
     /// 当前缓冲深度。
     #[must_use]
     pub fn depth(&self) -> usize {
-        self.queue.lock().expect("遥测缓冲锁").len()
+        self.queue.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// 累计丢弃计数。
@@ -137,7 +137,7 @@ fn build_buckets(samples: &[Sample], step_secs: i64, table: &str) -> HashMap<Buc
         let ts = s.ts.timestamp();
         let bucket_start = ts - ts.rem_euclid(step_secs);
         let start = chrono::DateTime::from_timestamp(bucket_start, 0)
-            .unwrap_or_else(|| s.ts)
+            .unwrap_or(s.ts)
             .to_owned();
         let key: BucketKey = (
             s.device_id.clone(),
@@ -207,7 +207,7 @@ pub async fn flush(pool: &MySqlPool, samples: &[Sample]) -> anyhow::Result<()> {
         for chunk in entries.chunks_mut(2000) {
             use chrono::Datelike as _;
             let mut builder = sqlx::query_builder::QueryBuilder::<sqlx::MySql>::default();
-            builder.push(&format!(
+            builder.push(format!(
                 "INSERT INTO `{table}` (`device_id`, `port_no`, `metric`, `{bucket_col}`, \
                  `{month_col}`, `avg_value`, `min_value`, `max_value`, `count`) VALUES "
             ));
@@ -243,7 +243,7 @@ pub async fn flush(pool: &MySqlPool, samples: &[Sample]) -> anyhow::Result<()> {
             }
             // 行别名取本批新行值；旧行必须显式表名限定（不带限定在新旧两侧行
             // 语境下会被 MySQL 判为 ambiguous，真库集成测试 1052 已验证）。
-            builder.push(&format!(
+            builder.push(format!(
                 " AS new ON DUPLICATE KEY UPDATE \
                  `avg_value` = (`{table}`.`avg_value` * `{table}`.`count` \
                    + new.`avg_value` * new.`count`) \
@@ -293,10 +293,10 @@ pub async fn run_flush_loop(
         if *shutdown.borrow() {
             // 停机冲刷：退出前把残余写入。
             let rest = buffer.drain();
-            if !rest.is_empty() {
-                if let Err(e) = flush(&pool, &rest).await {
-                    tracing::warn!(count = rest.len(), error = %e, "停机冲刷失败");
-                }
+            if !rest.is_empty()
+                && let Err(e) = flush(&pool, &rest).await
+            {
+                tracing::warn!(count = rest.len(), error = %e, "停机冲刷失败");
             }
             tracing::info!("遥测批量循环退出");
             return;
@@ -364,7 +364,7 @@ mod tests {
     fn buckets_split_across_hours() {
         let samples = vec![sample(100.0, 5), sample(200.0, 5)];
         let mut late = sample(300.0, 5);
-        late.ts = late.ts + chrono::Duration::hours(1);
+        late.ts += chrono::Duration::hours(1);
         let mut all = samples;
         all.push(late);
         let buckets = build_buckets(&all, 3600, "t");

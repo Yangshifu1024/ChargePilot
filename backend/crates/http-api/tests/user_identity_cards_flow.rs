@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 阶段 05 主缝集成测试：C 端手机号绑定/解绑、在线卡列表/状态变更、
 //! 订单反馈提交（真 MySQL + 真 Redis）。
 //! 断言只看 HTTP 响应（信封、码值、形状与文案），不看内部实现；

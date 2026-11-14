@@ -16,3 +16,6 @@ rust_xlsxwriter.workspace = true
 chargepilot-domain.workspace = true
 chargepilot-mod-ops.workspace = true
 chargepilot-mod-order.workspace = true
+
+[lints]
+workspace = true

@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 后台用户与在线卡主缝集成测试：用户列表/详情/充值页、卡列表/绑定/状态变更
 //! 与权限分支（旧版 admin/user 契约对齐）。种子自建自清理，全局流锁串行。
 
@@ -452,7 +458,7 @@ async fn admin_users_and_online_cards_flow() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|u| u["id"] == seed.user_a.to_string()),
+            .any(|u| u["id"] == seed.user_a),
         "号码片段应命中 A"
     );
     let (status, body) = req(
@@ -477,15 +483,11 @@ async fn admin_users_and_online_cards_flow() {
     assert_eq!(status, StatusCode::OK);
     let frozen_items = body["data"]["items"].as_array().unwrap();
     assert!(
-        frozen_items
-            .iter()
-            .any(|u| u["id"] == seed.user_b.to_string()),
+        frozen_items.iter().any(|u| u["id"] == seed.user_b),
         "frozen 筛选应含 B"
     );
     assert!(
-        !frozen_items
-            .iter()
-            .any(|u| u["id"] == seed.user_a.to_string()),
+        !frozen_items.iter().any(|u| u["id"] == seed.user_a),
         "frozen 筛选不应含 A"
     );
 

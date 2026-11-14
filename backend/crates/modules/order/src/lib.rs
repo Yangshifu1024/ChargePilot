@@ -236,7 +236,8 @@ pub async fn lock_for_lifecycle_tx(
     charge_order_id: u64,
     order_no: &str,
 ) -> Result<Option<LifecycleView>, OrderError> {
-    let row: Option<(
+    // 生命周期锁读投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type LifecycleRow = (
         u64,
         String,
         u64,
@@ -245,7 +246,8 @@ pub async fn lock_for_lifecycle_tx(
         String,
         Option<chrono::DateTime<chrono::Utc>>,
         Option<chrono::DateTime<chrono::Utc>>,
-    )> = sqlx::query_as(
+    );
+    let row: Option<LifecycleRow> = sqlx::query_as(
         "SELECT `id`, `order_no`, `user_id`, `device_id`, `port_no`, `status`, \
                     `started_at`, `ended_at` \
              FROM `charge_order` WHERE `id` = ? AND `order_no` = ? FOR UPDATE",

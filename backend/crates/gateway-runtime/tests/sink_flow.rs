@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 批 3 真库集成测试：设备注册（未导入拒绝）、心跳遥测批量落库、
 //! 端口上报状态、业务事件 device_event+domain_event 同事务落库、
 //! 会话审计行。串行锁内自建数据、尾部清理。

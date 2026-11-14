@@ -87,7 +87,10 @@ pub async fn move_tx(
     if n != 1 {
         return Err(WalletError::Storage("wallet row update lost".into()));
     }
-    let month = chrono::Utc::now().date_naive().with_day(1).expect("月首日");
+    let month = match chrono::Utc::now().date_naive().with_day(1) {
+        Some(d) => d,
+        None => panic!("月首日必然存在"),
+    };
     sqlx::query(
         "INSERT INTO `wallet_txn` (`txn_no`, `user_id`, `wallet_account_id`, `direction`, \
          `amount_cents`, `balance_after_cents`, `biz_type`, `biz_ref`, `note`, `created_month`) \

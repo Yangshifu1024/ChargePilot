@@ -42,13 +42,15 @@ impl chargepilot_mod_wallet::recharge::RechargePayments for RechargePaymentBridg
         payment_id: u64,
     ) -> BoxFuture<'a, Result<RechargePayment, chargepilot_mod_wallet::WalletError>> {
         Box::pin(async move {
-            let row: Option<(
+            // 支付单读投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+            type RechargeOrderRow = (
                 u64,
                 String,
                 i64,
                 String,
                 Option<chrono::DateTime<chrono::Utc>>,
-            )> = sqlx::query_as(
+            );
+            let row: Option<RechargeOrderRow> = sqlx::query_as(
                 "SELECT `id`, `order_no`, `total_cents`, `status`, `expired_at` \
                      FROM `payment_order` WHERE `id` = ?",
             )

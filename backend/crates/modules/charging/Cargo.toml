@@ -17,3 +17,6 @@ chargepilot-platform.workspace = true
 chargepilot-events.workspace = true
 chargepilot-mod-card.workspace = true
 chargepilot-mod-order.workspace = true
+
+[lints]
+workspace = true

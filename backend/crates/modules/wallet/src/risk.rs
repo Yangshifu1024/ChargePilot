@@ -234,7 +234,7 @@ impl RiskService {
                     &mut tx,
                     WalletRefundReservation {
                         request_id: request_id.to_string(),
-                        user_id: user_id as u64,
+                        user_id,
                         amount_cents,
                         reason: "wallet risk approved".into(),
                     },
@@ -327,7 +327,7 @@ impl RiskService {
             return Err(WalletError::RequestConflict);
         }
         // 锁序：钱包→冻结记录。
-        account::lock_wallet_account_tx(&mut tx, user_id as u64).await?;
+        account::lock_wallet_account_tx(&mut tx, user_id).await?;
         let (freeze_id, freeze_user, freeze_status, trigger_rule): (u64, u64, String, String) =
             sqlx::query_as(
                 "SELECT f.`id`, f.`user_id`, f.`status`, f.`trigger_rule` \
@@ -464,6 +464,9 @@ fn parse_receipt(v: serde_json::Value) -> Option<serde_json::Value> {
     match v {
         serde_json::Value::Null => None,
         serde_json::Value::String(s) => serde_json::from_str(&s).ok(),
-        other => Some(other),
+        serde_json::Value::Bool(b) => Some(serde_json::Value::Bool(b)),
+        serde_json::Value::Number(n) => Some(serde_json::Value::Number(n)),
+        serde_json::Value::Array(a) => Some(serde_json::Value::Array(a)),
+        serde_json::Value::Object(o) => Some(serde_json::Value::Object(o)),
     }
 }

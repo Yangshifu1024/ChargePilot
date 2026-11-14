@@ -39,10 +39,10 @@ pub enum PhoneError {
 impl From<sqlx::Error> for PhoneError {
     fn from(e: sqlx::Error) -> Self {
         // 并发同号最终由 uk_phone 唯一键仲裁（旧版 1062 → ErrPhoneTaken）。
-        if let sqlx::Error::Database(db) = &e {
-            if db.code().as_deref() == Some("23000") {
-                return PhoneError::Taken;
-            }
+        if let sqlx::Error::Database(db) = &e
+            && db.code().as_deref() == Some("23000")
+        {
+            return PhoneError::Taken;
         }
         PhoneError::Storage(anyhow::anyhow!(e.to_string()))
     }

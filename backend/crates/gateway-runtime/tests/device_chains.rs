@@ -1,3 +1,11 @@
+//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+#![allow(clippy::await_holding_lock)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::wildcard_enum_match_arm
+)]
+
 //! 阶段 06 设备事件链真库测试（TEST_MYSQL_URL 门控）：
 //! B6 刷卡（受理授权/余额不足拒绝/重放幂等）、C0 告警（生成/重放合并/
 //! 心跳恢复）、B4 本地启动补单（订单落地/B5 确认/卡无效拒绝）。
@@ -68,8 +76,12 @@ impl DeviceSession for FakeSession {
 
 /// 刷卡链测试上下文：站点 + 设备 + 端口 + 方案 + 用户 + 钱包 + 在线卡。
 struct CardCtx {
+    // 建链种子写入但断言不读；保留字段以对齐链路字段全集。
+    #[allow(dead_code)]
     station_id: u64,
     device_id: String,
+    // 建链种子写入但断言不读；保留以对齐链路字段全集。
+    #[allow(dead_code)]
     port_code: String,
     rule_id: u64,
     user_id: u64,
@@ -369,7 +381,7 @@ fn b4_data(port: u8, consumer: u8, card: u32, started: chrono::DateTime<chrono::
     d[1] = 1; // 状态充电
     let local = started.with_timezone(&chargepilot_protocol_dc589::china_offset());
     let civil = [
-        i32::from(local.year() % 100),
+        (local.year() % 100),
         local.month() as i32,
         local.day() as i32,
         local.hour() as i32,

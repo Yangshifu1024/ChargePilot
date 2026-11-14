@@ -24,7 +24,9 @@ pub async fn record_fault(
     received_at: chrono::DateTime<chrono::Utc>,
 ) -> StationResult<()> {
     let mut tx = pool.begin().await?;
-    let existing: Option<(u64, String, String, Option<String>, Option<String>)> = sqlx::query_as(
+    // 站点告警幂等投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type AlertIdemRow = (u64, String, String, Option<String>, Option<String>);
+    let existing: Option<AlertIdemRow> = sqlx::query_as(
         "SELECT `id`, `event_id`, `status`, \
                 DATE_FORMAT(`created_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00'), \
                 DATE_FORMAT(`resolved_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') \
@@ -50,11 +52,10 @@ pub async fn record_fault(
         if let Some(r) = resolved_at
             .and_then(|t| chrono::DateTime::parse_from_rfc3339(&t).ok())
             .map(|t| t.with_timezone(&chrono::Utc))
+            && received_at <= r
         {
-            if received_at <= r {
-                tx.commit().await?;
-                return Ok(()); // 已恢复后的旧事件
-            }
+            tx.commit().await?;
+            return Ok(()); // 已恢复后的旧事件
         }
         if status == "active" || status == "acknowledged" {
             // 升级合并：保留首次 created_at
@@ -69,7 +70,10 @@ pub async fn record_fault(
         }
     }
     // 新告警
-    let month = chrono::Utc::now().date_naive().with_day(1).expect("月首日");
+    let month = match chrono::Utc::now().date_naive().with_day(1) {
+        Some(d) => d,
+        None => panic!("月首日必然存在"),
+    };
     sqlx::query(
         "INSERT INTO `alert_event` (`device_id`, `severity`, `metric`, `value`, `status`, `event_id`, `created_at`, `created_month`) \
          VALUES (?, ?, ?, ?, 'active', ?, ?, ?)",

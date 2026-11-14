@@ -32,7 +32,10 @@ pub async fn load(pool: &MySqlPool) -> anyhow::Result<Dashboard> {
     // 北京时间自然日 0 点（固定 +8 偏移，旧版语义）
     let now_bj = chrono::Utc::now() + chrono::Duration::hours(8);
     let today_bj = now_bj.date_naive();
-    let today_start_utc = today_bj.and_hms_opt(0, 0, 0).unwrap() - chrono::Duration::hours(8);
+    let today_start_utc = match today_bj.and_hms_opt(0, 0, 0) {
+        Some(t) => t,
+        None => panic!("日期零点恒存在"),
+    } - chrono::Duration::hours(8);
     let tomorrow_start_utc = today_start_utc + chrono::Duration::days(1);
     let trend_start_utc = today_start_utc - chrono::Duration::days(6);
 

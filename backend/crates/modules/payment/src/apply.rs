@@ -60,6 +60,8 @@ impl From<sqlx::Error> for ApplyError {
 }
 
 impl From<chargepilot_mod_wallet::WalletError> for ApplyError {
+    // WalletError 通配以防跨域新增变体静默漏配（wildcard_enum_match_arm）。
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn from(e: chargepilot_mod_wallet::WalletError) -> Self {
         match e {
             chargepilot_mod_wallet::WalletError::RequestConflict => ApplyError::Conflict,
@@ -110,7 +112,8 @@ pub async fn apply_payment(
     let conn = tx.acquire().await?;
 
     // 先按渠道商户单号锁定支付订单，再按业务类型分流。
-    let order: Option<(
+    // 锁读投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type PayOrderRow = (
         u64,
         String,
         u64,
@@ -119,7 +122,8 @@ pub async fn apply_payment(
         String,
         Option<String>,
         chrono::NaiveDate,
-    )> = sqlx::query_as(
+    );
+    let order: Option<PayOrderRow> = sqlx::query_as(
         "SELECT `id`, `biz_type`, `biz_id`, `user_id`, `total_cents`, `status`, \
                     `wechat_transaction_id`, `created_month` \
              FROM `payment_order` WHERE `order_no` = ? FOR UPDATE",
@@ -150,10 +154,10 @@ pub async fn apply_payment(
         .bind(&payment.transaction_id)
         .fetch_optional(&mut *conn)
         .await?;
-        if let Some((previous_digest,)) = &previous {
-            if previous_digest != &digest {
-                return Err(ApplyError::Conflict);
-            }
+        if let Some((previous_digest,)) = &previous
+            && previous_digest != &digest
+        {
+            return Err(ApplyError::Conflict);
         }
         if order_status == PaymentStatus::PAID {
             if previous.is_none() {
@@ -208,7 +212,7 @@ pub async fn apply_payment(
         }
         chargepilot_mod_wallet::credit::credit_recharge_in_tx(
             &mut *conn,
-            order_user as u64,
+            order_user,
             &request_id,
             &digest,
             payment.paid_cents,
@@ -222,7 +226,8 @@ pub async fn apply_payment(
     }
 
     // 锁定支付意图并核对归属、付款人与金额。
-    let intent: Option<(
+    // 锁读投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    type IntentRow = (
         String,
         u64,
         u64,
@@ -237,7 +242,8 @@ pub async fn apply_payment(
         chrono::DateTime<chrono::Utc>,
         u64,
         i64,
-    )> = sqlx::query_as(
+    );
+    let intent: Option<IntentRow> = sqlx::query_as(
         "SELECT CAST(`intent_id` AS CHAR), `user_id`, `payment_order_id`, CAST(`openid` AS CHAR), \
                     `electric_cents`, `service_cents`, `charge_mode`, `charge_quantity`, \
                     `total_cents`, `port_code`, `charge_order_id`, `expires_at`, \
@@ -284,10 +290,10 @@ pub async fn apply_payment(
     .bind(&payment.transaction_id)
     .fetch_optional(&mut *conn)
     .await?;
-    if let Some((previous_digest,)) = &previous {
-        if previous_digest != &digest {
-            return Err(ApplyError::Conflict);
-        }
+    if let Some((previous_digest,)) = &previous
+        && previous_digest != &digest
+    {
+        return Err(ApplyError::Conflict);
     }
 
     let paid_status_like = order_status == PaymentStatus::PAID
@@ -466,13 +472,13 @@ pub async fn apply_payment(
     })?;
     let draft = chargepilot_mod_order::PaidOrderDraft {
         order_no: charge_no.clone(),
-        user_id: intent_user as u64,
+        user_id: intent_user,
         device_id: device_id.clone(),
         port_no,
         port_code,
         payment_order_id: order_id,
         charge_mode,
-        charge_quantity: charge_quantity as u16,
+        charge_quantity,
         discount_cents: intent_discount_cents,
     };
     let charge_order_id = chargepilot_mod_order::create_paid_in_tx(&mut *conn, &draft)
@@ -488,7 +494,7 @@ pub async fn apply_payment(
         &mut *conn,
         charge_order_id,
         &intent_id,
-        intent_user as u64,
+        intent_user,
         &draft.port_code,
         &serde_json::from_str::<serde_json::Value>(&snapshot_json)
             .map_err(|e| ApplyError::Storage(e.to_string()))?,

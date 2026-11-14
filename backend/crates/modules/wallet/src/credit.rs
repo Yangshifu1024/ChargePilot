@@ -30,10 +30,10 @@ pub async fn lock_recharge_for_payment_tx(
     .await?;
     let (request_id, user_id, amount_cents) = row.ok_or(WalletError::NotFound)?;
     // openid 是登录身份的固定标识，不由用户修改。只读，不反向取得用户行锁。
-    let openid = super::account::find_user_openid_tx(tx, user_id as u64).await?;
+    let openid = super::account::find_user_openid_tx(tx, user_id).await?;
     Ok(RechargeReceipt {
         request_id,
-        user_id: user_id as u64,
+        user_id,
         amount_cents,
         openid,
     })
@@ -82,7 +82,10 @@ pub async fn credit_recharge_in_tx(
         ));
     }
     let txn_no = format!("RC{}", digest[..32].to_uppercase());
-    let month = chrono::Utc::now().date_naive().with_day(1).expect("月首日");
+    let month = match chrono::Utc::now().date_naive().with_day(1) {
+        Some(d) => d,
+        None => panic!("月首日必然存在"),
+    };
     sqlx::query(
         "INSERT INTO `wallet_txn` (`txn_no`, `user_id`, `wallet_account_id`, `direction`, \
          `amount_cents`, `balance_after_cents`, `biz_type`, `biz_ref`, `note`, `created_month`) \
