@@ -255,14 +255,42 @@ pub async fn lock_for_lifecycle_tx(
     ))
 }
 
+/// 状态证据分派辅助：读取行内真实状态并构造对应证据类型（票 14 的唯一
+/// 构造入口 [`evidence_of`]）。行不存在返回 None。
+async fn read_state_evidence(
+    tx: &mut MySqlConnection,
+    charge_order_id: u64,
+    order_no: &str,
+) -> Result<Option<chargepilot_domain::charging_state::StateEvidence>, OrderError> {
+    let status: Option<ChargeOrderStatus> =
+        sqlx::query_scalar("SELECT `status` FROM `charge_order` WHERE `id` = ? AND `order_no` = ?")
+            .bind(charge_order_id as i64)
+            .bind(order_no)
+            .fetch_optional(tx)
+            .await?;
+    Ok(status.and_then(|st| {
+        chargepilot_domain::charging_state::evidence_of(
+            chargepilot_domain::charging_state::OrderId(charge_order_id),
+            st,
+        )
+    }))
+}
+
 /// 启动成功：paid → charging 并写业务启动时间（旧版 StartInTx 的状态推进）。
 /// 条件更新保证只在 paid 状态推进一次；RowsAffected==0 视为冲突。
+/// 返回目标状态证据（票 14：调用方消费证据类型，字面构造清零）。
 pub async fn mark_charging_tx(
     tx: &mut MySqlConnection,
     charge_order_id: u64,
     order_no: &str,
     started_at: chrono::DateTime<chrono::Utc>,
-) -> Result<(), OrderError> {
+) -> Result<chargepilot_domain::charging_state::ChargingOrder, OrderError> {
+    let paid = read_state_evidence(tx, charge_order_id, order_no)
+        .await?
+        .and_then(chargepilot_domain::charging_state::StateEvidence::into_paid)
+        .ok_or(OrderError::NumberConflict)?;
+    // 证据链：paid → charging（迁移 1）；条件 UPDATE 谓词保留为存储层双保险。
+    let charging = paid.activate();
     let n = sqlx::query(
         "UPDATE `charge_order` SET `status` = ?, `started_at` = ? \
          WHERE `id` = ? AND `order_no` = ? AND `status` = ?",
@@ -278,24 +306,26 @@ pub async fn mark_charging_tx(
     if n != 1 {
         return Err(OrderError::NumberConflict);
     }
-    Ok(())
+    Ok(charging)
 }
 
 /// 启动被拒（设备明确拒绝或超时兜底）：paid → refunding 并记录原因。
 /// 旧版 MarkStartRejectedInTx 语义——订单进入退款流程，渠道退款由执行器
 /// 按 refund_record 推进，成功收尾 refunding → refunded；failed 保持死值
 /// （state-machine.md 定案，旧版逐写点核实：生产零写入）。
+/// 返回目标状态证据（票 14）。
 pub async fn mark_start_rejected_tx(
     tx: &mut MySqlConnection,
     charge_order_id: u64,
     order_no: &str,
     reason: &str,
-) -> Result<(), OrderError> {
-    // 类型层迁移证明：paid 证据 → mark_start_rejected → refunding。
-    let _refunding = chargepilot_domain::charging_state::PaidOrder {
-        id: chargepilot_domain::charging_state::OrderId(charge_order_id),
-    }
-    .mark_start_rejected(reason);
+) -> Result<chargepilot_domain::charging_state::RefundingOrder, OrderError> {
+    let paid = read_state_evidence(tx, charge_order_id, order_no)
+        .await?
+        .and_then(chargepilot_domain::charging_state::StateEvidence::into_paid)
+        .ok_or(OrderError::NumberConflict)?;
+    // 证据链：paid → refunding（迁移 2）。
+    let refunding = paid.mark_start_rejected(reason);
     let n = sqlx::query(
         "UPDATE `charge_order` SET `status` = ?, `failure_reason` = ? \
          WHERE `id` = ? AND `order_no` = ? AND `status` = ?",
@@ -311,11 +341,12 @@ pub async fn mark_start_rejected_tx(
     if n != 1 {
         return Err(OrderError::NumberConflict);
     }
-    Ok(())
+    Ok(refunding)
 }
 
 /// 结束回执：charging → completed 并写计量列（旧版 CompleteInTx）。
 /// 电量文本由调用方按 Wh→kWh 四位小数换算（StringFixed(4) 语义）。
+/// 返回目标状态证据（票 14）。
 #[allow(clippy::too_many_arguments)]
 pub async fn complete_tx(
     tx: &mut MySqlConnection,
@@ -324,7 +355,13 @@ pub async fn complete_tx(
     ended_at: chrono::DateTime<chrono::Utc>,
     charged_kwh: &str,
     charged_seconds: i64,
-) -> Result<(), OrderError> {
+) -> Result<chargepilot_domain::charging_state::CompletedOrder, OrderError> {
+    let charging = read_state_evidence(tx, charge_order_id, order_no)
+        .await?
+        .and_then(chargepilot_domain::charging_state::StateEvidence::into_charging)
+        .ok_or(OrderError::NumberConflict)?;
+    // 证据链：charging → completed（迁移 3）。
+    let completed = charging.complete();
     let n = sqlx::query(
         "UPDATE `charge_order` SET `status` = ?, `ended_at` = ?, \
          `charged_kwh` = ?, `charged_seconds` = ? \
@@ -343,7 +380,7 @@ pub async fn complete_tx(
     if n != 1 {
         return Err(OrderError::NumberConflict);
     }
-    Ok(())
+    Ok(completed)
 }
 
 /// 预占端口（旧版 active_port_charge 写入）；重复预占冲突由主键仲裁。

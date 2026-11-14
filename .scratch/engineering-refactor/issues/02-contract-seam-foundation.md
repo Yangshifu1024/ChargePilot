@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-Status: ready-for-agent
+Status: done
 
 - [x] 路由清单常量与全部路由注册函数人工对齐一次，含绕过总装配直接合并路由的测试装配路径（或将其改回统一装配）
 - [x] 探测式断言覆盖每条清单项：错方法 405 / 未知路径 404 信封，双向成立

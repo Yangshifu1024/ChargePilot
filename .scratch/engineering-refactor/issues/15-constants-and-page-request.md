@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-Status: ready-for-agent
+Status: done
 
 - [x] 界限常量模块落地，各域内联魔法数替换完毕（含方案浮动下限、浮秒、功率上限）
 - [x] 充值与退款金额下界分列常量，无共享误用

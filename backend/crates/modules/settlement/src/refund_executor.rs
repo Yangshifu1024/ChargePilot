@@ -151,17 +151,37 @@ async fn execute_one(
         .await?;
     }
     // 充电订单：refunding → refunded（余款退清；旧版 SetStatusRefunded 语义）。
+    // 证据链（票 14）：读取行内状态分派证据，refunding → refunded（迁移 5）；
+    // 行不存在或状态非 refunding 时不迁移不更新——保留旧版条件 UPDATE 静默
+    // 0 行语义（后续事件照常登记，与原行为一致）。
     if biz_type == BizType::Charge {
-        sqlx::query(
-            "UPDATE `charge_order` SET `status` = ? \
-             WHERE `id` = ? AND `status` = ? AND `payment_order_id` = ?",
-        )
-        .bind(chargepilot_domain::order::ChargeOrderStatus::Refunded)
-        .bind(biz_id as i64)
-        .bind(chargepilot_domain::order::ChargeOrderStatus::Refunding)
-        .bind(payment_order_id as i64)
-        .execute(&mut *c)
-        .await?;
+        let order_status: Option<chargepilot_domain::order::ChargeOrderStatus> =
+            sqlx::query_scalar("SELECT `status` FROM `charge_order` WHERE `id` = ?")
+                .bind(biz_id as i64)
+                .fetch_optional(&mut *c)
+                .await?;
+        let refunding = order_status
+            .and_then(|st| {
+                chargepilot_domain::charging_state::evidence_of(
+                    chargepilot_domain::charging_state::OrderId(biz_id),
+                    st,
+                )
+            })
+            .and_then(chargepilot_domain::charging_state::StateEvidence::into_refunding);
+        if let Some(evidence) = refunding {
+            // 证据链：refunding → refunded（迁移 5）。
+            let _refunded = evidence.settle_refunded();
+            sqlx::query(
+                "UPDATE `charge_order` SET `status` = ? \
+                 WHERE `id` = ? AND `status` = ? AND `payment_order_id` = ?",
+            )
+            .bind(chargepilot_domain::order::ChargeOrderStatus::Refunded)
+            .bind(biz_id as i64)
+            .bind(chargepilot_domain::order::ChargeOrderStatus::Refunding)
+            .bind(payment_order_id as i64)
+            .execute(&mut *c)
+            .await?;
+        }
         let event_id = format!("RF{refund_id:020}");
         chargepilot_mod_order::append_event_in_tx(
             &mut *c,

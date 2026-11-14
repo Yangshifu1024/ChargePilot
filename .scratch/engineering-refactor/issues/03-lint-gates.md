@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-Status: ready-for-agent
+Status: done
 
 - [x] 工作区 lint 表生效：warnings=deny、correctness/suspicious/perf=deny、wildcard_enum_match_arm=deny、unwrap_used/expect_used=deny + 测试豁免开关
 - [x] clippy 配置文件建立（含 disallowed-methods 机制的空表占位与注释说明，禁令本体由票 16 填充）

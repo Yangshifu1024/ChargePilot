@@ -292,11 +292,32 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         .bind(chargepilot_mod_order::month_start_of(chrono::Utc::now()))
         .execute(&mut *c)
         .await?;
-        // 订单进入退款中（渠道退款成功后置 refunded）。
-        sqlx::query("UPDATE `charge_order` SET `status` = 'refunding' WHERE `id` = ? AND `status` = 'completed'")
-            .bind(charge_order_id as i64)
-            .execute(&mut *c)
-            .await?;
+        // 订单进入退款中（渠道退款成功后置 refunded）。证据链（票 14）：
+        // 读取行内状态分派证据，completed → refunding（迁移 4）；行不存在或
+        // 状态非 completed 时不迁移不更新——保留旧版条件 UPDATE 静默 0 行语义。
+        let order_status: Option<chargepilot_domain::order::ChargeOrderStatus> =
+            sqlx::query_scalar("SELECT `status` FROM `charge_order` WHERE `id` = ?")
+                .bind(charge_order_id as i64)
+                .fetch_optional(&mut *c)
+                .await?;
+        let completed = order_status
+            .and_then(|st| {
+                chargepilot_domain::charging_state::evidence_of(
+                    chargepilot_domain::charging_state::OrderId(charge_order_id),
+                    st,
+                )
+            })
+            .and_then(chargepilot_domain::charging_state::StateEvidence::into_completed);
+        if let Some(evidence) = completed {
+            // 证据链：completed → refunding（迁移 4）。
+            let _refunding = evidence.request_channel_refund();
+            sqlx::query("UPDATE `charge_order` SET `status` = ? WHERE `id` = ? AND `status` = ?")
+                .bind(chargepilot_domain::order::ChargeOrderStatus::Refunding)
+                .bind(charge_order_id as i64)
+                .bind(chargepilot_domain::order::ChargeOrderStatus::Completed)
+                .execute(&mut *c)
+                .await?;
+        }
     }
     // 订单事件 + 出站事件（结算完成信号）。
     let event_id = format!(

@@ -152,8 +152,9 @@ pub async fn apply_start_receipt(
 
     let event_id = format!("S{}", &input.command_id[..32.min(input.command_id.len())]);
     if input.success {
-        // paid → charging + 启动时间；命令 acked。
-        chargepilot_mod_order::mark_charging_tx(&mut *c, id, &order_no, occurred_at).await?;
+        // paid → charging + 启动时间；命令 acked。消费目标状态证据（票 14）。
+        let _charging =
+            chargepilot_mod_order::mark_charging_tx(&mut *c, id, &order_no, occurred_at).await?;
         // 端口占用（旧版成功分支写 activePortCharge，结束回执按订单释放；
         // 同端口重复占用由唯一键仲裁，重复启动回执在上方幂等分支已拦下）。
         chargepilot_mod_order::occupy_port_tx(
@@ -190,7 +191,8 @@ pub async fn apply_start_receipt(
     // 失败：订单 refunding（旧版 MarkStartRejectedInTx 语义）+ 登记自动渠道退款
     // + 出站事件；退款执行成功后由执行器收尾 refunding → refunded。
     let reason = format!("设备启动失败（结果码 {}）", input.result_code);
-    chargepilot_mod_order::mark_start_rejected_tx(&mut *c, id, &order_no, &reason).await?;
+    let _refunding =
+        chargepilot_mod_order::mark_start_rejected_tx(&mut *c, id, &order_no, &reason).await?;
     chargepilot_mod_card::fail_start_operation_tx(&mut *c, id).await?;
     let payment_order_id: u64 = sqlx::query_scalar(
         "SELECT `payment_order_id` FROM `charge_payment_intent` WHERE `charge_order_id` = ?",
@@ -363,7 +365,7 @@ pub async fn apply_end_receipt(
         / rust_decimal::Decimal::from(1000u32))
     .round_dp(4)
     .to_string();
-    chargepilot_mod_order::complete_tx(
+    let _completed = chargepilot_mod_order::complete_tx(
         &mut *c,
         input.charge_order_id,
         &input.order_no,

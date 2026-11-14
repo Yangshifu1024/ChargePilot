@@ -1,0 +1,5 @@
+error[E0451]: field `id` of struct `ChargingOrder` is private
+ --> tests/compile_fail/literal_construction_is_rejected.rs:6:29
+  |
+6 |     let _ = ChargingOrder { id: OrderId(1) }; //~ERROR field `id` of struct `ChargingOrder` is private
+  |                             ^^ private field

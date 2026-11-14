@@ -17,7 +17,7 @@ use chargepilot_mod_charging::{SimulationSink, StartDispatcher};
 use chargepilot_platform::ids::SegmentAllocator;
 use serde_json::json;
 use std::sync::Arc;
-use support::{TestApp, rand_suffix, req};
+use support::{TestApp, flow_lock, rand_suffix, req};
 
 /// 状态机测试互斥锁：端口预占依赖库中唯一事实。
 fn rand_uuid() -> String {
@@ -411,4 +411,91 @@ async fn state_machine_full_flow() {
         .execute(db.as_ref())
         .await;
     let _ = station_id;
+}
+
+/// 票 14 写点护航：设备拒绝启动的回执（ResultCode≠0）经
+/// `mark_start_rejected_tx` 的证据类型链推进 paid → refunding（迁移 2），
+/// 并登记自动渠道退款；同内容重放幂等返回 true、状态不漂移。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
+#[tokio::test]
+async fn start_rejected_receipt_writes_refunding_evidence() {
+    let _flow_lock = flow_lock();
+    let app = TestApp::builder().build().await;
+    let db = app.db;
+    let alloc = app.allocator;
+    let (station_id, device_id, port_code, rule_id) = seed_station_device_rule(&db, &alloc).await;
+    let user_id = alloc.next_id().await.unwrap();
+    let (charge_order_id, order_no, _merchant) =
+        create_paid_order(&db, &alloc, user_id, &device_id, &port_code, rule_id).await;
+    let _ = station_id;
+
+    let input = chargepilot_mod_charging::receipts::StartReceiptInput {
+        command_id: format!("CMD{}", rand_suffix()),
+        charge_order_id,
+        order_no: order_no.clone(),
+        device_id: device_id.clone(),
+        port_no: 1,
+        port_id: charge_order_id,
+        success: false,
+        result_code: 2,
+        occurred_at_unix_micros: chrono::Utc::now().timestamp_micros(),
+    };
+    let replayed = chargepilot_mod_charging::receipts::apply_start_receipt(db.as_ref(), &input)
+        .await
+        .expect("被拒回执应入库");
+    assert!(!replayed, "首次投递非重放");
+
+    // 订单推进 refunding + 失败原因（证据链 paid → refunding 的落库结果）。
+    let (order_status, failure_reason): (String, Option<String>) =
+        sqlx::query_as("SELECT `status`, `failure_reason` FROM `charge_order` WHERE `id` = ?")
+            .bind(charge_order_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
+    assert_eq!(order_status, "refunding", "启动被拒后订单应 refunding");
+    assert!(
+        failure_reason.unwrap_or_default().contains("2"),
+        "失败原因应含结果码"
+    );
+
+    // 被拒回执登记 + 自动渠道退款（pending，执行器收尾 refunding → refunded）。
+    let receipts: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM `charge_start_receipt` WHERE `charge_order_id` = ? AND `success` = 0",
+    )
+    .bind(charge_order_id as i64)
+    .fetch_one(db.as_ref())
+    .await
+    .unwrap();
+    assert_eq!(receipts, 1, "被拒回执应登记");
+    let (refund_no, refund_status): (String, String) = sqlx::query_as(
+        "SELECT `refund_no`, `status` FROM `refund_record` \
+         WHERE `biz_id` = ? AND `biz_type` = 'charge'",
+    )
+    .bind(charge_order_id as i64)
+    .fetch_one(db.as_ref())
+    .await
+    .unwrap();
+    assert!(refund_no.starts_with("WR"), "自动退款单号 WR 前缀");
+    assert_eq!(refund_status, "pending", "渠道退款待执行");
+
+    // 幂等：同内容重放返回 true，订单与退款记录不漂移。
+    let replayed = chargepilot_mod_charging::receipts::apply_start_receipt(db.as_ref(), &input)
+        .await
+        .expect("重放应成功");
+    assert!(replayed, "同内容重放应幂等返回 true");
+    let order_status: String =
+        sqlx::query_scalar("SELECT `status` FROM `charge_order` WHERE `id` = ?")
+            .bind(charge_order_id as i64)
+            .fetch_one(db.as_ref())
+            .await
+            .unwrap();
+    assert_eq!(order_status, "refunding", "重放不得二次推进");
+    let refund_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM `refund_record` WHERE `biz_id` = ? AND `biz_type` = 'charge'",
+    )
+    .bind(charge_order_id as i64)
+    .fetch_one(db.as_ref())
+    .await
+    .unwrap();
+    assert_eq!(refund_count, 1, "重放不得重复登记退款");
 }

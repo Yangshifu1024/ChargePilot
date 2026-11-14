@@ -39,22 +39,43 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
             .execute(&mut *conn)
             .await?;
         let mut tx = conn.begin().await?;
-        // 类型层迁移证明：paid 证据 → mark_start_rejected → refunding（超时出口
-        // 与设备拒绝启动同款路径，state-machine.md 迁移 2；failed 保持死值）。
-        let _refunding = chargepilot_domain::charging_state::PaidOrder {
-            id: chargepilot_domain::charging_state::OrderId(id),
-        }
-        .mark_start_rejected(reason);
-        let updated = sqlx::query(
-            "UPDATE `charge_order` SET `status` = 'refunding', `failure_reason` = ? \
-             WHERE `id` = ? AND `order_no` = ? AND `status` = 'paid'",
-        )
-        .bind(reason)
-        .bind(id as i64)
-        .bind(&order_no)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
+        // 证据链（票 14）：事务内读取行内状态分派证据，paid → refunding
+        // （超时出口与设备拒绝启动同款路径，state-machine.md 迁移 2；failed
+        // 保持死值）。行不存在或状态已非 paid 时不迁移不更新——与旧版条件
+        // UPDATE 静默 0 行语义一致（updated != 1 跳过该行）。
+        let order_status: Option<chargepilot_domain::order::ChargeOrderStatus> =
+            sqlx::query_scalar(
+                "SELECT `status` FROM `charge_order` WHERE `id` = ? AND `order_no` = ?",
+            )
+            .bind(id as i64)
+            .bind(&order_no)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let paid = order_status
+            .and_then(|st| {
+                chargepilot_domain::charging_state::evidence_of(
+                    chargepilot_domain::charging_state::OrderId(id),
+                    st,
+                )
+            })
+            .and_then(chargepilot_domain::charging_state::StateEvidence::into_paid);
+        let updated = if let Some(evidence) = paid {
+            let _refunding = evidence.mark_start_rejected(reason);
+            sqlx::query(
+                "UPDATE `charge_order` SET `status` = ?, `failure_reason` = ? \
+                 WHERE `id` = ? AND `order_no` = ? AND `status` = ?",
+            )
+            .bind(chargepilot_domain::order::ChargeOrderStatus::Refunding)
+            .bind(reason)
+            .bind(id as i64)
+            .bind(&order_no)
+            .bind(chargepilot_domain::order::ChargeOrderStatus::Paid)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+        } else {
+            0
+        };
         if updated == 1 {
             let payment_order_id: u64 = sqlx::query_scalar(
                 "SELECT `payment_order_id` FROM `charge_payment_intent` WHERE `charge_order_id` = ?",

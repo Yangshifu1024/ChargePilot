@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-Status: ready-for-agent
+Status: done
 
 - [x] 对照表覆盖全部 63 列，逐列登记三方信息与未知值策略，落 docs/design/
 - [x] 跨表混装类型的拆型方案显式化（支付单/订单支付轴/支付意图三者的目标枚举名与归属）

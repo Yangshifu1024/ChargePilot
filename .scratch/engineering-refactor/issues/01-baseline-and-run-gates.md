@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-Status: ready-for-agent
+Status: done
 
 - [x] 任务脚本新增 test-integration 入口：注入 MySQL/Redis 连接变量，支持库重建或按前缀清理（防止多轮残留干扰频次窗口类断言）
 - [x] 全部真库门控测试（约 21 个集成文件 + 内嵌的会话令牌脚本回归测试）改为静态忽略标记，日常 check 汇总行可见忽略计数
