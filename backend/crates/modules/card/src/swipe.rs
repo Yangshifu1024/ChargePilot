@@ -306,7 +306,7 @@ impl SwipeService {
             return Err(SwipeError::CardDeclined);
         }
         // 用户可用性与 openid（intent 列非空；刷卡用户即绑定用户）。
-        let user: Option<(String, Vec<u8>)> =
+        let user: Option<(chargepilot_domain::identity::UserStatus, Vec<u8>)> =
             sqlx::query_as("SELECT `status`, `openid` FROM `user` WHERE `id` = ? FOR UPDATE")
                 .bind(card.user_id as i64)
                 .fetch_optional(&mut *c)
@@ -314,7 +314,7 @@ impl SwipeService {
         let Some((user_status, openid)) = user else {
             return Err(SwipeError::CardDeclined);
         };
-        if user_status != "active" {
+        if user_status != chargepilot_domain::identity::UserStatus::Active {
             return Err(SwipeError::CardDeclined);
         }
         let mut wallet = lock_tx(&mut *c, card.user_id)
