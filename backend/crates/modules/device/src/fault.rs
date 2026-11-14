@@ -2,6 +2,9 @@
 //! 同状态重放静默成功，跳级/回退 409；fixed 须非空 note——旧版语义）。
 
 use super::{DeviceError, StationResult};
+use chargepilot_domain::device::{
+    FaultReportEventType, FaultReportSource, FaultReportStatus, FaultType,
+};
 use chargepilot_mod_ops::Profile;
 use chargepilot_mod_ops::repo;
 use serde_json::{Value, json};
@@ -37,12 +40,8 @@ pub async fn submit(
     if input.device_id.is_empty() || input.device_id.chars().count() > 64 {
         return Err(DeviceError::Input("请提供有效的设备编号".into()));
     }
-    if !matches!(
-        input.fault_type.as_str(),
-        "mechanical" | "electrical" | "communication" | "display" | "other"
-    ) {
-        return Err(DeviceError::Input("故障类型无效".into()));
-    }
+    let fault_type = FaultType::parse(input.fault_type.as_str())
+        .map_err(|_| DeviceError::Input("故障类型无效".into()))?;
     if input
         .description
         .as_ref()
@@ -57,22 +56,27 @@ pub async fn submit(
     let id = allocator.next_id().await.map_err(DeviceError::from)?;
     sqlx::query(
         "INSERT INTO `device_fault_report` (`id`, `device_id`, `user_id`, `report_source`, `fault_type`, `description`, `images_json`, `status`) \
-         VALUES (?, ?, ?, 'user', ?, ?, ?, 'open')",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(&input.device_id)
     .bind(user_id)
-    .bind(&input.fault_type)
+    .bind(FaultReportSource::User)
+    .bind(fault_type)
     .bind(&input.description)
     .bind(if input.images.is_empty() { None } else { Some(json!(input.images)) })
+    .bind(FaultReportStatus::Open)
     .execute(&mut *tx)
     .await?;
     sqlx::query(
         "INSERT INTO `device_fault_report_event` (`report_id`, `actor_id`, `event_type`, `from_status`, `to_status`, `assigned_to`, `note`, `user_visible`) \
-         VALUES (?, ?, 'reported', '', 'open', ?, '用户提交报修', 1)",
+         VALUES (?, ?, ?, ?, ?, ?, '用户提交报修', 1)",
     )
     .bind(id)
     .bind(user_id)
+    .bind(FaultReportEventType::Reported)
+    .bind("")
+    .bind(FaultReportStatus::Open.as_str())
     .bind(user_id)
     .execute(&mut *tx)
     .await?;
@@ -211,10 +215,11 @@ pub async fn admin_history(pool: &MySqlPool, report_id: u64) -> StationResult<Ve
 }
 
 /// 相邻状态机（旧版 CanTransitionFault）。
-fn can_transition(from: &str, to: &str) -> bool {
+fn can_transition(from: FaultReportStatus, to: FaultReportStatus) -> bool {
+    use FaultReportStatus::*;
     matches!(
         (from, to),
-        ("open", "dispatched") | ("dispatched", "fixed") | ("fixed", "closed")
+        (Open, Dispatched) | (Dispatched, Fixed) | (Fixed, Closed)
     )
 }
 
@@ -244,14 +249,14 @@ pub async fn dispatch(
     {
         return Err(DeviceError::Forbidden);
     }
-    let (current, assigned): (String, Option<u64>) = sqlx::query_as(
+    let (current, assigned): (FaultReportStatus, Option<u64>) = sqlx::query_as(
         "SELECT `status`, `assigned_to` FROM `device_fault_report` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
     )
     .bind(report_id)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(DeviceError::NotFound)?;
-    if current != "open" && current != "dispatched" {
+    if current != FaultReportStatus::Open && current != FaultReportStatus::Dispatched {
         return Err(DeviceError::Conflict("当前状态不允许派单".into()));
     }
     if assigned == Some(assigned_to) {
@@ -272,24 +277,26 @@ pub async fn dispatch(
     if assignee_ok.is_none() {
         return Err(DeviceError::Input("被指派人不存在或无处理权限".into()));
     }
-    let event_type = if current == "open" {
-        "dispatched"
+    let event_type = if current == FaultReportStatus::Open {
+        FaultReportEventType::Dispatched
     } else {
-        "reassigned"
+        FaultReportEventType::Reassigned
     };
-    sqlx::query("UPDATE `device_fault_report` SET `status` = 'dispatched', `assigned_to` = ? WHERE `id` = ?")
+    sqlx::query("UPDATE `device_fault_report` SET `status` = ?, `assigned_to` = ? WHERE `id` = ?")
+        .bind(FaultReportStatus::Dispatched)
         .bind(assigned_to)
         .bind(report_id)
         .execute(&mut *tx)
         .await?;
     sqlx::query(
         "INSERT INTO `device_fault_report_event` (`report_id`, `actor_id`, `event_type`, `from_status`, `to_status`, `assigned_to`, `note`, `user_visible`) \
-         VALUES (?, ?, ?, ?, 'dispatched', ?, ?, 1)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
     )
     .bind(report_id)
     .bind(actor.id)
     .bind(event_type)
-    .bind(&current)
+    .bind(current.as_str())
+    .bind(FaultReportStatus::Dispatched.as_str())
     .bind(assigned_to)
     .bind(&note)
     .execute(&mut *tx)
@@ -322,7 +329,12 @@ pub async fn resolve(
     ip: &str,
     request_id: &str,
 ) -> StationResult<u64> {
-    if !matches!(to_status, "fixed" | "closed") {
+    let to_status = FaultReportStatus::parse(to_status)
+        .map_err(|_| DeviceError::Input("目标状态无效".into()))?;
+    if !matches!(
+        to_status,
+        FaultReportStatus::Fixed | FaultReportStatus::Closed
+    ) {
         return Err(DeviceError::Input("目标状态无效".into()));
     }
     let mut tx = pool.begin().await?;
@@ -336,7 +348,7 @@ pub async fn resolve(
     {
         return Err(DeviceError::Forbidden);
     }
-    let (current, assigned): (String, Option<u64>) = sqlx::query_as(
+    let (current, assigned): (FaultReportStatus, Option<u64>) = sqlx::query_as(
         "SELECT `status`, `assigned_to` FROM `device_fault_report` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
     )
     .bind(report_id)
@@ -350,17 +362,20 @@ pub async fn resolve(
         tx.commit().await?;
         return Ok(report_id); // 同状态重放静默
     }
-    if !can_transition(&current, to_status) {
+    if !can_transition(current, to_status) {
         return Err(DeviceError::Conflict(format!(
-            "工单不允许从 {current} 迁移到 {to_status}"
+            "工单不允许从 {} 迁移到 {}",
+            current.as_str(),
+            to_status.as_str()
         )));
     }
-    if to_status == "fixed" && note.as_ref().is_none_or(|n| n.trim().is_empty()) {
+    if to_status == FaultReportStatus::Fixed && note.as_ref().is_none_or(|n| n.trim().is_empty()) {
         return Err(DeviceError::Input("标记已修复须填写处理说明".into()));
     }
-    sqlx::query("UPDATE `device_fault_report` SET `status` = ?, `resolved_at` = IF(? = 'fixed', UTC_TIMESTAMP(3), `resolved_at`) WHERE `id` = ?")
+    sqlx::query("UPDATE `device_fault_report` SET `status` = ?, `resolved_at` = IF(? = ?, UTC_TIMESTAMP(3), `resolved_at`) WHERE `id` = ?")
         .bind(to_status)
         .bind(to_status)
+        .bind(FaultReportStatus::Fixed)
         .bind(report_id)
         .execute(&mut *tx)
         .await?;
@@ -371,20 +386,20 @@ pub async fn resolve(
     .bind(report_id)
     .bind(actor.id)
     .bind(to_status)
-    .bind(&current)
-    .bind(to_status)
+    .bind(current.as_str())
+    .bind(to_status.as_str())
     .bind(&note)
     .execute(&mut *tx)
     .await?;
-    let after = json!({"report_id": report_id, "status": to_status});
+    let after = json!({"report_id": report_id, "status": to_status.as_str()});
     repo::append_audit_tx(
         &mut tx,
         &actor_locked,
         "device_fault_report",
-        to_status,
+        to_status.as_str(),
         "device_fault_report",
         &report_id.to_string(),
-        &json!({"from": current}),
+        &json!({"from": current.as_str()}),
         &after,
         ip,
         request_id,

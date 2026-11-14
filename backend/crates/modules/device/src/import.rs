@@ -3,6 +3,9 @@
 //! 在单体内合并为一个业务事务；device_provision/device/device_port 的导入写入归 device 域。
 
 use super::{DeviceError, StationResult};
+use chargepilot_domain::device::{
+    DeviceImportStatus, DeviceMetaStatus, DevicePortStatus, StationStatus,
+};
 use chargepilot_mod_ops::Profile;
 use chargepilot_mod_ops::repo;
 use serde::Deserialize;
@@ -100,16 +103,17 @@ pub async fn import_devices(
 
     // 导入任务幂等登记
     let inserted = sqlx::query(
-        "INSERT IGNORE INTO `device_import` (`import_id`, `actor_id`, `request_json`, `status`) VALUES (?, ?, ?, 'pending')",
+        "INSERT IGNORE INTO `device_import` (`import_id`, `actor_id`, `request_json`, `status`) VALUES (?, ?, ?, ?)",
     )
     .bind(&input.import_id)
     .bind(actor.id)
     .bind(serde_json::to_value(&input)?)
+    .bind(DeviceImportStatus::Pending)
     .execute(&mut *tx)
     .await?
     .rows_affected();
     let _ = inserted;
-    let (status, request_json): (String, serde_json::Value) = sqlx::query_as(
+    let (status, request_json): (DeviceImportStatus, serde_json::Value) = sqlx::query_as(
         "SELECT `status`, `request_json` FROM `device_import` WHERE `import_id` = ? FOR UPDATE",
     )
     .bind(&input.import_id)
@@ -119,7 +123,7 @@ pub async fn import_devices(
     if parsed_again.devices.len() != input.devices.len() {
         return Err(DeviceError::Conflict("导入请求与首次提交不一致".into()));
     }
-    if status == "completed" {
+    if status == DeviceImportStatus::Completed {
         tx.commit().await?;
         return Ok(0); // 重放：已完成任务不再开通不再审计
     }
@@ -145,8 +149,9 @@ pub async fn import_devices(
         }
         // 站点核对（active）
         let station_ok: Option<u64> =
-            sqlx::query_scalar("SELECT `id` FROM `station` WHERE `id` = ? AND `status` = 'active' AND `deleted_at` IS NULL FOR SHARE")
+            sqlx::query_scalar("SELECT `id` FROM `station` WHERE `id` = ? AND `status` = ? AND `deleted_at` IS NULL FOR SHARE")
                 .bind(d.station_id)
+                .bind(StationStatus::Active)
                 .fetch_optional(&mut *tx)
                 .await?;
         if station_ok.is_none() {
@@ -233,13 +238,14 @@ pub async fn import_devices(
                 .await?;
                 for port in 1..=d.port_count {
                     sqlx::query(
-                        "INSERT INTO `device_port` (`device_id`, `port_no`, `port_code`, `status`) VALUES (?, ?, ?, 'idle')",
+                        "INSERT INTO `device_port` (`device_id`, `port_no`, `port_code`, `status`) VALUES (?, ?, ?, ?)",
                     )
                     // device_port.device_id 是 varchar 设备全局编号（schema 注释
                     // 真相源），与扫描/遥测/占用各读写点一致，不是 device.id 数字键。
                     .bind(&d.device_id)
                     .bind(port)
                     .bind(format!("{}-{}", d.device_id, port))
+                    .bind(DevicePortStatus::Idle)
                     .execute(&mut *tx)
                     .await?;
                 }
@@ -255,7 +261,7 @@ pub async fn import_devices(
             let meta_id = allocator.next_id().await.map_err(DeviceError::from)?;
             sqlx::query(
                 "INSERT INTO `device_meta` (`id`, `device_id`, `station_id`, `vendor_id`, `model`, `protocol_adapter`, `charge_mode`, `status`) \
-                 VALUES (?, ?, ?, ?, ?, 'dc589', ?, 'enabled')",
+                 VALUES (?, ?, ?, ?, ?, 'dc589', ?, ?)",
             )
             .bind(meta_id)
             .bind(&d.device_id)
@@ -263,6 +269,7 @@ pub async fn import_devices(
             .bind(d.vendor_id)
             .bind(&d.model)
             .bind(d.charge_mode.as_deref().unwrap_or("device_duration"))
+            .bind(DeviceMetaStatus::Enabled)
             .execute(&mut *tx)
             .await?;
         }
@@ -271,8 +278,9 @@ pub async fn import_devices(
 
     // 任务完成 + 审计
     sqlx::query(
-        "UPDATE `device_import` SET `status` = 'completed', `attempts` = `attempts` + 1, `retryable` = 0 WHERE `import_id` = ?",
+        "UPDATE `device_import` SET `status` = ?, `attempts` = `attempts` + 1, `retryable` = 0 WHERE `import_id` = ?",
     )
+    .bind(DeviceImportStatus::Completed)
     .bind(&input.import_id)
     .execute(&mut *tx)
     .await?;

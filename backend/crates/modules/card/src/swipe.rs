@@ -302,7 +302,7 @@ impl SwipeService {
                 replayed: true,
             });
         }
-        if card.status != CardStatus::ACTIVE {
+        if card.status != CardStatus::Active {
             return Err(SwipeError::CardDeclined);
         }
         // 用户可用性与 openid（intent 列非空；刷卡用户即绑定用户）。
@@ -388,7 +388,7 @@ impl SwipeService {
                          WHERE `charge_order_id` = ? AND `status` = ?",
                 )
                 .bind(order_id as i64)
-                .bind(CardOperationStatus::CONFIRMING)
+                .bind(CardOperationStatus::Confirming)
                 .fetch_one(&mut *c)
                 .await?;
                 let available = wallet.balance_cents - wallet.frozen_cents;
@@ -450,10 +450,10 @@ impl SwipeService {
                 .bind(&input.event_id)
                 .bind(order_id as i64)
                 .bind(card.id as i64)
-                .bind(CardOperationKind::EXTEND)
+                .bind(CardOperationKind::Extend)
                 .bind(package.price_cents)
                 .bind(package.minutes as i64)
-                .bind(CardOperationStatus::CONFIRMED)
+                .bind(CardOperationStatus::Confirmed)
                 .execute(&mut *c)
                 .await?;
                 append_event_in_tx(
@@ -475,10 +475,10 @@ impl SwipeService {
                 return Ok(CardOperationResult {
                     operation_id,
                     charge_order_id: order_id,
-                    kind: CardOperationKind::EXTEND.to_string(),
+                    kind: CardOperationKind::Extend.as_str().to_owned(),
                     price_cents: package.price_cents,
                     minutes: package.minutes.min(u16::MAX as u64) as u16,
-                    status: CardOperationStatus::CONFIRMED.to_string(),
+                    status: CardOperationStatus::Confirmed.as_str().to_owned(),
                     replayed: false,
                 });
             }
@@ -723,10 +723,10 @@ async fn start_purchase_in_tx(
     .bind(&input.event_id)
     .bind(charge_order_id as i64)
     .bind(card_id as i64)
-    .bind(CardOperationKind::START)
+    .bind(CardOperationKind::Start)
     .bind(package.price_cents)
     .bind(package.minutes as i64)
-    .bind(CardOperationStatus::CONFIRMING)
+    .bind(CardOperationStatus::Confirming)
     .execute(&mut *c)
     .await?;
     // 订单事件 + 出站事件：驱动 StartDispatcher 下发启动命令（与支付链同构）。
@@ -758,10 +758,10 @@ async fn start_purchase_in_tx(
     .await
     .map_err(map_order_error)?;
     Ok((
-        CardOperationKind::START.to_string(),
+        CardOperationKind::Start.as_str().to_owned(),
         charge_order_id,
         package.clone(),
-        CardOperationStatus::CONFIRMING.to_string(),
+        CardOperationStatus::Confirming.as_str().to_owned(),
     ))
 }
 
@@ -805,10 +805,10 @@ pub async fn confirm_start_operation_tx(
         "UPDATE `card_operation` SET `status` = ?, `confirmed_at` = UTC_TIMESTAMP(3) \
          WHERE `charge_order_id` = ? AND `kind` = ? AND `status` = ?",
     )
-    .bind(CardOperationStatus::CONFIRMED)
+    .bind(CardOperationStatus::Confirmed)
     .bind(charge_order_id as i64)
-    .bind(CardOperationKind::START)
-    .bind(CardOperationStatus::CONFIRMING)
+    .bind(CardOperationKind::Start)
+    .bind(CardOperationStatus::Confirming)
     .execute(&mut *c)
     .await?;
     Ok(())
@@ -823,10 +823,10 @@ pub async fn fail_start_operation_tx(
         "UPDATE `card_operation` SET `status` = ? \
          WHERE `charge_order_id` = ? AND `kind` = ? AND `status` = ?",
     )
-    .bind(CardOperationStatus::FAILED)
+    .bind(CardOperationStatus::Failed)
     .bind(charge_order_id as i64)
-    .bind(CardOperationKind::START)
-    .bind(CardOperationStatus::CONFIRMING)
+    .bind(CardOperationKind::Start)
+    .bind(CardOperationStatus::Confirming)
     .execute(&mut *c)
     .await?;
     Ok(())

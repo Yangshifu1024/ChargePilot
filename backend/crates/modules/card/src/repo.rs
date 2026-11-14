@@ -9,7 +9,7 @@ pub struct OnlineCardRow {
     pub id: u64,
     pub card_no: String,
     pub user_id: u64,
-    pub status: String,
+    pub status: chargepilot_domain::card::CardStatus,
 }
 
 /// 刷卡会话行（card_charge）：占用、累计购买与首购冻结快照。

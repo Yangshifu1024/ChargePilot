@@ -3,6 +3,7 @@
 //! 本轮交付服务函数与后台查询路由。
 
 use super::{DeviceError, StationResult};
+use chargepilot_domain::device::AlertStatus;
 use chargepilot_mod_ops::Profile;
 use chargepilot_mod_ops::repo;
 use chrono::Datelike as _;
@@ -25,7 +26,7 @@ pub async fn record_fault(
 ) -> StationResult<()> {
     let mut tx = pool.begin().await?;
     // 站点告警幂等投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
-    type AlertIdemRow = (u64, String, String, Option<String>, Option<String>);
+    type AlertIdemRow = (u64, String, AlertStatus, Option<String>, Option<String>);
     let existing: Option<AlertIdemRow> = sqlx::query_as(
         "SELECT `id`, `event_id`, `status`, \
                 DATE_FORMAT(`created_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00'), \
@@ -57,7 +58,7 @@ pub async fn record_fault(
             tx.commit().await?;
             return Ok(()); // 已恢复后的旧事件
         }
-        if status == "active" || status == "acknowledged" {
+        if status == AlertStatus::Active || status == AlertStatus::Acknowledged {
             // 升级合并：保留首次 created_at
             sqlx::query("UPDATE `alert_event` SET `event_id` = ?, `value` = ? WHERE `id` = ?")
                 .bind(event_id)
@@ -76,12 +77,13 @@ pub async fn record_fault(
     };
     sqlx::query(
         "INSERT INTO `alert_event` (`device_id`, `severity`, `metric`, `value`, `status`, `event_id`, `created_at`, `created_month`) \
-         VALUES (?, ?, ?, ?, 'active', ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device_id)
     .bind(severity)
     .bind(metric)
     .bind(value as f64)
+    .bind(AlertStatus::Active)
     .bind(event_id)
     .bind(received_at)
     .bind(month)
@@ -100,13 +102,16 @@ pub async fn auto_resolve(
     resolved_at: chrono::DateTime<chrono::Utc>,
 ) -> StationResult<bool> {
     let n = sqlx::query(
-        "UPDATE `alert_event` SET `status` = 'auto_resolved', `resolved_at` = ? \
-         WHERE `id` = ? AND `created_month` = ? AND `event_id` = ? AND `status` IN ('active','acknowledged')",
+        "UPDATE `alert_event` SET `status` = ?, `resolved_at` = ? \
+         WHERE `id` = ? AND `created_month` = ? AND `event_id` = ? AND `status` IN (?, ?)",
     )
+    .bind(AlertStatus::AutoResolved)
     .bind(resolved_at)
     .bind(alert_id)
     .bind(created_month)
     .bind(old_event_id)
+    .bind(AlertStatus::Active)
+    .bind(AlertStatus::Acknowledged)
     .execute(pool)
     .await?
     .rows_affected();
@@ -121,7 +126,7 @@ pub struct AlertRow {
     pub device_id: String,
     pub severity: String,
     pub metric: String,
-    pub status: String,
+    pub status: AlertStatus,
     pub created_at: Option<String>,
 }
 
@@ -129,9 +134,11 @@ pub async fn list(pool: &MySqlPool) -> StationResult<Vec<AlertRow>> {
     sqlx::query_as::<_, AlertRow>(
         "SELECT `id`, `created_month`, `device_id`, `severity`, `metric`, `status`, \
                 DATE_FORMAT(`created_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `created_at` \
-         FROM `alert_event` WHERE `status` IN ('active','acknowledged') \
+         FROM `alert_event` WHERE `status` IN (?, ?) \
          ORDER BY `created_at` DESC, `id` DESC LIMIT 200",
     )
+    .bind(AlertStatus::Active)
+    .bind(AlertStatus::Acknowledged)
     .fetch_all(pool)
     .await
     .map_err(DeviceError::from)
@@ -152,21 +159,22 @@ pub async fn ack(
     if !actor_locked.permissions.iter().any(|p| p == "alert.ack") {
         return Err(DeviceError::Forbidden);
     }
-    let (id, _created_month, status): (u64, chrono::NaiveDate, String) = sqlx::query_as(
+    let (id, _created_month, status): (u64, chrono::NaiveDate, AlertStatus) = sqlx::query_as(
         "SELECT `id`, `created_month`, `status` FROM `alert_event` WHERE `id` = ? FOR UPDATE",
     )
     .bind(alert_id)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(DeviceError::NotFound)?;
-    if status == "acknowledged" {
+    if status == AlertStatus::Acknowledged {
         tx.commit().await?;
         return Ok(id); // 重放静默
     }
-    if status != "active" {
+    if status != AlertStatus::Active {
         return Err(DeviceError::Conflict("当前状态不允许认领".into()));
     }
-    sqlx::query("UPDATE `alert_event` SET `status` = 'acknowledged', `acked_by` = ?, `acked_at` = UTC_TIMESTAMP(3) WHERE `id` = ?")
+    sqlx::query("UPDATE `alert_event` SET `status` = ?, `acked_by` = ?, `acked_at` = UTC_TIMESTAMP(3) WHERE `id` = ?")
+        .bind(AlertStatus::Acknowledged)
         .bind(actor.id)
         .bind(id)
         .execute(&mut *tx)

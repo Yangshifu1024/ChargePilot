@@ -2,35 +2,43 @@
 //! 语义基准：旧仓库 internal/domain/card/*.go 与 internal/card/extension.go，逐行对齐。
 
 use crate::charging_scheme::Package;
+use crate::wordlist::wordlist_enum;
 
-/// 在线卡状态词表（online_card.status）。
-pub struct CardStatus;
-impl CardStatus {
-    pub const ACTIVE: &'static str = "active";
-    pub const LOST: &'static str = "lost";
-    pub const DISABLED: &'static str = "disabled";
-    pub const UNBOUND: &'static str = "unbound";
-}
+wordlist_enum!(
+    /// online_card.status 列的在线卡状态（四值）。
+    CardStatus: {
+        Active = "active",
+        Lost = "lost",
+        Disabled = "disabled",
+        Unbound = "unbound",
+    }
+);
 
-/// 刷卡操作种类词表（card_operation.kind）。
-pub struct CardOperationKind;
-impl CardOperationKind {
-    /// 首购启动。
-    pub const START: &'static str = "start";
-    /// 充电中续购加时。
-    pub const EXTEND: &'static str = "extend";
-}
+wordlist_enum!(
+    /// card_operation.kind 列的刷卡操作种类（两值）。
+    CardOperationKind: {
+        Start = "start",
+        Extend = "extend",
+    }
+);
 
-/// 刷卡操作状态词表（card_operation.status）。
-pub struct CardOperationStatus;
-impl CardOperationStatus {
-    /// 待启动确认（首购后命令回执前）。
-    pub const CONFIRMING: &'static str = "confirming";
-    /// 已确认（续购即时确认；首购启动回执确认）。
-    pub const CONFIRMED: &'static str = "confirmed";
-    /// 已失败（启动失败退款路径）。
-    pub const FAILED: &'static str = "failed";
-}
+wordlist_enum!(
+    /// card_operation.status 列的刷卡操作状态（三值）。
+    CardOperationStatus: {
+        Confirming = "confirming",
+        Confirmed = "confirmed",
+        Failed = "failed",
+    }
+);
+
+wordlist_enum!(
+    /// card_event_delivery.status 列的卡事件投递状态（两值）。
+    /// 该表当前无 Rust 写点（事件投递接线后的落点，票 10 范围内先建型）。
+    CardDeliveryStatus: {
+        Pending = "pending",
+        Done = "done",
+    }
+);
 
 /// 判断同卡是否可购买正价时长套餐（旧版 CanExtend）。
 /// 首购传 `card == order_card` 恒真、`purchased = 0`；续购传会话的卡与累计值。
@@ -136,5 +144,51 @@ mod tests {
         assert!(!valid_card_no("4294967296")); // 超出 32 位协议范围
         assert!(!valid_card_no("abc"));
         assert!(!valid_card_no(&"9".repeat(65)));
+    }
+}
+
+#[cfg(test)]
+mod wordlist_tests {
+    use super::*;
+
+    /// 字面量对照（票 10 硬规则）：serde 输出与 DB ENUM 字面量逐字节一致。
+    #[test]
+    fn db_literals_match_serde() {
+        use serde_json::to_string as json;
+        let card = [
+            (CardStatus::Active, "active"),
+            (CardStatus::Lost, "lost"),
+            (CardStatus::Disabled, "disabled"),
+            (CardStatus::Unbound, "unbound"),
+        ];
+        for (v, s) in card {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
+        let kind = [
+            (CardOperationKind::Start, "start"),
+            (CardOperationKind::Extend, "extend"),
+        ];
+        for (v, s) in kind {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
+        let op = [
+            (CardOperationStatus::Confirming, "confirming"),
+            (CardOperationStatus::Confirmed, "confirmed"),
+            (CardOperationStatus::Failed, "failed"),
+        ];
+        for (v, s) in op {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
+        let delivery = [
+            (CardDeliveryStatus::Pending, "pending"),
+            (CardDeliveryStatus::Done, "done"),
+        ];
+        for (v, s) in delivery {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
     }
 }

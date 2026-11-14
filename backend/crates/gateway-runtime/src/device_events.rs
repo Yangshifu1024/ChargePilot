@@ -470,7 +470,7 @@ async fn resolve_port_code(pool: &MySqlPool, device_id: &str, port_no: u8) -> Op
 
 /// 卡有效性事实与钱包可用余额（分）：卡缺失/停用返回 (false, 0)。
 async fn card_balance_facts(pool: &MySqlPool, f: &EventFields) -> anyhow::Result<(bool, i64)> {
-    let row: Option<(String, Option<i64>)> = sqlx::query_as(
+    let row: Option<(chargepilot_domain::card::CardStatus, Option<i64>)> = sqlx::query_as(
         "SELECT c.`status`, w.`balance_cents` - w.`frozen_cents` \
          FROM `online_card` c \
          LEFT JOIN `wallet_account` w ON w.`user_id` = c.`user_id` AND w.`deleted_at` IS NULL \
@@ -482,5 +482,8 @@ async fn card_balance_facts(pool: &MySqlPool, f: &EventFields) -> anyhow::Result
     let Some((status, available)) = row else {
         return Ok((false, 0));
     };
-    Ok((status == "active", available.unwrap_or(0)))
+    Ok((
+        status == chargepilot_domain::card::CardStatus::Active,
+        available.unwrap_or(0),
+    ))
 }

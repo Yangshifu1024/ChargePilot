@@ -1,6 +1,7 @@
 //! C 端站点查询（无需登录）：附近站点（球面余弦距离）与站点详情（设备心跳在线）。
 
 use super::{DeviceError, StationResult};
+use chargepilot_domain::device::{DeviceMetaStatus, StationStatus};
 use serde::Serialize;
 use sqlx::MySqlPool;
 
@@ -49,13 +50,14 @@ pub async fn nearby(
                         CAST(ROUND(6371 * ACOS(LEAST(1, \
                           COS(RADIANS(?)) * COS(RADIANS(`latitude`)) * COS(RADIANS(`longitude`) - RADIANS(?)) + \
                           SIN(RADIANS(?)) * SIN(RADIANS(`latitude`)))), 3) AS CHAR) AS `distance_km` \
-                 FROM `station` WHERE `status` = 'active' AND `deleted_at` IS NULL) t \
+                 FROM `station` WHERE `status` = ? AND `deleted_at` IS NULL) t \
                  WHERE t.`distance_km` <= ? \
                  ORDER BY t.`distance_km` LIMIT ? OFFSET ?",
             )
             .bind(la)
             .bind(lo)
             .bind(la)
+            .bind(StationStatus::Active)
             .bind(radius_km)
             .bind(page_size as i64)
             .bind(((page - 1) as i64) * (page_size as i64))
@@ -73,9 +75,10 @@ pub async fn nearby(
                 "SELECT `id`, `name`, `address`, \
                         CAST(`longitude` AS CHAR) AS `longitude`, CAST(`latitude` AS CHAR) AS `latitude`, \
                         `status`, `contact_phone`, NULL AS `distance_km` \
-                 FROM `station` WHERE `status` = 'active' AND `deleted_at` IS NULL \
+                 FROM `station` WHERE `status` = ? AND `deleted_at` IS NULL \
                  ORDER BY `created_at` DESC, `id` DESC LIMIT ? OFFSET ?",
             )
+            .bind(StationStatus::Active)
             .bind(page_size as i64)
             .bind(((page - 1) as i64) * (page_size as i64))
             .fetch_all(pool)
@@ -120,9 +123,10 @@ pub async fn detail(pool: &MySqlPool, station_id: u64) -> StationResult<StationD
         "SELECT `id`, `name`, `address`, \
                 CAST(`longitude` AS CHAR) AS `longitude`, CAST(`latitude` AS CHAR) AS `latitude`, \
                 `status`, `contact_phone`, NULL AS `distance_km` \
-         FROM `station` WHERE `id` = ? AND `status` = 'active' AND `deleted_at` IS NULL LIMIT 1",
+         FROM `station` WHERE `id` = ? AND `status` = ? AND `deleted_at` IS NULL LIMIT 1",
     )
     .bind(station_id)
+    .bind(StationStatus::Active)
     .fetch_optional(pool)
     .await?
     .ok_or(DeviceError::NotFound)?;
@@ -132,10 +136,11 @@ pub async fn detail(pool: &MySqlPool, station_id: u64) -> StationResult<StationD
                 (g.`last_heartbeat_at` IS NOT NULL AND g.`last_heartbeat_at` >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 HOUR)) AS `online`, \
                 FALSE AS `runtime_available` \
          FROM `device_meta` d LEFT JOIN `device` g ON g.`device_id` = d.`device_id` \
-         WHERE d.`station_id` = ? AND d.`deleted_at` IS NULL AND d.`status` <> 'retired' \
+         WHERE d.`station_id` = ? AND d.`deleted_at` IS NULL AND d.`status` <> ? \
          ORDER BY d.`device_id`",
     )
     .bind(station_id)
+    .bind(DeviceMetaStatus::Retired)
     .fetch_all(pool)
     .await?
     .into_iter()

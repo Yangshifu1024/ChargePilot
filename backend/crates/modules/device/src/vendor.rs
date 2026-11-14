@@ -2,6 +2,7 @@
 //! 单体后代理塌缩为进程内调用；约束照搬：编码不可变、有设备时协议不可改、仅支持 dc589+TCP）。
 
 use super::{DeviceError, VendorResult};
+use chargepilot_domain::device::{VendorProtocol, VendorStatus};
 use chargepilot_mod_ops::Profile;
 use chargepilot_mod_ops::repo;
 use serde::Deserialize;
@@ -35,10 +36,10 @@ impl VendorInput {
         if self.vendor_name.trim().is_empty() || self.vendor_name.len() > 128 {
             return Err(DeviceError::Input("请填写厂商名称（最多128字）".into()));
         }
-        if !matches!(self.protocol.as_str(), "tcp" | "mqtt" | "hybrid") {
+        if VendorProtocol::parse(self.protocol.as_str()).is_err() {
             return Err(DeviceError::Input("接入协议无效".into()));
         }
-        if !matches!(self.status.as_str(), "enabled" | "disabled") {
+        if VendorStatus::parse(self.status.as_str()).is_err() {
             return Err(DeviceError::Input("厂商状态无效".into()));
         }
         Ok(())
@@ -46,19 +47,20 @@ impl VendorInput {
 }
 
 pub async fn list(pool: &MySqlPool, only_enabled: bool) -> VendorResult<Vec<Vendor>> {
-    let filter = if only_enabled {
-        "AND `status` = 'enabled'"
+    let (filter, only): (&str, Option<VendorStatus>) = if only_enabled {
+        ("AND `status` = ?", Some(VendorStatus::Enabled))
     } else {
-        ""
+        ("", None)
     };
     let sql = format!(
         "SELECT `id`, `vendor_code`, `vendor_name`, `adapter_class`, `protocol`, `status` \
          FROM `vendor` WHERE `deleted_at` IS NULL {filter} ORDER BY `id`"
     );
-    sqlx::query_as::<_, Vendor>(&sql)
-        .fetch_all(pool)
-        .await
-        .map_err(DeviceError::from)
+    let mut q = sqlx::query_as::<_, Vendor>(&sql);
+    if let Some(status) = only {
+        q = q.bind(status);
+    }
+    q.fetch_all(pool).await.map_err(DeviceError::from)
 }
 
 pub async fn get(pool: &MySqlPool, id: u64) -> VendorResult<Vendor> {
@@ -177,13 +179,14 @@ pub async fn update(
     // 首次启用写 enabled_at
     sqlx::query(
         "UPDATE `vendor` SET `vendor_name` = ?, `adapter_class` = ?, `protocol` = ?, `status` = ?, \
-         `enabled_at` = IF(? = 'enabled' AND `enabled_at` IS NULL, UTC_TIMESTAMP(3), `enabled_at`) WHERE `id` = ?",
+         `enabled_at` = IF(? = ? AND `enabled_at` IS NULL, UTC_TIMESTAMP(3), `enabled_at`) WHERE `id` = ?",
     )
     .bind(input.vendor_name.trim())
     .bind(&input.adapter_class)
-    .bind(&input.protocol)
-    .bind(&input.status)
-    .bind(&input.status)
+    .bind(VendorProtocol::parse(input.protocol.as_str()).map_err(|_| DeviceError::Input("协议无效".into()))?)
+    .bind(VendorStatus::parse(input.status.as_str()).map_err(|_| DeviceError::Input("状态无效".into()))?)
+    .bind(VendorStatus::parse(input.status.as_str()).map_err(|_| DeviceError::Input("状态无效".into()))?)
+    .bind(VendorStatus::Enabled)
     .bind(id)
     .execute(&mut *tx)
     .await?;

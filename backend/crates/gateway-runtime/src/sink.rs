@@ -145,10 +145,11 @@ impl SessionRecorder for GatewaySink {
                 "INSERT INTO `device_session` (`session_id`, `device_id`, `protocol`, \
                  `remote_addr`, `started_at`, `last_active_at`, `ended_at`, `close_reason`, \
                  `bytes_in`, `bytes_out`, `frames_in`, `frames_out`, `created_month`) \
-                 VALUES (?, ?, 'tcp', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&record.session_id)
             .bind(&record.device_id)
+            .bind(chargepilot_domain::device::SessionProtocol::Tcp)
             .bind(&record.remote_addr)
             .bind(record.started_at.unwrap_or_else(chrono::Utc::now))
             .bind(record.last_active.unwrap_or_else(chrono::Utc::now))
@@ -266,9 +267,11 @@ async fn resolve_recovered_alerts(
 ) -> anyhow::Result<()> {
     let alerts: Vec<(u64, chrono::NaiveDate, String, String)> = sqlx::query_as(
         "SELECT `id`, `created_month`, `metric`, `event_id` FROM `alert_event` \
-         WHERE `device_id` = ? AND `rule_id` IS NULL AND `status` IN ('active','acknowledged')",
+         WHERE `device_id` = ? AND `rule_id` IS NULL AND `status` IN (?, ?)",
     )
     .bind(&event.device_id)
+    .bind(chargepilot_domain::device::AlertStatus::Active)
+    .bind(chargepilot_domain::device::AlertStatus::Acknowledged)
     .fetch_all(pool)
     .await?;
     for (alert_id, created_month, metric, event_key) in alerts {

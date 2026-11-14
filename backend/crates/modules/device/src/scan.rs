@@ -2,6 +2,7 @@
 //! 先按端口编码查询，再按设备号读取端口列表；中央运营状态补充可用性。
 //! 本查询不创建支付或会话；码值校验（裸码字符集与 HTTPS 链接提取）由 HTTP 层完成。
 
+use chargepilot_domain::device::{DeviceStatus, VendorStatus};
 use serde::Serialize;
 use sqlx::MySqlPool;
 
@@ -74,8 +75,12 @@ type PortRow = (
 const SCAN_FROM: &str = "FROM `device_port` AS `p` \
      JOIN `device` AS `d` ON `d`.`device_id` = `p`.`device_id` \
      JOIN `vendor` AS `v` ON `v`.`id` = `d`.`vendor_id` \
-     WHERE `p`.`deleted_at` IS NULL AND `d`.`status` = 'enabled' AND `d`.`deleted_at` IS NULL \
-       AND `v`.`status` = 'enabled' AND `v`.`deleted_at` IS NULL";
+     WHERE `p`.`deleted_at` IS NULL AND `d`.`status` = ? AND `d`.`deleted_at` IS NULL \
+       AND `v`.`status` = ? AND `v`.`deleted_at` IS NULL";
+
+/// 共享片段的两个状态条件绑定（占位符序在其它条件之前）。
+const SCAN_STATUS_BINDS: (DeviceStatus, VendorStatus) =
+    (DeviceStatus::Enabled, VendorStatus::Enabled);
 
 const SCAN_COLS: &str = "SELECT `p`.`port_code`, `p`.`device_id`, `p`.`port_no`, \
          CAST(`p`.`status` AS CHAR), `p`.`current_order_id`, `d`.`last_seen_at`, `d`.`station_id`";
@@ -143,6 +148,8 @@ pub async fn resolve(pool: &MySqlPool, code: &str) -> Result<ScanResultView, Sca
     // 端口码命中：单端口。
     let port_sql = format!("{SCAN_COLS} {SCAN_FROM} AND `p`.`port_code` = ? LIMIT 1");
     if let Some(row) = sqlx::query_as::<_, PortRow>(&port_sql)
+        .bind(SCAN_STATUS_BINDS.0)
+        .bind(SCAN_STATUS_BINDS.1)
         .bind(code)
         .fetch_optional(pool)
         .await?
@@ -164,6 +171,8 @@ pub async fn resolve(pool: &MySqlPool, code: &str) -> Result<ScanResultView, Sca
     let device_sql =
         format!("{SCAN_COLS} {SCAN_FROM} AND `d`.`device_id` = ? ORDER BY `p`.`port_no`");
     let rows = sqlx::query_as::<_, PortRow>(&device_sql)
+        .bind(SCAN_STATUS_BINDS.0)
+        .bind(SCAN_STATUS_BINDS.1)
         .bind(code)
         .fetch_all(pool)
         .await?;

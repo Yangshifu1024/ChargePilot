@@ -84,11 +84,12 @@ pub async fn load(pool: &MySqlPool) -> anyhow::Result<Dashboard> {
     .bind(tomorrow_start_utc)
     .fetch_one(pool)
     .await?;
-    let active_alerts: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM `alert_event` WHERE `status` IN ('active','acknowledged')",
-    )
-    .fetch_one(pool)
-    .await?;
+    let active_alerts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM `alert_event` WHERE `status` IN (?, ?)")
+            .bind(chargepilot_domain::device::AlertStatus::Active)
+            .bind(chargepilot_domain::device::AlertStatus::Acknowledged)
+            .fetch_one(pool)
+            .await?;
 
     // 7 日趋势：按东八区日分组，缺数补 0
     let rows = sqlx::query_as::<_, (String, i64, i64)>(
