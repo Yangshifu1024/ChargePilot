@@ -424,8 +424,8 @@ impl CheckoutService {
         .bind(&scan_port.port_id)
         .bind(IntentStatus::INITIATED)
         .bind(IntentStatus::PAID)
-        .bind(chargepilot_mod_order::ONGOING_STATUSES[0])
-        .bind(chargepilot_mod_order::ONGOING_STATUSES[1])
+        .bind(chargepilot_domain::order::ChargeOrderStatus::Paid)
+        .bind(chargepilot_domain::order::ChargeOrderStatus::Charging)
         .fetch_one(&mut *conn)
         .await?;
         if busy != 0 {

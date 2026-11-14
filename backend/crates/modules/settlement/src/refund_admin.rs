@@ -6,6 +6,7 @@
 use chargepilot_domain::money::{
     BizType, ExecutionPolicy, PayMethod, PaymentOrderStatus, RefundStatus,
 };
+use chargepilot_domain::order::ChargeOrderStatus;
 use serde::Serialize;
 use sqlx::{Acquire, MySqlPool};
 
@@ -184,7 +185,7 @@ pub async fn request_manual_refund(
     let c = tx.acquire().await?;
 
     // 订单 + 支付锁（支付 → 退款锁序）。
-    let order: Option<(u64, u64, String, i64)> = sqlx::query_as(
+    let order: Option<(u64, u64, ChargeOrderStatus, i64)> = sqlx::query_as(
         "SELECT `payment_order_id`, `user_id`, `status`, `started_at` IS NOT NULL \
          FROM `charge_order` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
     )
@@ -226,13 +227,16 @@ pub async fn request_manual_refund(
     }
     // 准入：订单可退（旧版 AllChannelRefundableStatuses：completed/cancelled/failed，
     // refunded 被随后单独排除；refunding 不在集合——已受理退款不得重复发起）。
-    let refundable_order = matches!(order_status.as_str(), "completed" | "cancelled" | "failed");
+    let refundable_order = matches!(
+        order_status,
+        ChargeOrderStatus::Completed | ChargeOrderStatus::Cancelled | ChargeOrderStatus::Failed
+    );
     let refundable_pay = matches!(
         pay_status,
         PaymentOrderStatus::Paid | PaymentOrderStatus::PartialRefunded
     );
     if !refundable_order
-        || order_status == "refunded"
+        || order_status == ChargeOrderStatus::Refunded
         || !refundable_pay
         || pay_method != PayMethod::Wechat
         || amount_cents > paid_cents - refunded_cents
@@ -429,7 +433,7 @@ pub async fn review_manual_refund(
     }
     // 升级前已申请的人工退款同样不能在费用确认前批准。
     if biz_type == BizType::Charge {
-        let (order_started, order_status): (i64, String) = sqlx::query_as(
+        let (order_started, order_status): (i64, ChargeOrderStatus) = sqlx::query_as(
             "SELECT `started_at` IS NOT NULL, `status` FROM `charge_order` WHERE `id` = ?",
         )
         .bind(biz_id as i64)
@@ -438,8 +442,10 @@ pub async fn review_manual_refund(
         .map_err(|_| RefundAdminError::Conflict)?;
         if order_started != 0
             && matches!(
-                order_status.as_str(),
-                "completed" | "refunding" | "refunded"
+                order_status,
+                ChargeOrderStatus::Completed
+                    | ChargeOrderStatus::Refunding
+                    | ChargeOrderStatus::Refunded
             )
         {
             let receipt: Option<i64> = sqlx::query_scalar(

@@ -70,7 +70,7 @@ impl StopService {
         )
         .bind(order_no)
         .bind(user_id as i64)
-        .bind(chargepilot_mod_order::OrderStatus::CHARGING)
+        .bind(chargepilot_domain::order::ChargeOrderStatus::Charging)
         .fetch_optional(&self.pool)
         .await?;
         let Some((id, no, uid, device_id, port_no, start_command_id)) = row else {

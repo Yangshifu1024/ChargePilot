@@ -33,64 +33,7 @@ pub struct UnknownLiteral {
     pub value: String,
 }
 
-macro_rules! wordlist_enum {
-    (
-        $(#[$meta:meta])*
-        $name:ident : { $( $variant:ident = $literal:literal ),+ $(,)? }
-    ) => {
-        $(#[$meta])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-        #[serde(rename_all = "snake_case")]
-        pub enum $name { $( $variant ),+ }
-
-        impl $name {
-            /// DB 字面量锚点（与 `migrations/0001_init.sql` 逐字节一致）。
-            #[must_use]
-            pub const fn as_str(self) -> &'static str {
-                match self { $( Self::$variant => $literal ),+ }
-            }
-
-            /// DB/serde 字面量 → 枚举；未知值报词表名。
-            pub fn parse(value: &str) -> Result<Self, UnknownLiteral> {
-                match value {
-                    $( $literal => Ok(Self::$variant), )+
-                    other => Err(UnknownLiteral {
-                        wordlist: stringify!($name),
-                        value: other.to_owned(),
-                    }),
-                }
-            }
-        }
-
-        impl sqlx::Type<sqlx::MySql> for $name {
-            fn type_info() -> sqlx::mysql::MySqlTypeInfo {
-                <str as sqlx::Type<sqlx::MySql>>::type_info()
-            }
-
-            fn compatible(ty: &sqlx::mysql::MySqlTypeInfo) -> bool {
-                <str as sqlx::Type<sqlx::MySql>>::compatible(ty)
-            }
-        }
-
-        impl<'de> sqlx::Decode<'de, sqlx::MySql> for $name {
-            fn decode(
-                value: sqlx::mysql::MySqlValueRef<'de>,
-            ) -> Result<Self, sqlx::error::BoxDynError> {
-                let literal = <&str as sqlx::Decode<sqlx::MySql>>::decode(value)?;
-                Ok(Self::parse(literal)?)
-            }
-        }
-
-        impl sqlx::Encode<'_, sqlx::MySql> for $name {
-            fn encode_by_ref(
-                &self,
-                buf: &mut Vec<u8>,
-            ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-                <&str as sqlx::Encode<sqlx::MySql>>::encode(self.as_str(), buf)
-            }
-        }
-    };
-}
+use crate::wordlist::wordlist_enum;
 
 // ---------- payment_order 词表（旧版 payment.go） ----------
 

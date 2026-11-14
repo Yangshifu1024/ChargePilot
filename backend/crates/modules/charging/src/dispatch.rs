@@ -52,7 +52,7 @@ impl StartDispatcher {
              WHERE c.`id` = ? AND c.`status` = ? LIMIT 1",
         )
         .bind(charge_order_id as i64)
-        .bind(chargepilot_mod_order::OrderStatus::PAID)
+        .bind(chargepilot_domain::order::ChargeOrderStatus::Paid)
         .fetch_optional(&self.pool)
         .await?;
         let Some((id, order_no, user_id, device_id, port_no, charge_mode, quantity)) = order else {

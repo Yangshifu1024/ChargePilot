@@ -11,6 +11,9 @@
 //! - 实时计量估算（旧版 LiveService.Fill）未在新仓库接线：充电中订单按旧版
 //!   「依赖缺失」分支输出 live_unavailable 提示，不产生估算费用。
 
+use chargepilot_domain::money::ChargePaymentStatus;
+use chargepilot_domain::money::PaymentOrderStatus;
+use chargepilot_domain::order::ChargeOrderStatus;
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::{MySqlPool, query_as, query_scalar};
@@ -89,12 +92,12 @@ pub struct OrderViewRow {
     /// 站点名称；站点缺失或已删除时为 null。
     #[sqlx(skip)]
     pub station_name: Option<String>,
-    /// 订单内部状态（8 取值词表）。
-    pub status: String,
+    /// 订单内部状态（charge_order.status 词表）。
+    pub status: ChargeOrderStatus,
     /// 持久化业务状态：pending_start/charging/completed（生成列）。
     pub business_status: String,
-    /// 持久化支付状态：pending/paid/refunded/partial_refunded。
-    pub payment_status: String,
+    /// 持久化支付状态（charge_order.payment_status 词表）。
+    pub payment_status: ChargePaymentStatus,
     /// 启动来源 payment/balance/card；缺失来源时为 null。
     pub start_source: Option<String>,
     /// 下单时冻结的计费方案名称；缺失快照或有效名称时为 null。
@@ -125,8 +128,8 @@ pub struct OrderViewRow {
     pub payment_order_id: Option<u64>,
     /// 支付单号；未发起支付为 null。
     pub payment_order_no: Option<String>,
-    /// 支付单内部流程状态；未关联有效支付单时为 null。
-    pub payment_order_status: Option<String>,
+    /// 支付单内部流程状态（payment_order.status 词表）；未关联时为 null。
+    pub payment_order_status: Option<PaymentOrderStatus>,
     /// 实收金额（分）；未支付为 null。
     pub paid_cents: Option<i64>,
     /// 已成功退款金额（分）；有效支付单未退款为 0，缺失支付单为 null。
@@ -478,7 +481,7 @@ async fn fill_scheme_names(pool: &MySqlPool, rows: &mut [OrderViewRow]) -> Resul
 /// 充电中且已开始的订单输出 live_unavailable 提示，其余行不动。
 pub fn apply_live_fallback(rows: &mut [OrderViewRow]) {
     for row in rows.iter_mut() {
-        if row.status == "charging" && row.started_at.is_some() {
+        if row.status == ChargeOrderStatus::Charging && row.started_at.is_some() {
             row.live_unavailable = Some("设备计量暂不可读取".into());
         }
     }

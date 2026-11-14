@@ -7,25 +7,10 @@ pub mod feedback;
 pub mod user_query;
 
 use chargepilot_domain::money::PaymentOrderStatus;
+use chargepilot_domain::order::ChargeOrderStatus;
 use chargepilot_platform::ids::SegmentAllocator;
 use chrono::Datelike;
 use sqlx::MySqlConnection;
-
-/// 订单状态词表（charge_order.status，与 domain/charging_order 的状态机一致）。
-pub struct OrderStatus;
-impl OrderStatus {
-    pub const PENDING_PAYMENT: &'static str = "pending_payment";
-    pub const PAID: &'static str = "paid";
-    pub const CHARGING: &'static str = "charging";
-    pub const COMPLETED: &'static str = "completed";
-    pub const CANCELLED: &'static str = "cancelled";
-    pub const FAILED: &'static str = "failed";
-    pub const REFUNDING: &'static str = "refunding";
-    pub const REFUNDED: &'static str = "refunded";
-}
-
-/// 占用端口的订单状态：已支付未起充与充电中（旧版 paidOrChargingOrderStatuses）。
-pub const ONGOING_STATUSES: [&str; 2] = [OrderStatus::PAID, OrderStatus::CHARGING];
 
 /// 月分区归属日期：取给定时刻对应月份的第一天（旧版 dbutil.MonthStart）。
 /// 分区表主键含 created_month，所有按月分区表的写入都带此值。
@@ -124,7 +109,7 @@ pub async fn create_paid_in_tx(
     .bind(draft.port_no)
     .bind(&draft.port_code)
     .bind(draft.payment_order_id as i64)
-    .bind(OrderStatus::PAID)
+    .bind(ChargeOrderStatus::Paid)
     .bind(PaymentOrderStatus::Paid)
     .bind(draft.charge_mode)
     .bind(draft.charge_quantity)
@@ -225,7 +210,7 @@ pub struct LifecycleView {
     pub user_id: u64,
     pub device_id: String,
     pub port_no: u8,
-    pub status: String,
+    pub status: ChargeOrderStatus,
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -243,7 +228,7 @@ pub async fn lock_for_lifecycle_tx(
         u64,
         String,
         u8,
-        String,
+        ChargeOrderStatus,
         Option<chrono::DateTime<chrono::Utc>>,
         Option<chrono::DateTime<chrono::Utc>>,
     );
@@ -282,11 +267,11 @@ pub async fn mark_charging_tx(
         "UPDATE `charge_order` SET `status` = ?, `started_at` = ? \
          WHERE `id` = ? AND `order_no` = ? AND `status` = ?",
     )
-    .bind(OrderStatus::CHARGING)
+    .bind(ChargeOrderStatus::Charging)
     .bind(started_at)
     .bind(charge_order_id as i64)
     .bind(order_no)
-    .bind(OrderStatus::PAID)
+    .bind(ChargeOrderStatus::Paid)
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -315,11 +300,11 @@ pub async fn mark_start_rejected_tx(
         "UPDATE `charge_order` SET `status` = ?, `failure_reason` = ? \
          WHERE `id` = ? AND `order_no` = ? AND `status` = ?",
     )
-    .bind(OrderStatus::REFUNDING)
+    .bind(ChargeOrderStatus::Refunding)
     .bind(reason)
     .bind(charge_order_id as i64)
     .bind(order_no)
-    .bind(OrderStatus::PAID)
+    .bind(ChargeOrderStatus::Paid)
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -345,13 +330,13 @@ pub async fn complete_tx(
          `charged_kwh` = ?, `charged_seconds` = ? \
          WHERE `id` = ? AND `order_no` = ? AND `status` = ? AND `ended_at` IS NULL",
     )
-    .bind(OrderStatus::COMPLETED)
+    .bind(ChargeOrderStatus::Completed)
     .bind(ended_at)
     .bind(charged_kwh)
     .bind(charged_seconds)
     .bind(charge_order_id as i64)
     .bind(order_no)
-    .bind(OrderStatus::CHARGING)
+    .bind(ChargeOrderStatus::Charging)
     .execute(&mut *tx)
     .await?
     .rows_affected();

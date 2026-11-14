@@ -123,11 +123,12 @@ pub async fn apply_start_receipt(
         return Ok(true);
     }
     // 状态必须是 paid（旧版 view.Status != paid 冲突）。
-    let status: String = sqlx::query_scalar("SELECT `status` FROM `charge_order` WHERE `id` = ?")
-        .bind(id as i64)
-        .fetch_one(&mut *c)
-        .await?;
-    if status != chargepilot_mod_order::OrderStatus::PAID {
+    let status: chargepilot_domain::order::ChargeOrderStatus =
+        sqlx::query_scalar("SELECT `status` FROM `charge_order` WHERE `id` = ?")
+            .bind(id as i64)
+            .fetch_one(&mut *c)
+            .await?;
+    if status != chargepilot_domain::order::ChargeOrderStatus::Paid {
         return Err(ReceiptError::Conflict);
     }
     // 登记回执（uk_command 幂等）。
@@ -322,7 +323,7 @@ pub async fn apply_end_receipt(
     let Some(started_at) = view.started_at else {
         return Err(ReceiptError::Conflict);
     };
-    if view.status != chargepilot_mod_order::OrderStatus::CHARGING
+    if view.status != chargepilot_domain::order::ChargeOrderStatus::Charging
         || input.meter.ended_at < started_at
     {
         return Err(ReceiptError::Conflict);

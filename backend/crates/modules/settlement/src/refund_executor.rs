@@ -153,10 +153,12 @@ async fn execute_one(
     // 充电订单：refunding → refunded（余款退清；旧版 SetStatusRefunded 语义）。
     if biz_type == BizType::Charge {
         sqlx::query(
-            "UPDATE `charge_order` SET `status` = 'refunded' \
-             WHERE `id` = ? AND `status` = 'refunding' AND `payment_order_id` = ?",
+            "UPDATE `charge_order` SET `status` = ? \
+             WHERE `id` = ? AND `status` = ? AND `payment_order_id` = ?",
         )
+        .bind(chargepilot_domain::order::ChargeOrderStatus::Refunded)
         .bind(biz_id as i64)
+        .bind(chargepilot_domain::order::ChargeOrderStatus::Refunding)
         .bind(payment_order_id as i64)
         .execute(&mut *c)
         .await?;

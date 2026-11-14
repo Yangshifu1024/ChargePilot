@@ -11,6 +11,7 @@
 //! - 实时估费（旧版 LiveService.Fill）未在新仓库接线：充电中输出
 //!   live_unavailable 提示（旧版依赖缺失同分支文案），不产生估算费用。
 
+use chargepilot_domain::order::ChargeOrderStatus;
 use serde_json::{Value, json};
 use sqlx::{MySqlPool, query_as, query_scalar};
 use std::collections::HashMap;
@@ -38,8 +39,8 @@ pub struct OrderRecord {
     pub device_id: String,
     /// 端口号（从 1 开始）。
     pub port_no: u8,
-    /// 订单状态（ENUM 文本）。
-    pub status: String,
+    /// 订单状态（charge_order.status 词表）。
+    pub status: ChargeOrderStatus,
     /// 业务启动时间（DATE_FORMAT 文本，未开始 None）。
     pub started_at: Option<String>,
     /// 业务结束时间。
@@ -64,7 +65,7 @@ type OrderRow = (
     String,
     String,
     u8,
-    String,
+    ChargeOrderStatus,
     Option<String>,
     Option<String>,
     Option<String>,
@@ -445,7 +446,7 @@ pub async fn base_view(pool: &MySqlPool, row: &OrderRecord) -> Result<Value, sql
         "discount_cents": row.discount_cents,
         "billing_status": billing_status(pool, row.id).await?,
         "card_operations": card_operations(pool, row.id).await?,
-        "start_confirmation_pending": row.status == "paid",
+        "start_confirmation_pending": row.status == ChargeOrderStatus::Paid,
         "billing_cutoff": billing_cutoff(pool, row.id).await?,
     });
     if let Some(fee) = fee_facts(pool, &[row.id]).await?.get(&row.id) {

@@ -11,6 +11,7 @@ use crate::deps::ApiDeps;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
+use chargepilot_domain::order::ChargeOrderStatus;
 use chargepilot_gateway_runtime::snapshot::DeviceSnapshot;
 use chargepilot_mod_order::user_query::{self, OrderRecord};
 use chargepilot_platform::httpx;
@@ -276,12 +277,12 @@ async fn charge_snapshot(
 /// 组装快照视图（旧版 UserService.Snapshot）。
 async fn build_snapshot(deps: &ApiDeps, row: &OrderRecord) -> Result<Value, sqlx::Error> {
     let mut out = user_query::base_view(&deps.db, row).await?;
-    let poll = row.status == "paid" || row.status == "charging";
+    let poll = row.status.is_ongoing();
     out["poll_continue"] = json!(poll);
     out["next_poll_after_ms"] = json!(5000);
     let mut available = false;
     out["telemetry_available"] = json!(available);
-    if row.status != "charging" {
+    if row.status != ChargeOrderStatus::Charging {
         return Ok(out);
     }
     let Some(started) = row.started_at.as_deref().and_then(parse_ts) else {

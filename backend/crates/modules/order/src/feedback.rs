@@ -4,6 +4,7 @@
 //! 回复仅 pending→processed，关闭允许任意未关闭状态，重复关闭静默成功。
 
 use crate::OrderError;
+use chargepilot_domain::order::{ChargeOrderStatus, FeedbackCategory, FeedbackStatus};
 use chargepilot_mod_ops::Profile;
 use chargepilot_mod_ops::repo;
 use serde_json::{Value, json};
@@ -177,46 +178,51 @@ pub async fn reply(
     {
         return Err(FeedbackError::Forbidden);
     }
-    let status: String = sqlx::query_scalar(
-        "SELECT CAST(`status` AS CHAR) FROM `feedback` \
+    let status: FeedbackStatus = sqlx::query_scalar(
+        "SELECT `status` FROM `feedback` \
          WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
     )
     .bind(id)
     .fetch_optional(&mut *c)
     .await?
     .ok_or(FeedbackError::NotFound)?;
-    if action == "close" && status == "closed" {
+    if action == "close" && status == FeedbackStatus::Closed {
         tx.commit().await?;
         return Ok(());
     }
-    if status == "closed" || (action == "reply" && status != "pending") {
+    if status == FeedbackStatus::Closed || (action == "reply" && status != FeedbackStatus::Pending)
+    {
         return Err(FeedbackError::Conflict);
     }
-    if action == "reply" {
+    let next_status = if action == "reply" {
         sqlx::query(
-            "UPDATE `feedback` SET `status` = 'processed', `reply_content` = ?, \
+            "UPDATE `feedback` SET `status` = ?, `reply_content` = ?, \
              `replied_by` = ?, `replied_at` = UTC_TIMESTAMP(3) WHERE `id` = ?",
         )
+        .bind(FeedbackStatus::Processed)
         .bind(reply_content)
         .bind(actor_locked.id)
         .bind(id)
         .execute(&mut *c)
         .await?;
+        FeedbackStatus::Processed
     } else {
-        sqlx::query("UPDATE `feedback` SET `status` = 'closed' WHERE `id` = ?")
+        sqlx::query("UPDATE `feedback` SET `status` = ? WHERE `id` = ?")
+            .bind(FeedbackStatus::Closed)
             .bind(id)
             .execute(&mut *c)
             .await?;
-    }
+        FeedbackStatus::Closed
+    };
     let after = if action == "reply" {
         json!({
-            "status": "processed",
+            "status": next_status,
             "reply_content": reply_content,
             "replied_by": actor_locked.id,
             "replied_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         })
     } else {
-        json!({"status": "closed"})
+        json!({"status": next_status})
     };
     repo::append_audit_tx(
         &mut *c,
@@ -322,9 +328,12 @@ pub fn validate_feedback(input: &FeedbackSubmitInput) -> Result<(), FeedbackSubm
     if !(1..=5).contains(&input.rating) {
         return Err(FeedbackSubmitError::Input("评分或反馈类型无效".into()));
     }
-    match input.category.as_deref() {
-        Some("rating" | "complaint" | "suggestion") => {}
-        _ => return Err(FeedbackSubmitError::Input("评分或反馈类型无效".into())),
+    if input
+        .category
+        .as_deref()
+        .is_some_and(|c| FeedbackCategory::parse(c).is_err())
+    {
+        return Err(FeedbackSubmitError::Input("评分或反馈类型无效".into()));
     }
     if let Some(content) = &input.content
         && content.chars().count() > 2000
@@ -375,6 +384,11 @@ pub async fn submit_feedback(
     input: &FeedbackSubmitInput,
 ) -> Result<u64, FeedbackSubmitError> {
     validate_feedback(input)?;
+    // 校验已保证 category 为合法词表值；parse 后按枚举绑定写入。
+    let category = match input.category.as_deref().map(FeedbackCategory::parse) {
+        Some(Ok(c)) => c,
+        _ => return Err(FeedbackSubmitError::Input("评分或反馈类型无效".into())),
+    };
     // nil 保存 JSON null，空数组保存 []（旧版 json.Marshal 语义）。
     let images_json = match &input.images {
         Some(v) => serde_json::to_string(v)?,
@@ -386,8 +400,8 @@ pub async fn submit_feedback(
         .await?;
     let mut tx = conn.begin().await?;
     // 锁订单（旧版 LockOrder FOR UPDATE）：缺失、他人或不可评价状态统一拒绝。
-    let order: Option<(u64, Option<String>, String)> = sqlx::query_as(
-        "SELECT `user_id`, `device_id`, CAST(`status` AS CHAR) AS `status` \
+    let order: Option<(u64, Option<String>, ChargeOrderStatus)> = sqlx::query_as(
+        "SELECT `user_id`, `device_id`, `status` \
          FROM `charge_order` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
     )
     .bind(order_id as i64)
@@ -396,7 +410,14 @@ pub async fn submit_feedback(
     let Some((owner, device_id, status)) = order else {
         return Err(FeedbackSubmitError::OrderNotReady);
     };
-    if owner != user_id || !matches!(status.as_str(), "completed" | "refunding" | "refunded") {
+    if owner != user_id
+        || !matches!(
+            status,
+            ChargeOrderStatus::Completed
+                | ChargeOrderStatus::Refunding
+                | ChargeOrderStatus::Refunded
+        )
+    {
         return Err(FeedbackSubmitError::OrderNotReady);
     }
     // 当前读核对已有反馈（旧版 HasFeedback FOR SHARE）。
@@ -420,7 +441,7 @@ pub async fn submit_feedback(
     .bind(order_id as i64)
     .bind(device_id)
     .bind(input.rating)
-    .bind(input.category.as_deref().unwrap_or_default())
+    .bind(category)
     .bind(&input.content)
     .bind(&images_json)
     .execute(&mut *tx)
