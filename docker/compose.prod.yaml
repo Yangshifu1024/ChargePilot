@@ -17,9 +17,8 @@ services:
       REDIS_URL: redis://redis:6379
       HTTP_ADDR: 0.0.0.0:8080
       DEVICE_ADDR: 0.0.0.0:9100
-      ADMIN_STATIC_DIR: /opt/chargepilot/admin
-      H5_STATIC_DIR: /opt/chargepilot/h5
       EXPORT_DIR: /data/exports
+      # 票 22：前端产物编译期嵌入，静态目录环境变量退役（ADR 006）。
     ports:
       - "8080:8080"
       - "9100:9100"
