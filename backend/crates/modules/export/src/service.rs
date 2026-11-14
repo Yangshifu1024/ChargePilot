@@ -297,7 +297,7 @@ pub async fn list_tasks(
     page: i64,
     page_size: i64,
 ) -> Result<(Vec<ExportTaskRow>, i64), ExportError> {
-    if !(1..=1_000_000).contains(&page) || !(1..=100).contains(&page_size) {
+    if chargepilot_domain::page::PageRequest::admin(page, page_size).is_err() {
         return Err(ExportError::Input("分页参数无效".into()));
     }
     if !status.is_empty() && !ExportStatus(status.to_string()).known() {

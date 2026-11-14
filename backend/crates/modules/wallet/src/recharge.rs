@@ -87,7 +87,7 @@ impl RechargeService {
     ) -> Result<RechargeResult, WalletError> {
         if user_id == 0
             || !is_uuid(&input.request_id)
-            || !(100..=5_000_000).contains(&input.amount_cents)
+            || !(chargepilot_domain::limits::RECHARGE_AMOUNT_CENTS).contains(&input.amount_cents)
         {
             return Err(WalletError::RequestConflict);
         }

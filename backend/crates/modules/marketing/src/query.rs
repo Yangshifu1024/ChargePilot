@@ -152,7 +152,7 @@ pub async fn mine(
     only_usable: bool,
     now: DateTime<Utc>,
 ) -> Result<CouponPage, CouponQueryError> {
-    if user_id == 0 || !(1..=100_000).contains(&page) || !(1..=100).contains(&page_size) {
+    if user_id == 0 || chargepilot_domain::page::PageRequest::user(page, page_size).is_err() {
         return Err(CouponQueryError::Input("分页或用户编号无效".into()));
     }
     if !status.is_empty()

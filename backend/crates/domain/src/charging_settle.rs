@@ -63,7 +63,7 @@ impl ControlInstruction {
         match self.mode.0.as_str() {
             ChargeMode::DEVICE_DURATION => {
                 // 时长模式只允许 1–4320 分钟，不允许余额或功率档位。
-                (1..=4320).contains(&self.minutes)
+                (1..=crate::limits::MAX_CHARGE_MINUTES).contains(&self.minutes)
                     && self.balance_cents == 0
                     && self.tier_cents_per_hour.is_empty()
             }
@@ -157,11 +157,13 @@ impl Offer {
         let mode_ok = match self.mode.as_str() {
             "amount" => self.duration_minutes == 0 && self.energy_wh == 0,
             "duration" => {
-                self.duration_minutes > 0 && self.duration_minutes <= 4320 && self.energy_wh == 0
+                self.duration_minutes > 0
+                    && self.duration_minutes <= crate::limits::MAX_CHARGE_MINUTES
+                    && self.energy_wh == 0
             }
             "energy" => {
                 self.duration_minutes == 0
-                    && (1000..=65000).contains(&self.energy_wh)
+                    && crate::limits::ENERGY_PACKAGE_WH.contains(&self.energy_wh)
                     && self.energy_wh.is_multiple_of(1000)
             }
             _ => false,
@@ -579,7 +581,7 @@ pub fn estimate_charge(
     if rule.id == 0
         || !rule.spec.mode.valid()
         || minutes == 0
-        || minutes > 600
+        || minutes > crate::limits::MAX_ESTIMATE_MINUTES
         || validate_spec(&rule.spec).is_err()
         || !energy_pattern_ok(energy)
     {
@@ -601,7 +603,7 @@ pub fn estimate_charge(
         });
     }
     let wh = int_part(kwh * Decimal::from(1000));
-    if !(1..=100000).contains(&wh) {
+    if !(1..=crate::limits::MAX_ESTIMATE_ENERGY_WH).contains(&wh) {
         return Err(BillingError::InvalidPricing);
     }
     let mut usage = Usage {

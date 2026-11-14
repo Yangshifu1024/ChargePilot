@@ -95,7 +95,7 @@ impl RefundService {
     ) -> Result<RefundReceipt, WalletError> {
         if user_id == 0
             || !super::recharge::is_uuid(&input.request_id)
-            || input.amount_cents <= 0
+            || input.amount_cents < chargepilot_domain::limits::REFUND_AMOUNT_MIN_CENTS
             || input.amount_cents > 5_000_000
             || input.reason.chars().count() > 255
         {

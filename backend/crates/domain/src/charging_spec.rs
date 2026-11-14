@@ -399,25 +399,27 @@ pub fn validate_spec(spec: &Spec) -> Result<(), BillingError> {
     if !(0..=MAX_RATE_CENTS).contains(&spec.spend_cap_cents) {
         return Err(BillingError::InvalidPricing);
     }
-    if !(0..=3600).contains(&spec.stop_grace_seconds) {
+    if !(0..=crate::limits::MAX_STOP_GRACE_SECONDS).contains(&spec.stop_grace_seconds) {
         return Err(BillingError::InvalidPricing);
     }
-    if !(0..=100000).contains(&spec.loss_rate_bp) {
+    if !(0..=crate::limits::MAX_LOSS_RATE_BP).contains(&spec.loss_rate_bp) {
         return Err(BillingError::InvalidPricing);
     }
     if let Some(m) = &spec.multiplier {
         for bp in [m.temp_bp, m.card_bp] {
-            if !(0..=100000).contains(&bp) {
+            if !(0..=crate::limits::MAX_LOSS_RATE_BP).contains(&bp) {
                 return Err(BillingError::InvalidPricing);
             }
         }
     }
-    if spec.card_max_minutes > 4320 {
+    if spec.card_max_minutes > crate::limits::MAX_CHARGE_MINUTES {
         // 刷卡时长使用 uint16 分钟字段，超出范围时拒绝，不截断数值。
         return Err(BillingError::InvalidPricing);
     }
     if let Some(tc) = &spec.time_charge
-        && (tc.max_minutes > 4320 || tc.float_seconds > 10800 || tc.float_power_deci_watts > 500)
+        && (tc.max_minutes > crate::limits::MAX_CHARGE_MINUTES
+            || tc.float_seconds > crate::limits::MAX_FLOAT_SECONDS
+            || tc.float_power_deci_watts > crate::limits::MAX_FLOAT_POWER_DECI_WATTS)
     {
         return Err(BillingError::InvalidPricing);
     }

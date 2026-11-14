@@ -18,16 +18,18 @@ pub struct Page {
 
 impl Page {
     pub fn sanitized(page: i64, page_size: i64) -> anyhow::Result<Self> {
-        if !(1..=1_000_000).contains(&page) {
-            anyhow::bail!("分页参数无效");
-        }
-        if !(1..=100).contains(&page_size) {
-            anyhow::bail!("分页参数无效：page_size 为 1–100");
-        }
-        Ok(Self {
-            page: page as u32,
-            page_size: page_size as u32,
-        })
+        // 双轨上界（后台 100 万）与字段级文案经 domain::page 统一，行为与旧版一致。
+        let (page, page_size) = match chargepilot_domain::page::PageRequest::admin(page, page_size)
+        {
+            Ok(p) => (p.page, p.page_size),
+            Err(chargepilot_domain::page::PageBoundsField::Page) => {
+                anyhow::bail!("分页参数无效");
+            }
+            Err(chargepilot_domain::page::PageBoundsField::PageSize) => {
+                anyhow::bail!("分页参数无效：page_size 为 1–100");
+            }
+        };
+        Ok(Self { page, page_size })
     }
 
     fn offset(&self) -> i64 {
@@ -132,7 +134,7 @@ pub async fn create_admin(
             .display_name
             .as_ref()
             .is_some_and(|d| d.chars().count() > 64)
-        || !(12..=72).contains(&input.password.len())
+        || !(chargepilot_domain::limits::PASSWORD_LEN).contains(&input.password.len())
         || input.role_id == 0
         || input.phone.as_ref().is_some_and(|p| p.len() > 32)
     {
@@ -433,7 +435,7 @@ pub async fn reset_admin_password(
     ip: &str,
     request_id: &str,
 ) -> Result<u64, OpsError> {
-    if !(12..=72).contains(&new_password.len()) {
+    if !(chargepilot_domain::limits::PASSWORD_LEN).contains(&new_password.len()) {
         return Err(OpsError::bad_input("新密码须为 12–72 字节"));
     }
     let hash = chargepilot_platform::password::hash(new_password).map_err(OpsError::from)?;

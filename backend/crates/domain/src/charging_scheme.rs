@@ -148,8 +148,10 @@ impl Scheme {
         if s.packages.is_empty() || s.packages.len() > 99 {
             return Err(SchemeError("请配置1～99个支付套餐".into()));
         }
-        if !(60..=4320).contains(&s.policy.max_minutes)
-            || !(60..=4320).contains(&s.card.max_minutes)
+        if !(crate::limits::MIN_SCHEME_MINUTES..=crate::limits::MAX_CHARGE_MINUTES)
+            .contains(&s.policy.max_minutes)
+            || !(crate::limits::MIN_SCHEME_MINUTES..=crate::limits::MAX_CHARGE_MINUTES)
+                .contains(&s.card.max_minutes)
         {
             return Err(SchemeError("金额与刷卡时长上限须为1～72小时".into()));
         }
@@ -228,7 +230,7 @@ impl Scheme {
                 }
                 "duration" => {
                     if p.minutes == 0
-                        || p.minutes > 4320
+                        || p.minutes > u64::from(crate::limits::MAX_CHARGE_MINUTES)
                         || p.kwh != 0
                         || p.price_cents <= 0
                         || p.price_cents > MAX_RATE_CENTS
@@ -247,7 +249,11 @@ impl Scheme {
                     let e = s.energy.as_ref().ok_or_else(|| {
                         SchemeError("电量套餐须为1～65整数度并配置固定单价".into())
                     })?;
-                    if !(1..=65).contains(&p.kwh) || p.minutes != 0 {
+                    if !(u64::from(crate::limits::MIN_ENERGY_PACKAGE_KWH)
+                        ..=u64::from(crate::limits::MAX_ENERGY_PACKAGE_KWH))
+                        .contains(&p.kwh)
+                        || p.minutes != 0
+                    {
                         return Err(SchemeError("电量套餐须为1～65整数度并配置固定单价".into()));
                     }
                     if p.price_cents != p.kwh as i64 * (e.electric_cents + e.service_cents)

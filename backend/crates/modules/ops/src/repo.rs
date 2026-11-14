@@ -307,7 +307,8 @@ pub async fn ensure_bootstrap(
     username: &str,
     password: &str,
 ) -> anyhow::Result<()> {
-    if username.is_empty() || !(12..=72).contains(&password.len()) {
+    if username.is_empty() || !(chargepilot_domain::limits::PASSWORD_LEN).contains(&password.len())
+    {
         anyhow::bail!("admin bootstrap requires username and 12–72 byte password");
     }
     if find_by_username(pool, username).await?.is_some() {

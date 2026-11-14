@@ -20,6 +20,7 @@ use crate::deps::ApiDeps;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
+use chargepilot_domain::limits as _limits;
 use chargepilot_mod_ops::OpsError;
 use chargepilot_mod_ops::management::Page;
 use chargepilot_mod_order::admin_query::{self, AdminOrderListQuery, PaymentOrderListQuery};
@@ -379,10 +380,10 @@ fn parse_process_params(q: &ProcessParams, rid: &str) -> Result<(u64, u32), Resp
         },
     };
     let limit = match q.limit.as_deref() {
-        None => 1000,
+        None => u32::try_from(_limits::CURSOR_LIMIT_DEFAULT).unwrap_or(1_000),
         Some("") => return Err(crate::respond(400, 1005, "过程游标或分页参数无效", rid)),
         Some(raw) => match raw.parse::<u64>() {
-            Ok(v) if (1..=2000).contains(&v) => v as u32,
+            Ok(v) if _limits::CURSOR_LIMIT.contains(&v) => v as u32,
             _ => {
                 return Err(crate::respond(
                     400,

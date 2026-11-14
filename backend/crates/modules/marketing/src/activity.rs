@@ -614,7 +614,7 @@ pub async fn list_activity_rules(
     {
         return Err(CouponError::Forbidden);
     }
-    if !(1..=100_000).contains(&page) || !(1..=100).contains(&page_size) {
+    if chargepilot_domain::page::PageRequest::user(page, page_size).is_err() {
         return Err(CouponError::Input("分页或活动状态无效".into()));
     }
     if !status.is_empty()
