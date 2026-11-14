@@ -338,7 +338,9 @@ async fn list_stations(
         Ok(p) => p,
         Err(e) => return crate::respond(400, 1005, &e.to_string(), &rid),
     };
-    match station::list(&deps.db, page, q.keyword.as_deref(), q.status.as_deref()).await {
+    // 前端「全部状态」以空串发送（axios 照发 status=），旧版语义空串=不过滤。
+    let status = q.status.as_deref().filter(|s| !s.is_empty());
+    match station::list(&deps.db, page, q.keyword.as_deref(), status).await {
         Ok((items, total)) => httpx::ok(
             json!({"items": items, "total": total, "page": page.page, "page_size": page.page_size,
                    "permissions": guard.profile.permissions}),

@@ -140,7 +140,8 @@ async fn list_devices(
         &deps.db,
         page,
         q.station_id,
-        q.status.as_deref(),
+        // 前端「全部状态」以空串发送（axios 照发 status=），旧版语义空串=不过滤。
+        q.status.as_deref().filter(|s| !s.is_empty()),
         q.keyword.as_deref(),
     )
     .await

@@ -146,6 +146,24 @@ async fn publish_inherit_and_version_baseline() {
     })), Some(&token)).await;
     assert_eq!(status, StatusCode::OK, "建站点应成功: {body}");
     let station_id = body["data"]["id"].as_u64().unwrap();
+    // 前端「全部状态」以空串发送（axios 照发 status=）：空串须视同未传，返回全部。
+    let (status, body) = req(
+        router.clone(),
+        "GET",
+        "/api/v1/admin/stations?status=&keyword=&page=1&page_size=50",
+        None,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "空串状态应视同未传: {body}");
+    assert!(
+        body["data"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"].as_u64() == Some(station_id)),
+        "空串过滤的列表应含新建站点"
+    );
     let (status, body) = req(
         router.clone(),
         "POST",

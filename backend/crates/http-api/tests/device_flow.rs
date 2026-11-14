@@ -196,6 +196,25 @@ async fn import_devices_and_fault_flow() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["provisioned"], 0, "重放不重复开通");
 
+    // 前端「全部状态」以空串发送（axios 照发 status=）：空串须视同未传，返回全部。
+    let (status, body) = req(
+        router.clone(),
+        "GET",
+        "/api/v1/admin/devices?status=&keyword=&page=1&page_size=50",
+        None,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "空串状态应视同未传: {body}");
+    assert!(
+        body["data"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["device_id"].as_str() == Some(d1.as_str())),
+        "空串过滤的列表应含已开通设备"
+    );
+
     // 设备启停：disabled 后仅 enabled/disabled 可写
     let meta_id: u64 = sqlx::query_scalar("SELECT `id` FROM `device_meta` WHERE `device_id` = ?")
         .bind(&d1)
