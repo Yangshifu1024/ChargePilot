@@ -340,7 +340,8 @@ async fn list_stations(
     };
     match station::list(&deps.db, page, q.keyword.as_deref(), q.status.as_deref()).await {
         Ok((items, total)) => httpx::ok(
-            json!({"items": items, "total": total, "page": page.page, "page_size": page.page_size}),
+            json!({"items": items, "total": total, "page": page.page, "page_size": page.page_size,
+                   "permissions": guard.profile.permissions}),
             &rid,
         ),
         Err(e) => device_error(e, &rid),
@@ -428,7 +429,11 @@ async fn list_vendors(
         return resp;
     }
     match vendor::list(&deps.db, false).await {
-        Ok(items) => httpx::ok(json!({"items": items}), &rid),
+        // 前端 Vendors.tsx 从列表响应读当前操作人权限集（旧版 Profile.Permissions）。
+        Ok(items) => httpx::ok(
+            json!({"items": items, "permissions": guard.profile.permissions}),
+            &rid,
+        ),
         Err(e) => device_error(e, &rid),
     }
 }

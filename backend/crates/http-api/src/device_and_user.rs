@@ -146,7 +146,8 @@ async fn list_devices(
     .await
     {
         Ok((items, total)) => httpx::ok(
-            json!({"items": items, "total": total, "page": page.page, "page_size": page.page_size}),
+            json!({"items": items, "total": total, "page": page.page, "page_size": page.page_size,
+                   "permissions": guard.profile.permissions}),
             &rid,
         ),
         Err(e) => device_error(e, &rid),
