@@ -21,6 +21,9 @@ pub struct ApiDeps {
     pub simulation_payment: bool,
     /// 充电停止服务（批 4）：授权与计费截止冻结；命令下沉随阶段 06 替换。
     pub charging_stop: Option<Arc<chargepilot_mod_charging::StopService>>,
+    /// 设备实时快照（G2）：快照端点读实时端口读数，缺失回退查库；
+    /// None 时不读内存快照，仅查遥测表。
+    pub snapshots: Option<Arc<chargepilot_gateway_runtime::SnapshotStore>>,
 }
 
 /// 钱包域装配（payment 来源读取 + settlement 退款记录 + wallet 服务）。

@@ -69,6 +69,7 @@ async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAlloc
         checkout: None,
         wallet_recharge: None,
         simulation_payment: true,
+        snapshots: None,
         charging_stop: Some(Arc::new(chargepilot_mod_charging::StopService {
             pool: db.clone(),
             sink: Arc::new(SimulationSink),

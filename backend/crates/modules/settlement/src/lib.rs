@@ -11,6 +11,7 @@ pub mod meter_review;
 pub mod recorder;
 pub mod refund_admin;
 pub mod refund_executor;
+pub mod user_invoice;
 
 /// 审计上下文视图：由 HTTP 层传入，写事务内审计时使用（旧版 ops.AuditContext）。
 /// 模块内函数以 `Option<&AuditView>` 接收；None 表示调用方不写审计（模块级测试）。

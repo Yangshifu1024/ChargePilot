@@ -39,6 +39,7 @@ async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAlloc
         checkout: None,
         wallet_recharge: None,
         simulation_payment: false,
+        snapshots: None,
         charging_stop: None,
     });
     // admin_orders 路由尚未挂进 build_router（主代理统一接线），这里直联合并：
@@ -626,25 +627,21 @@ async fn admin_orders_flow() {
         .await
         .expect("种子应成功");
 
-    // ---- 列表：无过滤分页 ----
-    let (status, body) = req(
-        router.clone(),
-        "GET",
-        "/api/v1/admin/orders?page=1&page_size=100",
-        None,
-        Some(&token),
-    )
-    .await;
+    // ---- 列表：按本批次站点过滤（station_id 为本轮专属，隔离库内历史残留）----
+    let path = format!("/api/v1/admin/orders?station_id={}&page=1&page_size=100", seed.station_id);
+    let (status, body) = req(router.clone(), "GET", &path, None, Some(&token)).await;
     assert_eq!(status, StatusCode::OK, "列表应成功: {body}");
     assert_eq!(body["code"], 0);
+    // 站点过滤命中带站点意图的种子单（order_1/order_2）；order_3 刻意无
+    // 站点意图（投影 station_id 为空），不经本断言，由 order_no 精确筛选覆盖。
     assert!(
-        body["data"]["total"].as_i64().unwrap() >= 3,
-        "total 应不少于种子数: {body}"
+        body["data"]["total"].as_i64().unwrap() >= 2,
+        "total 应不少于带站点种子数: {body}"
     );
     assert_eq!(body["data"]["page"], 1);
     assert_eq!(body["data"]["page_size"], 100);
     let items = body["data"]["items"].as_array().unwrap();
-    for id in seed.order_ids() {
+    for id in [seed.order_1.id, seed.order_2.id] {
         assert!(
             items.iter().any(|it| it["order_id"].as_u64() == Some(id)),
             "列表应包含订单 {id}"

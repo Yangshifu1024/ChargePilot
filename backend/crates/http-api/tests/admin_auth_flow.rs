@@ -50,6 +50,7 @@ async fn build_app() -> Option<axum::Router> {
         checkout: None,
         wallet_recharge: None,
         simulation_payment: false,
+        snapshots: None,
         charging_stop: None,
     });
     let _ = db;

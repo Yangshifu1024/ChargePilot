@@ -1,0 +1,109 @@
+//! 用户侧在线卡：列表、挂失与解绑（旧版 internal/card/status.go +
+//! user_card_repo.go 契约对齐）。
+//!
+//! 状态语义（online_card.status，active/lost/disabled/unbound）：
+//! C 端自助入口只允许写入 lost（挂失）与 unbound（解绑）——启用/停用仅运营
+//! 可写（admin.rs）。查询与锁读都排除已解绑（`status <> 'unbound'`）：
+//! 解绑即从用户视角消失，不可再被改回任何状态。
+//!
+//! 变更事务（旧版 CardStatusService.Change）：行锁读卡（卡号 + 本人 + 未解绑）
+//! → 写 status → 写 online_card_audit（action = `user_<status>`），同事务提交，
+//! 失败整体回滚；不结束现有充电，不动余额。
+
+use serde_json::json;
+use sqlx::Acquire;
+use sqlx::MySqlPool;
+
+/// 用户卡状态操作错误（HTTP 映射沿用旧版字面量契约）。
+#[derive(Debug, thiserror::Error)]
+pub enum UserCardError {
+    /// 状态不在 C 端可写子集（lost/unbound 之外，400/1005）。
+    #[error("card status input invalid")]
+    Input,
+    /// 卡不存在、属于他人或已解绑，统一 404 不泄露归属（404/1004）。
+    #[error("card not found")]
+    NotFound,
+    /// 存储错误（503/5001）。
+    #[error(transparent)]
+    Storage(#[from] anyhow::Error),
+}
+
+impl From<sqlx::Error> for UserCardError {
+    fn from(e: sqlx::Error) -> Self {
+        UserCardError::Storage(anyhow::anyhow!(e.to_string()))
+    }
+}
+
+/// 返回用户本人尚未解绑的卡（旧版 UserCardRepo.List）。
+/// 输出形状对齐旧版 OnlineCard JSON：`id` 数字、`card_no` 字符串、
+/// `user_id` 十进制字符串（旧版 `json:"user_id,string"` 标签）、`status` 字符串。
+pub async fn list(pool: &MySqlPool, user_id: u64) -> Result<Vec<serde_json::Value>, UserCardError> {
+    let rows: Vec<(u64, String, u64, String)> = sqlx::query_as(
+        "SELECT `id`, CAST(`card_no` AS CHAR) AS `card_no`, `user_id`, \
+                CAST(`status` AS CHAR) AS `status` \
+         FROM `online_card` WHERE `user_id` = ? AND `status` <> 'unbound' ORDER BY `id`",
+    )
+    .bind(user_id as i64)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, card_no, owner, status)| {
+            json!({
+                "id": id,
+                "card_no": card_no,
+                "user_id": owner.to_string(),
+                "status": status,
+            })
+        })
+        .collect())
+}
+
+/// 将本人所属卡挂失（lost）或解绑（unbound）（旧版 CardStatusService.Change）。
+/// 归属与存在性核对在锁读中完成：卡不存在、属于他人或已解绑统一 NotFound。
+pub async fn change_status(
+    pool: &MySqlPool,
+    user_id: u64,
+    card_no: &str,
+    status: &str,
+) -> Result<(), UserCardError> {
+    // C 端可写子集白名单（旧版 CardStatus.UserWritable）：仅挂失与解绑。
+    if status != "lost" && status != "unbound" {
+        return Err(UserCardError::Input);
+    }
+    let mut conn = pool.acquire().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        .execute(&mut *conn)
+        .await?;
+    let mut tx = conn.begin().await?;
+    // 锁读：卡号 + 本人 + 未解绑，避免先读再核对归属的竞态（旧版 LockUserCard）。
+    let card_id: Option<u64> = sqlx::query_scalar(
+        "SELECT `id` FROM `online_card` \
+         WHERE `card_no` = ? AND `user_id` = ? AND `status` <> 'unbound' FOR UPDATE",
+    )
+    .bind(card_no)
+    .bind(user_id as i64)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(card_id) = card_id else {
+        return Err(UserCardError::NotFound);
+    };
+    sqlx::query("UPDATE `online_card` SET `status` = ? WHERE `id` = ?")
+        .bind(status)
+        .bind(card_id as i64)
+        .execute(&mut *tx)
+        .await?;
+    // 用户操作审计同事务（旧版 SetUserCardStatus：action = user_<status>）。
+    sqlx::query(
+        "INSERT INTO `online_card_audit` (`card_id`, `actor_id`, `action`, `detail`) \
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind(card_id as i64)
+    .bind(user_id as i64)
+    .bind(format!("user_{status}"))
+    .bind(format!("用户主动{status}"))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}

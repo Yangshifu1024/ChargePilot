@@ -270,7 +270,11 @@ async fn single_device_closed_loop() {
         async move { device_listener.run(addr, accept_token).await }
     });
     let command_sink = Arc::new(GatewayCommandSink::new(registry.clone()));
-    let dispatcher = DeviceEventDispatcher { pool: db.clone() };
+    let dispatcher = DeviceEventDispatcher {
+        pool: db.clone(),
+        allocator: alloc.clone(),
+        registry: registry.clone(),
+    };
 
     // 设备连接：等待监听就绪（spawn 的 bind 竞态）后注册。
     let mut dev = {

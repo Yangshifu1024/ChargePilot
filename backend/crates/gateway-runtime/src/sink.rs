@@ -248,6 +248,60 @@ async fn handle_heartbeat(
         }
     }
     tx.commit().await?;
+    // 心跳晚于故障时判定告警恢复（旧版 AlertSyncService.resolveRecovered 的
+    // 事件驱动对应物）：故障消除即置 auto_resolved；失败不影响心跳事实。
+    if let Err(e) = resolve_recovered_alerts(pool, event, ts).await {
+        tracing::warn!(device = %event.device_id, error = %e, "告警恢复判定失败");
+    }
+    Ok(())
+}
+
+/// 用最新心跳判定该设备活跃告警是否恢复（旧版 worker 周期对账的单体直调形态）。
+/// 恢复条件对齐旧版：心跳晚于告警最新故障时间、携带端口状态位（设备级还要求
+/// 整机状态存在）、且协议判定故障消除；`auto_resolve` 带旧事件键防误清新故障。
+async fn resolve_recovered_alerts(
+    pool: &MySqlPool,
+    event: &Event,
+    heartbeat_at: chrono::DateTime<chrono::Utc>,
+) -> anyhow::Result<()> {
+    let alerts: Vec<(u64, chrono::NaiveDate, String, String)> = sqlx::query_as(
+        "SELECT `id`, `created_month`, `metric`, `event_id` FROM `alert_event` \
+         WHERE `device_id` = ? AND `rule_id` IS NULL AND `status` IN ('active','acknowledged')",
+    )
+    .bind(&event.device_id)
+    .fetch_all(pool)
+    .await?;
+    for (alert_id, created_month, metric, event_key) in alerts {
+        // 最新故障时刻取告警来源事件的接收时间；查不到时不判定（缺证据不恢复）。
+        let fault_at: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT `received_at` FROM `device_event` WHERE `event_key` = ?")
+                .bind(&event_key)
+                .fetch_optional(pool)
+                .await?;
+        let Some(fault_at) = fault_at else {
+            continue;
+        };
+        if heartbeat_at <= fault_at {
+            continue; // 心跳不晚于最新故障：不能作为恢复证据（旧版水印语义）。
+        }
+        // 无端口状态位的心跳不判恢复（旧版 decodeRecoveryPayload 语义）。
+        let recovered = !event.port_states.is_empty()
+            && chargepilot_protocol_dc589::fault::fault_recovered(
+                &metric,
+                event.device_status,
+                Some(&event.port_states),
+            );
+        if recovered {
+            chargepilot_mod_device::alert::auto_resolve(
+                pool,
+                alert_id,
+                created_month,
+                &event_key,
+                heartbeat_at,
+            )
+            .await?;
+        }
+    }
     Ok(())
 }
 
@@ -256,6 +310,7 @@ async fn persist_event(pool: &MySqlPool, event: &Event) -> anyhow::Result<()> {
     let key = GatewaySink::event_key(event);
     let payload = serde_json::json!({
         "event_id": event.event_id,
+        "event_key": key,
         "device_id": event.device_id,
         "type": event.kind.map(|k| format!("{k:?}")).unwrap_or_default(),
         "port": event.port,
@@ -268,6 +323,7 @@ async fn persist_event(pool: &MySqlPool, event: &Event) -> anyhow::Result<()> {
         "card_number": event.card_number,
         "order_number": event.order_number,
         "charged_seconds": event.charged_seconds,
+        "received_at": event.received_at.map(|t| t.to_rfc3339()),
         "started_at": event.started_at.map(|t| t.to_rfc3339()),
         "ended_at": event.ended_at.map(|t| t.to_rfc3339()),
         "amount_cents": event.amount_cents,

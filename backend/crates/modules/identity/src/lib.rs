@@ -4,6 +4,7 @@
 //! 命名空间）、会话 7 天绝对寿命 + Lua 轮换保留 32 旧摘要、访问令牌 JWT（user kind）。
 
 pub mod admin_query;
+pub mod phone;
 pub mod repo;
 pub mod service;
 pub mod session;

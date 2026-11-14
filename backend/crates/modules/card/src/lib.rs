@@ -11,6 +11,7 @@
 pub mod admin;
 pub mod repo;
 pub mod swipe;
+pub mod user_card;
 
 pub use repo::{CardChargeRow, CardOperationRow, active_session_count, find_card_charge};
 pub use swipe::{

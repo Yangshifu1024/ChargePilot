@@ -46,6 +46,7 @@ async fn build_app() -> Option<(axum::Router, String, Arc<SegmentAllocator>)> {
         checkout: None,
         wallet_recharge: None,
         simulation_payment: false,
+        snapshots: None,
         charging_stop: None,
     });
     let router = chargepilot_http_api::build_router(deps, prometheus_handle(), None).await;

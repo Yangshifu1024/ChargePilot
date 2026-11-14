@@ -14,6 +14,10 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 chargepilot-events = { path = "../events" }
 chargepilot-mod-charging = { path = "../modules/charging" }
+chargepilot-mod-card = { path = "../modules/card" }
+chargepilot-mod-device = { path = "../modules/device" }
+chargepilot-mod-payment = { path = "../modules/payment" }
+chargepilot-protocol-dc589 = { path = "../protocol-dc589" }
 chargepilot-domain = { path = "../domain" }
 chargepilot-platform = { path = "../platform" }
 metrics.workspace = true
@@ -22,8 +26,6 @@ metrics.workspace = true
 tokio = { workspace = true, features = ["full"] }
 chargepilot-storage = { path = "../storage" }
 chargepilot-mod-order = { path = "../modules/order" }
-chargepilot-protocol-dc589 = { path = "../protocol-dc589" }
-chargepilot-mod-payment = { path = "../modules/payment" }
 rand = { workspace = true }
 chrono = { workspace = true }
 serde_json = { workspace = true }

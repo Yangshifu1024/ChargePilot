@@ -49,6 +49,7 @@ async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAlloc
         checkout: None,
         wallet_recharge: None,
         simulation_payment: false,
+        snapshots: None,
         charging_stop: None,
     });
     Some((

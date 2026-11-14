@@ -126,7 +126,11 @@ async fn serve() -> anyhow::Result<()> {
     );
     registry.register(
         chargepilot_events::kind::DEVICE_EVENT,
-        Arc::new(chargepilot_gateway_runtime::DeviceEventDispatcher { pool: db.clone() }),
+        Arc::new(chargepilot_gateway_runtime::DeviceEventDispatcher {
+            pool: db.clone(),
+            allocator: (*allocator).clone(),
+            registry: session_registry.clone(),
+        }),
     );
     let registry = Arc::new(registry);
     tasks.spawn("event-dispatcher", {
@@ -239,6 +243,7 @@ async fn serve() -> anyhow::Result<()> {
                 session_registry.clone(),
             )),
         })),
+        snapshots: Some(snapshots.clone()),
     });
     let app = chargepilot_http_api::build_router(
         deps,

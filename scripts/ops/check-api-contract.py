@@ -47,7 +47,15 @@ def main() -> int:
     be = set(re.findall(r'"/api/v1/[^"]*"', out.stdout))
     be_n = {norm_be(b) for b in be}
 
-    missing = [e for e in fe_n if e not in be_n]
+    missing = []
+    for e in fe_n:
+        if e in be_n:
+            continue
+        # 小程序以字符串拼接构造子路径（如 '/user/charge/' + orderNo），
+        # 提取出裸前缀；后端存在该前缀下的动态子路由即视为已覆盖。
+        if any(b.startswith(e + '/{') for b in be_n):
+            continue
+        missing.append(e)
     for e in missing:
         print('MISSING:', e)
     print(f'\n前端调用点 {len(fe_n)} 个，后端路由 {len(be_n)} 个，缺口 {len(missing)} 个')

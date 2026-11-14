@@ -554,7 +554,8 @@ async fn dispatch(
                 .write_frame(&build_fault_reply(f.session, port))
                 .await?;
         }
-        // B4 本地启动上报：落库（平台补全订单）。
+        // B4 本地启动上报：落库（平台补全订单）。载荷偏移对齐协议 5.8.9 第 19 节
+        // 字段表与模拟器 portReport 构造：消费类型在 [23]，卡号在 [32..36]。
         0xB4 => {
             if f.data.len() != 36 {
                 return Err(std::io::Error::other("本地启动帧无效"));
@@ -563,12 +564,15 @@ async fn dispatch(
             let mut event = make_event(EventType::LocalStart);
             event.port = port;
             event.event_id = new_event_id();
-            // 订单号（8 字节 BCD）与消费类型按 B4 载荷偏移解出。
+            // 订单号（8 字节 BCD）与启动时间（6 字节民用 BCD）按固定偏移解出。
             if let Ok(order) = crate::decode_bcd(&f.data[2..10]) {
                 event.order_number = order;
             }
-            event.consumer_type = f.data[29];
+            event.consumer_type = f.data[23];
             event.started_at = crate::decode_civil_time(&f.data[10..16]).ok();
+            // 离线卡本地启动带卡号（小端 u32）；投币/免费启动卡号为零。
+            event.card_number =
+                u32::from_le_bytes([f.data[32], f.data[33], f.data[34], f.data[35]]);
             sink.record(event).await.map_err(io_of)?;
             // B5 本地启动确认（0=收到）。
             session

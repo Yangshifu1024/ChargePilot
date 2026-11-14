@@ -79,6 +79,12 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
             "/api/v1/user/device/fault-reports/{id}/history",
             axum::routing::get(my_fault_history),
         )
+        // 匿名扫码（旧版 ScanAPI：无需登录，创建支付时才要求鉴权）
+        .route(
+            "/api/v1/user/scan/resolve",
+            axum::routing::post(scan_resolve),
+        )
+        .route("/api/v1/user/scan/port", axum::routing::post(scan_port))
 }
 
 fn rid_of(headers: &HeaderMap) -> String {
@@ -577,5 +583,120 @@ async fn my_fault_history(
     match fault::my_history(&deps.db, user_id, id).await {
         Ok(items) => httpx::ok(json!({"items": items}), &rid),
         Err(e) => device_error(e, &rid),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 匿名扫码（旧版 ScanAPI：resolve 解析裸码或 HTTPS 二维码链接；port 按端口编码）
+// ---------------------------------------------------------------------------
+
+/// 端口/设备码合法字符集（旧版 userScanCodePattern：1–64 位字母数字下划线冒号连字符）。
+fn is_scan_code(code: &str) -> bool {
+    (1..=64).contains(&code.len())
+        && code
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':' || c == '-')
+}
+
+/// 裸码或 HTTPS 链接提取（旧版 canonicalScanCode）：
+/// 裸码直接返回；否则要求 https 链接且 query 恰好一个合法 code 参数。
+fn canonical_scan_code(raw: &str) -> Option<String> {
+    if is_scan_code(raw) {
+        return Some(raw.to_string());
+    }
+    if raw.len() > 2048
+        || raw.contains('\u{0}')
+        || raw.contains('\r')
+        || raw.contains('\n')
+        || raw.contains('\t')
+    {
+        return None;
+    }
+    let rest = raw.strip_prefix("https://")?;
+    let (authority_and_path, query) = match rest.split_once('?') {
+        Some((head, q)) => (head, q),
+        None => return None,
+    };
+    // host 非空、无用户信息、无片段。
+    if authority_and_path.is_empty() || authority_and_path.contains('@') {
+        return None;
+    }
+    // query 中恰好一个 code 参数且值合法（旧版 Query()["code"] 语义：只取同名参数）。
+    let mut codes = Vec::new();
+    for pair in query.split('&') {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        if key == "code" {
+            // + 与 %2B 形态的空格/加号差异由编码方保证；此处按原文校验字符集。
+            codes.push(value.to_string());
+        }
+    }
+    if codes.len() != 1 {
+        return None;
+    }
+    let code = codes.pop()?;
+    if is_scan_code(&code) {
+        Some(code)
+    } else {
+        None
+    }
+}
+
+/// 扫码错误映射（旧版 handle：404 1004 not found，其余 503 5001）。
+fn scan_error(e: chargepilot_mod_device::scan::ScanError, rid: &str) -> Response {
+    match e {
+        chargepilot_mod_device::scan::ScanError::NotFound => {
+            crate::respond(404, 1004, "scan code not found", rid)
+        }
+        chargepilot_mod_device::scan::ScanError::Storage(err) => {
+            tracing::warn!(cause = %err, "扫码查询失败");
+            crate::respond(503, 5001, "device lookup unavailable", rid)
+        }
+    }
+}
+
+/// 扫码解析：裸码或 HTTPS 二维码链接 → 设备或端口（匿名）。
+async fn scan_resolve(
+    State(deps): State<Arc<ApiDeps>>,
+    headers: HeaderMap,
+    body: Option<axum::Json<Value>>,
+) -> Response {
+    let rid = rid_of(&headers);
+    let code = body
+        .map(|b| b.0)
+        .and_then(|v| v.get("code").and_then(|x| x.as_str()).map(str::to_string))
+        .unwrap_or_default();
+    let Some(code) = canonical_scan_code(&code) else {
+        return crate::respond(400, 1005, "invalid scan code", &rid);
+    };
+    match chargepilot_mod_device::scan::resolve(&deps.db, &code).await {
+        Ok(view) => httpx::ok(serde_json::to_value(&view).unwrap_or(Value::Null), &rid),
+        Err(e) => scan_error(e, &rid),
+    }
+}
+
+/// 端口查询：端口编码 → 单端口（匿名；命中设备码按旧版输出 port not found）。
+async fn scan_port(
+    State(deps): State<Arc<ApiDeps>>,
+    headers: HeaderMap,
+    body: Option<axum::Json<Value>>,
+) -> Response {
+    let rid = rid_of(&headers);
+    let port_id = body
+        .map(|b| b.0)
+        .and_then(|v| {
+            v.get("port_id")
+                .and_then(|x| x.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_default();
+    if !is_scan_code(&port_id) {
+        return crate::respond(400, 1005, "invalid scan code", &rid);
+    }
+    match chargepilot_mod_device::scan::resolve(&deps.db, &port_id).await {
+        Ok(view) if view.kind == "port" && view.port.is_some() => {
+            httpx::ok(serde_json::to_value(view.port).unwrap_or(Value::Null), &rid)
+        }
+        Ok(_) => crate::respond(404, 1004, "port not found", &rid),
+        Err(e) => scan_error(e, &rid),
     }
 }

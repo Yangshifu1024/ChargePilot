@@ -170,7 +170,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         .execute(&mut *conn)
         .await?;
     let mut tx = conn.begin().await?;
-    let c = tx.acquire().await?;
+    let mut c = tx.acquire().await?;
 
     // 支付单锁定并核对（旧版 Apply 的核心核对集合）。
     let payment: Option<(String, i64, i64, u64)> = sqlx::query_as(
@@ -220,6 +220,8 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         .bind(charge_order_id as i64)
         .execute(&mut *c)
         .await?;
+        // 账单签发接线：重放路径同事务幂等补签（uk_order 复用，已有账单零写入）。
+        crate::bill::issue_bill_in_tx(&mut c, charge_order_id).await?;
         tx.commit().await?;
         return Ok(true);
     }
@@ -348,6 +350,9 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     .bind(charge_order_id as i64)
     .execute(&mut *c)
     .await?;
+    // 账单签发接线：费用入账与账单同一事务落地（旧版生产链路的账单缺口由
+    // Missing 补偿循环兜底，此处直接消除缺口；total<=0 时签发内部返回 None 跳过）。
+    crate::bill::issue_bill_in_tx(&mut c, charge_order_id).await?;
     tx.commit().await?;
     Ok(true)
 }

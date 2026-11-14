@@ -4,6 +4,7 @@
 
 pub mod admin_query;
 pub mod feedback;
+pub mod user_query;
 
 use chargepilot_domain::money::PaymentStatus;
 use chargepilot_platform::ids::SegmentAllocator;

@@ -40,4 +40,5 @@ pub mod fault;
 pub mod import;
 pub mod management;
 pub mod provision;
+pub mod scan;
 pub mod user_station;

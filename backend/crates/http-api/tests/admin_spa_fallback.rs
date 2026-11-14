@@ -35,6 +35,7 @@ async fn deep_links_fall_back_to_index_with_200() {
         wallet_recharge: None,
         checkout: None,
         simulation_payment: false,
+        snapshots: None,
         charging_stop: None,
     });
     let app = chargepilot_http_api::build_router(deps, prometheus_handle(), Some(&path)).await;
