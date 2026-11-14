@@ -1,4 +1,6 @@
 //! 业务域模块：payment（支付意图、渠道、支付成功处理与来源锁定）。
+//! 跨域依赖（票 21 审计）：marketing,order,pricing,wallet——券核销幂等（marketing）；订单号分配与订单事实（order）；计费方案扫描与冻结（pricing）；余额充值桥与钱包错误映射（wallet）。
+//! 依赖图无环（ops 为唯一根；order 不依赖 payment/wallet，无反向边）。
 //! 表归属：payment_order、charge_payment_intent、charge_prepay、
 //! payment_callback_idempotent（docs/design/schema.md）。
 //!

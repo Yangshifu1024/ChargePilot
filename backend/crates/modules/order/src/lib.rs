@@ -1,4 +1,6 @@
 //! order 域：充电订单写模型（表归属：charge_order / charge_order_pricing /
+//! 跨域依赖（票 21 审计）：ops——操作员归属约束（admin_query 的数据范围按操作员权限过滤）。
+//! 依赖图无环（ops 为唯一根；order 不依赖 payment/wallet，无反向边）。
 //! charge_event_log 归 order；编号规则纯函数在 domain::payment_intent）。
 //! 支付成功事务由 payment 模块编排，本模块只提供订单侧的表访问。
 

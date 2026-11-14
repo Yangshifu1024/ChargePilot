@@ -1,4 +1,6 @@
 //! 业务域模块：wallet（钱包）。
+//! 跨域依赖（票 21 审计）：ops——风控操作员归属判定复用 ops 的实时权限语义（审批人须持有 finance 权限），经服务函数复核。
+//! 依赖图无环（ops 为唯一根；order 不依赖 payment/wallet，无反向边）。
 //! 职责：账户余额与流水账本、充值申请与回调入账、余额退款申请与原路拆单预占、
 //! 风险审核与解冻。表归属：wallet_account、wallet_txn、wallet_recharge_request、
 //! wallet_refund_request、wallet_refund_part、wallet_risk_freeze_link、

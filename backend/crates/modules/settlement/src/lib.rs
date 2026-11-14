@@ -1,4 +1,6 @@
 //! 业务域模块：settlement（计费批次、退款执行、退款记录与账单）。
+//! 跨域依赖（票 21 审计）：ops,order,payment,wallet——操作员实时权限与引导账号（ops）；订单视图与事件登记（order）；支付单状态推进与退款锁（payment）；余额退回入账（wallet）。
+//! 依赖图无环（ops 为唯一根；order 不依赖 payment/wallet，无反向边）。
 //! 表归属：charge_billing_job、charge_fee_receipt、charge_bill、refund_record
 //! 等（docs/design/schema.md）。计费入口复用 domain 的 settle_session（批 1
 //! 差分验证）；退款执行器在 simulation 通道直接成功，真实渠道随批 6 接入。
