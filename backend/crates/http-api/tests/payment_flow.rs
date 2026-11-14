@@ -124,7 +124,7 @@ async fn checkout_confirm_and_late_refund_flow() {
         &router,
         "POST",
         "/api/v1/user/scan/offers",
-        Some(json!({"port_code": port_code})),
+        Some(json!({"port_id": port_code})),
         None,
     )
     .await;
@@ -141,7 +141,7 @@ async fn checkout_confirm_and_late_refund_flow() {
     let (status, body) = req(&router,
         "POST",
         "/api/v1/user/scan/start",
-        Some(json!({"client_request_id": request_id, "port_code": port_code, "offer_id": rule_id * 100 + 1})),
+        Some(json!({"client_request_id": request_id, "port_id": port_code, "offer_id": rule_id * 100 + 1})),
         Some(&token_a),
     )
     .await;
@@ -182,7 +182,7 @@ async fn checkout_confirm_and_late_refund_flow() {
     let (status, replay) = req(&router,
         "POST",
         "/api/v1/user/scan/start",
-        Some(json!({"client_request_id": request_id, "port_code": port_code, "offer_id": rule_id * 100 + 1})),
+        Some(json!({"client_request_id": request_id, "port_id": port_code, "offer_id": rule_id * 100 + 1})),
         Some(&token_a),
     )
     .await;
@@ -197,7 +197,7 @@ async fn checkout_confirm_and_late_refund_flow() {
     let (status, body) = req(&router,
         "POST",
         "/api/v1/user/scan/start",
-        Some(json!({"client_request_id": request_id, "port_code": port_code, "offer_id": rule_id * 100 + 2})),
+        Some(json!({"client_request_id": request_id, "port_id": port_code, "offer_id": rule_id * 100 + 2})),
         Some(&token_a),
     )
     .await;
@@ -270,7 +270,7 @@ async fn checkout_confirm_and_late_refund_flow() {
     let (status, body) = req(&router,
         "POST",
         "/api/v1/user/scan/start",
-        Some(json!({"client_request_id": rand_uuid(), "port_code": port_code, "offer_id": rule_id * 100 + 1})),
+        Some(json!({"client_request_id": rand_uuid(), "port_id": port_code, "offer_id": rule_id * 100 + 1})),
         Some(&token_b),
     )
     .await;
@@ -283,7 +283,7 @@ async fn checkout_confirm_and_late_refund_flow() {
     let (status, body) = req(&router,
         "POST",
         "/api/v1/user/scan/start",
-        Some(json!({"client_request_id": rand_uuid(), "port_code": port_code2, "offer_id": rule_id * 100 + 1})),
+        Some(json!({"client_request_id": rand_uuid(), "port_id": port_code2, "offer_id": rule_id * 100 + 1})),
         Some(&token_b),
     )
     .await;
@@ -451,7 +451,7 @@ async fn checkout_rejects_coupon_with_offer() {
         "POST",
         "/api/v1/user/scan/start",
         Some(json!({
-            "client_request_id": rand_uuid(), "port_code": port_code,
+            "client_request_id": rand_uuid(), "port_id": port_code,
             "offer_id": rule_id * 100 + 1, "coupon_grant_id": "12345"
         })),
         Some(&token),

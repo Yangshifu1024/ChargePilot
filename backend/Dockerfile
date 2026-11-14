@@ -4,7 +4,11 @@
 
 # ---------- 前端：admin-web(SPA) 与 miniprogram(H5) ----------
 # 用 glibc 的 slim 镜像：Taro 原生 binding 锁文件只含 *-gnu 平台包，musl(alpine) 无条目。
+# H5_LOGIN_MODE 决定 H5 产物登录形态（dev: 账号直登 / wechat 真实微信），须与
+# 后端 LOGIN_MODE 一致（docker/.env）；默认 development 对齐开发验收栈。
 FROM gh-proxy.org/docker/node:24-slim AS frontend
+ARG H5_LOGIN_MODE=development
+ENV TARO_APP_LOGIN_MODE=${H5_LOGIN_MODE}
 WORKDIR /fe
 COPY frontend/admin-web/package.json frontend/admin-web/package-lock.json ./admin-web/
 COPY frontend/miniprogram/package.json frontend/miniprogram/package-lock.json frontend/miniprogram/.npmrc ./miniprogram/

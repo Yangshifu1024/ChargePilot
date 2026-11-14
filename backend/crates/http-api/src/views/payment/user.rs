@@ -42,6 +42,8 @@ fn rid_of(headers: &HeaderMap) -> String {
 
 #[derive(Deserialize)]
 struct OffersBody {
+    /// 端口二维码编码（wire 字段名 port_id 对齐旧版与小程序端）。
+    #[serde(rename = "port_id")]
     port_code: String,
 }
 
@@ -65,6 +67,8 @@ async fn payment_offers(
 #[derive(Deserialize)]
 struct StartBody {
     client_request_id: String,
+    /// 端口二维码编码（wire 字段名 port_id 对齐旧版与小程序端）。
+    #[serde(rename = "port_id")]
     port_code: String,
     offer_id: u64,
     /// 券发放 ID（可选，十进制字符串或数字）。当前套餐下单不支持券（旧版

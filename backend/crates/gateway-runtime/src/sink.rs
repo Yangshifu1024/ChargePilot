@@ -221,11 +221,18 @@ async fn handle_heartbeat(
         });
     }
     let mut tx = pool.begin().await?;
-    // 设备在线事实（信号按事件时间前进）。
+    // 设备在线事实（信号按事件时间前进）；last_seen_at 随心跳前进（取较大值
+    // 防乱序回退），扫码在线判定与最近在线展示依赖它，只推 heartbeat 列会让
+    // 注册后设备在扫码链路呈现离线。
     sqlx::query(
-        "UPDATE `device` SET `last_heartbeat_at` = ?, \
+        "UPDATE `device` SET \
+         `last_heartbeat_at` = GREATEST(COALESCE(`last_heartbeat_at`, ?), ?), \
+         `last_seen_at` = GREATEST(COALESCE(`last_seen_at`, ?), ?), \
          `signal_strength` = ?, `signal_at` = ? WHERE `device_id` = ?",
     )
+    .bind(ts)
+    .bind(ts)
+    .bind(ts)
     .bind(ts)
     .bind(i64::from(event.signal))
     .bind(ts)

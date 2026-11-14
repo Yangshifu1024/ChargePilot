@@ -73,14 +73,12 @@ impl PayProvider for SimulationProvider {
             if request.amount_cents <= 0 || request.merchant_order_no.is_empty() {
                 return Err("模拟渠道参数无效".to_string());
             }
+            // wire 契约对齐旧版 Simulator：仅 provider 字段（前端按
+            // provider==='simulation' 识别模拟渠道并用 prepay_id 前缀还原单号）。
             let mut fields = serde_json::Map::new();
             fields.insert(
-                "mode".to_string(),
+                "provider".to_string(),
                 serde_json::Value::String("simulation".to_string()),
-            );
-            fields.insert(
-                "order_no".to_string(),
-                serde_json::Value::String(request.merchant_order_no.clone()),
             );
             Ok(PrepayParams {
                 prepay_id: format!("SIM{}", request.merchant_order_no),
