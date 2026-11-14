@@ -140,6 +140,7 @@ mod tests {
 
     #[ignore = "真库集成：node tasks.mjs test-integration"]
     #[tokio::test]
+    #[allow(clippy::disallowed_methods)] // 票 16 豁免：测试模块的连接变量
     async fn rotate_and_revoke_scripts() {
         // 门控语义：未设 TEST_REDIS_URL 属调用方式错误，判失败而非静默跳过。
         let Ok(url) = std::env::var("TEST_REDIS_URL") else {

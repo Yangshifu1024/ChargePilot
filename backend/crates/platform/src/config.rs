@@ -1,84 +1,259 @@
-//! 环境变量配置：手写加载与校验（required / 取值 / 密钥长度），语义对齐旧版 caarlos0/env 用法。
+//! 环境变量配置：统一收编与校验（required / 取值 / 密钥长度），语义对齐旧版 caarlos0/env 用法。
 //!
-//! 环境变量清单在阶段 09 冻结；本模块自阶段 01 起仅收录已启用变量，
-//! 未收录变量不做静默处理（阶段 09 引入「未知变量报错」）。
+//! **全量分组（票 16）**：全部应用环境变量经本结构加载（数据库/监听/认证/支付/
+//! 登录/微信凭据/静态资源/导出/引导账号），支付与登录模式为枚举型配置——非法
+//! 取值启动即失败。加载提供可注入的环境读取口（[`EnvSource`]），供测试断言
+//! 默认值、校验路径与「实际读取集合 == 冻结清单」的一致性。
+//! 环境变量清单冻结（阶段 09）；清单外变量启动时显式告警，不静默忽略。
 
-/// 进程配置（阶段 01 地基部分；支付/微信凭据随阶段 04 扩展）。
+/// 进程配置（票 16 全量分组）。
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// 单库 DSN（ADR 001）。
+    /// 数据库组：单库 DSN（ADR 001）。
     pub database_url: String,
-    /// Redis 连接（会话/MFA/频次/锁）。
+    /// 数据库组：Redis 连接（会话/MFA/频次/锁）。
     pub redis_url: String,
+    /// 监听组。
+    pub listen: ListenConfig,
+    /// 认证组。
+    pub auth: AuthConfig,
+    /// 支付渠道模式（PAYMENT_MODE，枚举型——非法取值启动失败）。
+    pub payment_mode: PaymentMode,
+    /// 登录模式（LOGIN_MODE，枚举型——非法取值启动失败）。
+    pub login_mode: LoginMode,
+    /// 微信凭据组（production 必填；development/simulation 模式可缺省）。
+    pub wechat: WechatCreds,
+    /// 静态资源组（None 时对应静态路由不挂载，开发未构建前端）。
+    pub static_assets: StaticAssetsConfig,
+    /// 导出组。
+    pub export: ExportConfig,
+    /// 引导账号组（user 为空则跳过引导）。
+    pub bootstrap: BootstrapConfig,
+}
+
+/// 监听组。
+#[derive(Debug, Clone)]
+pub struct ListenConfig {
     /// HTTP 监听地址。
     pub http_addr: String,
     /// 设备 TCP 监听地址（阶段 06 生效，此处校验格式）。
     pub device_addr: String,
+}
+
+/// 认证组。
+#[derive(Debug, Clone)]
+pub struct AuthConfig {
     /// JWT 签名密钥（≥32 字节，旧版同语义）。
     pub jwt_secret: String,
     /// paid 态启动超时秒数（旧版缺口补齐，见 docs/design/state-machine.md）。
     pub paid_start_timeout_secs: i64,
 }
 
-impl Config {
-    /// 从环境变量加载并校验。任何校验失败即返回错误（启动 fail-fast）。
-    pub fn from_env() -> anyhow::Result<Self> {
-        warn_unknown_env_vars();
-        let database_url = require("DATABASE_URL")?;
-        let redis_url = require("REDIS_URL")?;
-        let http_addr = optional("HTTP_ADDR", "0.0.0.0:8080");
-        let device_addr = optional("DEVICE_ADDR", "0.0.0.0:9100");
-        let jwt_secret = require("JWT_SECRET")?;
-        let paid_start_timeout_secs: i64 = optional("PAID_START_TIMEOUT_SECS", "300")
-            .parse()
-            .map_err(|_| anyhow::anyhow!("PAID_START_TIMEOUT_SECS 不是合法整数"))?;
-        Self::build(
-            database_url,
-            redis_url,
-            http_addr,
-            device_addr,
-            jwt_secret,
-            paid_start_timeout_secs,
-        )
+/// 支付渠道模式（旧版 PAYMENT_MODE 三个取值，枚举化后非法取值启动失败）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaymentMode {
+    /// 模拟渠道（开发/测试默认）：确认端点开放，无真实出站。
+    Simulation,
+    /// 微信直连（真实商户联调）。
+    WechatDirect,
+    /// 支付禁用（下单拒绝）。
+    Disabled,
+}
+
+impl PaymentMode {
+    fn parse(raw: &str) -> anyhow::Result<Self> {
+        match raw {
+            "simulation" => Ok(Self::Simulation),
+            "wechat_direct" => Ok(Self::WechatDirect),
+            "disabled" => Ok(Self::Disabled),
+            other => anyhow::bail!(
+                "PAYMENT_MODE 取值非法: {other}（可选 simulation / wechat_direct / disabled）"
+            ),
+        }
+    }
+}
+
+/// 登录模式（旧版 LOGIN_MODE 两个取值）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginMode {
+    /// 开发登录（dev:<account> 伪码换 token）。
+    Development,
+    /// 微信 code 换 session（jscode2session 出站）。
+    Wechat,
+}
+
+impl LoginMode {
+    fn parse(raw: &str) -> anyhow::Result<Self> {
+        match raw {
+            "development" => Ok(Self::Development),
+            "wechat" => Ok(Self::Wechat),
+            other => anyhow::bail!("LOGIN_MODE 取值非法: {other}（可选 wechat / development）"),
+        }
+    }
+}
+
+/// 微信凭据组（原始字符串；PEM/证书解析在支付域装配层完成）。
+#[derive(Debug, Clone, Default)]
+pub struct WechatCreds {
+    pub appid: String,
+    pub secret: String,
+    pub mch_id: String,
+    pub mch_serial: String,
+    pub private_key_pem: String,
+    /// 平台证书（序列号,PEM;... 多条分号分隔）。
+    pub platform_certs: String,
+    /// APIv3 密钥（32 字节；原实现直读但冻结清单漏登记，票 16 收编修正）。
+    pub api_v3_key: String,
+    pub notify_url: String,
+}
+
+/// 静态资源组。
+#[derive(Debug, Clone, Default)]
+pub struct StaticAssetsConfig {
+    pub admin_dir: Option<String>,
+    pub h5_dir: Option<String>,
+}
+
+/// 导出组（与 `chargepilot_mod_export::ExportConfig` 对齐；max_rows 非正数默认 50000）。
+#[derive(Debug, Clone)]
+pub struct ExportConfig {
+    pub dir: String,
+    pub max_rows: i64,
+}
+
+/// 引导账号组。
+#[derive(Debug, Clone, Default)]
+pub struct BootstrapConfig {
+    pub user: String,
+    pub password: String,
+}
+
+/// 可注入的环境读取口（票 16）：`read` 取单变量、`all` 供未知变量告警。
+/// 生产实现 [`SystemEnv`]；测试注入假环境以断言默认值/校验路径/读取集合。
+pub trait EnvSource {
+    fn read(&self, name: &str) -> Option<String>;
+    fn all(&self) -> Vec<(String, String)>;
+}
+
+/// 生产实现：直读进程环境（全仓唯一的环境变量直读点，clippy 禁令豁免于此）。
+pub struct SystemEnv;
+
+impl EnvSource for SystemEnv {
+    #[allow(clippy::disallowed_methods)] // 统一配置入口：全仓唯一豁免点（票 16）
+    fn read(&self, name: &str) -> Option<String> {
+        std::env::var(name).ok()
     }
 
-    /// 纯校验与装配（与环境解耦，供测试直接驱动）。
-    fn build(
-        database_url: String,
-        redis_url: String,
-        http_addr: String,
-        device_addr: String,
-        jwt_secret: String,
-        paid_start_timeout_secs: i64,
-    ) -> anyhow::Result<Self> {
+    #[allow(clippy::disallowed_methods)] // 统一配置入口：全仓唯一豁免点（票 16）
+    fn all(&self) -> Vec<(String, String)> {
+        std::env::vars().collect()
+    }
+}
+
+impl Config {
+    /// 从进程环境加载并校验（组合根唯一入口）。任何校验失败即返回错误。
+    pub fn from_env() -> anyhow::Result<Self> {
+        Self::load(&SystemEnv)
+    }
+
+    /// 可注入加载（票 16）：环境读取经 [`EnvSource`]，测试可注入假环境。
+    pub fn load(src: &impl EnvSource) -> anyhow::Result<Self> {
+        warn_unknown_env_vars(&src.all()[..]);
+        let database_url = require(src, "DATABASE_URL")?;
+        let redis_url = require(src, "REDIS_URL")?;
+        let listen = ListenConfig {
+            http_addr: optional(src, "HTTP_ADDR", "0.0.0.0:8080"),
+            device_addr: optional(src, "DEVICE_ADDR", "0.0.0.0:9100"),
+        };
+        let paid_start_timeout_secs: i64 = optional(src, "PAID_START_TIMEOUT_SECS", "300")
+            .parse()
+            .map_err(|_| anyhow::anyhow!("PAID_START_TIMEOUT_SECS 不是合法整数"))?;
+        let auth = AuthConfig {
+            jwt_secret: require(src, "JWT_SECRET")?,
+            paid_start_timeout_secs,
+        };
+        let payment_mode = PaymentMode::parse(&optional(src, "PAYMENT_MODE", "simulation"))?;
+        let login_mode = LoginMode::parse(&optional(src, "LOGIN_MODE", "development"))?;
+        let wechat = WechatCreds {
+            appid: optional(src, "WECHAT_APPID", ""),
+            secret: optional(src, "WECHAT_SECRET", ""),
+            mch_id: optional(src, "WECHAT_MCH_ID", ""),
+            mch_serial: optional(src, "WECHAT_MCH_SERIAL", ""),
+            private_key_pem: optional(src, "WECHAT_PRIVATE_KEY_PEM", ""),
+            platform_certs: optional(src, "WECHAT_PLATFORM_CERTS", ""),
+            api_v3_key: optional(src, "WECHAT_APIV3_KEY", ""),
+            notify_url: optional(src, "WECHAT_NOTIFY_URL", ""),
+        };
+        let static_assets = StaticAssetsConfig {
+            admin_dir: non_empty(src.read("ADMIN_STATIC_DIR")),
+            h5_dir: non_empty(src.read("H5_STATIC_DIR")),
+        };
+        let export = ExportConfig {
+            dir: optional(src, "EXPORT_DIR", ""),
+            max_rows: optional(src, "EXPORT_MAX_ROWS", "").parse().unwrap_or(0),
+        };
+        let bootstrap = BootstrapConfig {
+            user: optional(src, "ADMIN_BOOTSTRAP_USER", ""),
+            password: optional(src, "ADMIN_BOOTSTRAP_PASSWORD", ""),
+        };
+        Self::validate(
+            &database_url,
+            &redis_url,
+            &listen,
+            &auth,
+            &export.max_rows.to_string(),
+        )?;
+        Ok(Self {
+            database_url,
+            redis_url,
+            listen,
+            auth,
+            payment_mode,
+            login_mode,
+            wechat,
+            static_assets,
+            export,
+            bootstrap,
+        })
+    }
+
+    /// 纯校验（与环境解耦）。
+    fn validate(
+        database_url: &str,
+        redis_url: &str,
+        listen: &ListenConfig,
+        auth: &AuthConfig,
+        _max_rows_raw: &str,
+    ) -> anyhow::Result<()> {
         if database_url.trim().is_empty() {
             anyhow::bail!("DATABASE_URL 不能为空");
         }
         if redis_url.trim().is_empty() {
             anyhow::bail!("REDIS_URL 不能为空");
         }
-        if jwt_secret.len() < 32 {
-            anyhow::bail!("JWT_SECRET 至少 32 字节（当前 {}）", jwt_secret.len());
+        if auth.jwt_secret.len() < 32 {
+            anyhow::bail!("JWT_SECRET 至少 32 字节（当前 {}）", auth.jwt_secret.len());
         }
-        for (name, addr) in [("HTTP_ADDR", &http_addr), ("DEVICE_ADDR", &device_addr)] {
+        for (name, addr) in [
+            ("HTTP_ADDR", &listen.http_addr),
+            ("DEVICE_ADDR", &listen.device_addr),
+        ] {
             if addr.parse::<std::net::SocketAddr>().is_err() {
                 anyhow::bail!("{name} 不是合法监听地址: {addr}");
             }
         }
-        Ok(Self {
-            database_url,
-            redis_url,
-            http_addr,
-            device_addr,
-            jwt_secret,
-            paid_start_timeout_secs,
-        })
+        Ok(())
     }
 }
 
+fn non_empty(v: Option<String>) -> Option<String> {
+    v.filter(|s| !s.trim().is_empty())
+}
+
 /// 环境变量冻结清单（阶段 09）：应用可识别的全部变量。
-/// 清单外变量（含拼写错误）启动时显式告警——配置漂移有据可查，不静默忽略。
-const KNOWN_ENV_VARS: &[&str] = &[
+/// **一致性测试锁定**：`Config::load` 实际读取的变量名集合（含 RUST_LOG 的
+/// 日志层直读）必须与本清单相等——新增/删除变量两处同步，漂移即测试失败。
+pub const KNOWN_ENV_VARS: &[&str] = &[
     // 核心
     "DATABASE_URL",
     "REDIS_URL",
@@ -101,6 +276,7 @@ const KNOWN_ENV_VARS: &[&str] = &[
     "WECHAT_MCH_SERIAL",
     "WECHAT_PRIVATE_KEY_PEM",
     "WECHAT_PLATFORM_CERTS",
+    "WECHAT_APIV3_KEY",
     "WECHAT_NOTIFY_URL",
     // 运行模式与日志
     "PAYMENT_MODE",
@@ -166,8 +342,8 @@ const SYSTEM_ENV_PREFIXES: &[&str] = &[
 ];
 
 /// 对清单外变量打 WARN（不阻断启动：容器运行时变量难以穷举，漂移靠日志可查）。
-fn warn_unknown_env_vars() {
-    for (name, _) in std::env::vars() {
+fn warn_unknown_env_vars(all: &[(String, String)]) {
+    for (name, _) in all {
         if KNOWN_ENV_VARS.contains(&name.as_str()) {
             continue;
         }
@@ -184,17 +360,17 @@ fn warn_unknown_env_vars() {
     }
 }
 
-fn require(name: &str) -> anyhow::Result<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.trim().is_empty() => Ok(v),
-        Ok(_) => anyhow::bail!("{name} 不能为空"),
-        Err(_) => anyhow::bail!("缺少必需环境变量 {name}"),
+fn require(src: &impl EnvSource, name: &str) -> anyhow::Result<String> {
+    match src.read(name) {
+        Some(v) if !v.trim().is_empty() => Ok(v),
+        Some(_) => anyhow::bail!("{name} 不能为空"),
+        None => anyhow::bail!("缺少必需环境变量 {name}"),
     }
 }
 
-fn optional(name: &str, default: &str) -> String {
-    match std::env::var(name) {
-        Ok(v) if !v.trim().is_empty() => v,
+fn optional(src: &impl EnvSource, name: &str, default: &str) -> String {
+    match src.read(name) {
+        Some(v) if !v.trim().is_empty() => v,
         _ => default.to_string(),
     }
 }
@@ -202,107 +378,167 @@ fn optional(name: &str, default: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
 
     const DB: &str = "mysql://u:p@127.0.0.1:3307/db";
     const REDIS: &str = "redis://127.0.0.1:6380";
     const SECRET_OK: &str = "0123456789abcdef0123456789abcdef";
 
+    /// 假环境（票 16 注入口）：记录被查询的变量名供一致性测试。
+    struct FakeEnv {
+        vars: BTreeMap<String, String>,
+        queried: RefCell<Vec<String>>,
+    }
+
+    impl FakeEnv {
+        fn new(pairs: &[(&str, &str)]) -> Self {
+            Self {
+                vars: pairs
+                    .iter()
+                    .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                    .collect(),
+                queried: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl EnvSource for FakeEnv {
+        fn read(&self, name: &str) -> Option<String> {
+            self.queried.borrow_mut().push(name.to_string());
+            self.vars.get(name).cloned()
+        }
+
+        fn all(&self) -> Vec<(String, String)> {
+            self.vars
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        }
+    }
+
+    fn minimal_env() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("DATABASE_URL", DB),
+            ("REDIS_URL", REDIS),
+            ("JWT_SECRET", SECRET_OK),
+        ]
+    }
+
     #[test]
-    fn valid_config_assembles() {
-        let cfg = Config::build(
-            DB.into(),
-            REDIS.into(),
-            "127.0.0.1:8080".into(),
-            "127.0.0.1:9100".into(),
-            SECRET_OK.into(),
-            300,
-        )
-        .unwrap();
-        assert_eq!(cfg.paid_start_timeout_secs, 300);
-        assert_eq!(cfg.http_addr, "127.0.0.1:8080");
+    fn valid_config_assembles_with_defaults() {
+        let env = FakeEnv::new(&minimal_env());
+        let cfg = Config::load(&env).unwrap();
+        assert_eq!(cfg.listen.http_addr, "0.0.0.0:8080");
+        assert_eq!(cfg.listen.device_addr, "0.0.0.0:9100");
+        assert_eq!(cfg.auth.paid_start_timeout_secs, 300);
+        // 模式默认值：simulation / development（旧版 unwrap_or 语义）。
+        assert_eq!(cfg.payment_mode, PaymentMode::Simulation);
+        assert_eq!(cfg.login_mode, LoginMode::Development);
+        // 静态资源/引导账号缺省为 None/空（开发形态）。
+        assert!(cfg.static_assets.admin_dir.is_none());
+        assert!(cfg.static_assets.h5_dir.is_none());
+        assert!(cfg.bootstrap.user.is_empty());
+        // 导出缺省：空目录 + max_rows 0（service 层回退默认 50000）。
+        assert_eq!(cfg.export.max_rows, 0);
+    }
+
+    #[test]
+    fn payment_mode_values_and_fail_fast() {
+        for (raw, want) in [
+            ("simulation", PaymentMode::Simulation),
+            ("wechat_direct", PaymentMode::WechatDirect),
+            ("disabled", PaymentMode::Disabled),
+        ] {
+            let mut pairs = minimal_env();
+            pairs.push(("PAYMENT_MODE", raw));
+            let cfg = Config::load(&FakeEnv::new(&pairs)).unwrap();
+            assert_eq!(cfg.payment_mode, want, "{raw} 应解析成功");
+        }
+        let mut pairs = minimal_env();
+        pairs.push(("PAYMENT_MODE", "alipay"));
+        let e = Config::load(&FakeEnv::new(&pairs)).err().unwrap();
+        assert!(e.to_string().contains("PAYMENT_MODE 取值非法"), "{e}");
+    }
+
+    #[test]
+    fn login_mode_values_and_fail_fast() {
+        for (raw, want) in [
+            ("development", LoginMode::Development),
+            ("wechat", LoginMode::Wechat),
+        ] {
+            let mut pairs = minimal_env();
+            pairs.push(("LOGIN_MODE", raw));
+            let cfg = Config::load(&FakeEnv::new(&pairs)).unwrap();
+            assert_eq!(cfg.login_mode, want, "{raw} 应解析成功");
+        }
+        let mut pairs = minimal_env();
+        pairs.push(("LOGIN_MODE", "sms"));
+        let e = Config::load(&FakeEnv::new(&pairs)).err().unwrap();
+        assert!(e.to_string().contains("LOGIN_MODE 取值非法"), "{e}");
     }
 
     #[test]
     fn short_jwt_secret_rejected() {
-        let e = Config::build(
-            DB.into(),
-            REDIS.into(),
-            "127.0.0.1:8080".into(),
-            "127.0.0.1:9100".into(),
-            "short".into(),
-            300,
-        )
-        .err()
-        .unwrap();
+        let mut pairs = minimal_env();
+        pairs[2] = ("JWT_SECRET", "short");
+        let e = Config::load(&FakeEnv::new(&pairs)).err().unwrap();
         assert!(e.to_string().contains("32 字节"));
     }
 
     #[test]
     fn empty_database_url_rejected() {
-        let e = Config::build(
-            "".into(),
-            REDIS.into(),
-            "127.0.0.1:8080".into(),
-            "127.0.0.1:9100".into(),
-            SECRET_OK.into(),
-            300,
-        )
-        .err()
-        .unwrap();
+        let mut pairs = minimal_env();
+        pairs[0] = ("DATABASE_URL", "");
+        let e = Config::load(&FakeEnv::new(&pairs)).err().unwrap();
         assert!(e.to_string().contains("DATABASE_URL"));
     }
 
     #[test]
+    fn missing_required_rejected() {
+        let pairs = vec![("REDIS_URL", REDIS), ("JWT_SECRET", SECRET_OK)];
+        let e = Config::load(&FakeEnv::new(&pairs)).err().unwrap();
+        assert!(e.to_string().contains("缺少必需环境变量 DATABASE_URL"));
+    }
+
+    #[test]
     fn bad_listen_addr_rejected() {
-        let e = Config::build(
-            DB.into(),
-            REDIS.into(),
-            "not-an-addr".into(),
-            "127.0.0.1:9100".into(),
-            SECRET_OK.into(),
-            300,
-        )
-        .err()
-        .unwrap();
+        let mut pairs = minimal_env();
+        pairs.push(("HTTP_ADDR", "not-an-addr"));
+        let e = Config::load(&FakeEnv::new(&pairs)).err().unwrap();
         assert!(e.to_string().contains("HTTP_ADDR"));
     }
 
     #[test]
-    fn defaults_applied() {
-        // from_env 在带完整 .env 的环境下也应通过（不假设环境为空）
-        let _ = Config::from_env();
-        // 默认值由 optional 兜底：无环境变量的构建路径等价于默认（此处验证 build 全默认地址）
-        let cfg = Config::build(
-            DB.into(),
-            REDIS.into(),
-            "0.0.0.0:8080".into(),
-            "0.0.0.0:9100".into(),
-            SECRET_OK.into(),
-            300,
-        )
-        .unwrap();
-        assert_eq!(cfg.device_addr, "0.0.0.0:9100");
+    fn wechat_group_and_static_dirs_pass_through() {
+        let mut pairs = minimal_env();
+        pairs.push(("ADMIN_STATIC_DIR", " /srv/admin "));
+        pairs.push(("WECHAT_APPID", "wx123"));
+        let cfg = Config::load(&FakeEnv::new(&pairs)).unwrap();
+        // 与旧版 optional 语义一致：非空值原样保留（不 trim）。
+        assert_eq!(cfg.static_assets.admin_dir.as_deref(), Some(" /srv/admin "));
+        assert_eq!(cfg.wechat.appid, "wx123");
+        // 空白值等价缺省（None）。
+        pairs.push(("H5_STATIC_DIR", "  "));
+        let cfg = Config::load(&FakeEnv::new(&pairs)).unwrap();
+        assert!(cfg.static_assets.h5_dir.is_none());
     }
-}
 
-#[cfg(test)]
-mod freeze_tests {
-    use super::*;
-
+    /// 一致性测试（票 16，替代两个考据型测试）：`Config::load` 实际读取的
+    /// 变量名集合 == 冻结清单 − RUST_LOG（日志层 EnvFilter 直读，不经 Config）。
     #[test]
-    fn frozen_list_covers_core_vars() {
-        // 冻结清单覆盖核心五项（阶段 09 spec：约 15 个）。
-        for name in [
-            "DATABASE_URL",
-            "REDIS_URL",
-            "JWT_SECRET",
-            "HTTP_ADDR",
-            "DEVICE_ADDR",
-        ] {
-            assert!(KNOWN_ENV_VARS.contains(&name), "{name} 应在冻结清单");
-        }
-        // 微信凭据组 7 个是 spec 明确要求的一组，总数冻结在 22 个不再增长。
-        assert_eq!(KNOWN_ENV_VARS.len(), 22);
+    fn frozen_list_equals_actually_read_set() {
+        let env = FakeEnv::new(&minimal_env());
+        Config::load(&env).unwrap();
+        let mut read: Vec<String> = env.queried.borrow().clone();
+        read.sort();
+        let mut frozen: Vec<String> = KNOWN_ENV_VARS
+            .iter()
+            .filter(|v| **v != "RUST_LOG")
+            .map(|v| (*v).to_string())
+            .collect();
+        frozen.sort();
+        assert_eq!(read, frozen, "配置读取集合必须与冻结清单一致（漂移即失败）");
     }
 
     #[test]

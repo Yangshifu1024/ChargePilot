@@ -33,9 +33,14 @@ async fn deep_links_fall_back_to_index_with_200() {
         simulation_payment: false,
         snapshots: None,
         charging_stop: None,
+        export: chargepilot_mod_export::ExportConfig {
+            export_dir: String::new(),
+            max_rows: 0,
+        },
     });
     let app =
-        chargepilot_http_api::build_router(deps, support::prometheus_handle(), Some(&path)).await;
+        chargepilot_http_api::build_router(deps, support::prometheus_handle(), Some(&path), None)
+            .await;
 
     for uri in ["/admin/", "/admin/login", "/admin/devices"] {
         let resp = app

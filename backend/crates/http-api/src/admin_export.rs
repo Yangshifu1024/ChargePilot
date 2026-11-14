@@ -6,22 +6,14 @@ use crate::deps::ApiDeps;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_export::{ExportConfig, ExportError};
+use chargepilot_mod_export::ExportError;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-/// 导出配置（旧版 ExportService 的 ExportDir/MaxRows，进程装配读取环境变量）。
-pub fn config_from_env() -> ExportConfig {
-    ExportConfig {
-        export_dir: std::env::var("EXPORT_DIR").unwrap_or_default(),
-        max_rows: std::env::var("EXPORT_MAX_ROWS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0),
-    }
-}
+// 导出配置（票 16）：由装配根从统一配置的导出组构造，经 ApiDeps 持有；
+// HTTP 处理器只消费，不再直读环境变量。
 
 pub fn router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
@@ -121,8 +113,7 @@ async fn list_resources(
     headers: HeaderMap,
 ) -> Response {
     let rid = rid_of(&headers);
-    match chargepilot_mod_export::list_resources(&deps.db, &guard.profile, &config_from_env()).await
-    {
+    match chargepilot_mod_export::list_resources(&deps.db, &guard.profile, &deps.export).await {
         Ok(out) => httpx::ok(serde_json::to_value(&out).unwrap_or(Value::Null), &rid),
         Err(e) => export_error(e, &rid),
     }
@@ -157,7 +148,7 @@ async fn create_task(
         &ip,
         &audit_rid,
         &input,
-        &config_from_env(),
+        &deps.export,
     )
     .await
     {
@@ -186,7 +177,7 @@ async fn download_task(
     Path(id): Path<u64>,
 ) -> Response {
     let rid = rid_of(&headers);
-    match chargepilot_mod_export::download(&deps.db, &guard.profile, id, &config_from_env()).await {
+    match chargepilot_mod_export::download(&deps.db, &guard.profile, id, &deps.export).await {
         Ok(file) => {
             let body = axum::body::Body::from(file.content);
             axum::response::Response::builder()

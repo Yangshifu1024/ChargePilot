@@ -463,6 +463,7 @@ async fn handle_inbound(
 }
 
 /// 批量预导入设备事实（device_meta 单行即可注册成功）。
+#[allow(clippy::disallowed_methods)] // 票 16 豁免：压测子命令的数据库地址回退
 async fn provision_devices(args: &BatchArgs) -> anyhow::Result<()> {
     let url = args
         .database_url

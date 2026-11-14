@@ -40,6 +40,9 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn migrate() -> anyhow::Result<()> {
+    // 运维子命令只需要库 DSN，不加载全量凭据配置；直读为显式登记的豁免点
+    // （票 16：测试模块连接变量、migrate/压测子命令的数据库地址）。
+    #[allow(clippy::disallowed_methods)]
     let url = std::env::var("DATABASE_URL").context("缺少 DATABASE_URL 环境变量")?;
     let pool = chargepilot_storage::open_pool(&url, 2)
         .await
@@ -92,8 +95,11 @@ async fn serve() -> anyhow::Result<()> {
         }
     });
     // 设备 TCP 接入监听（DEVICE_ADDR，默认 0.0.0.0:9100）。
-    let device_addr: std::net::SocketAddr =
-        cfg.device_addr.parse().context("DEVICE_ADDR 解析失败")?;
+    let device_addr: std::net::SocketAddr = cfg
+        .listen
+        .device_addr
+        .parse()
+        .context("DEVICE_ADDR 解析失败")?;
     tasks.spawn("device-listener", {
         let gateway_sink = gateway_sink.clone();
         let session_registry = session_registry.clone();
@@ -184,6 +190,7 @@ async fn serve() -> anyhow::Result<()> {
     // 兜底扫描统一注册（阶段 08）：统一节拍/滞后指标/内存态（诊断接口读）。
     // 计费批次与退款执行器保留独立循环（15s 快节拍），只把 30s 级兜底纳入框架。
     let mut sweeps = chargepilot_platform::sweeperx::SweepRegistry::new(db.clone());
+    let export_dir = Arc::new(cfg.export.dir.clone());
     sweeps.register(
         "charging-start-timeout",
         std::time::Duration::from_secs(30),
@@ -196,9 +203,11 @@ async fn serve() -> anyhow::Result<()> {
         },
     );
     sweeps.register("export-cleanup", std::time::Duration::from_secs(3600), {
+        // Fn 闭包可多次调用：捕获经 Arc 克隆进每次调用的 future。
+        let export_dir = std::sync::Arc::clone(&export_dir);
         move |pool| {
+            let dir = std::sync::Arc::clone(&export_dir);
             Box::pin(async move {
-                let dir = std::env::var("EXPORT_DIR").unwrap_or_default();
                 chargepilot_mod_export::cleanup_expired(&pool, &dir)
                     .await
                     .map_err(|e| anyhow::anyhow!(e.to_string()))
@@ -207,9 +216,9 @@ async fn serve() -> anyhow::Result<()> {
     });
     sweeps.spawn_all(&mut tasks, token.clone());
 
-    // 后台引导账号（提供 ADMIN_BOOTSTRAP_USER/PASSWORD 时确保存在）
-    let bootstrap_user = std::env::var("ADMIN_BOOTSTRAP_USER").unwrap_or_default();
-    let bootstrap_pass = std::env::var("ADMIN_BOOTSTRAP_PASSWORD").unwrap_or_default();
+    // 后台引导账号（ADMIN_BOOTSTRAP_USER/PASSWORD 非空时确保存在）。
+    let bootstrap_user = cfg.bootstrap.user.clone();
+    let bootstrap_pass = cfg.bootstrap.password.clone();
     if !bootstrap_user.is_empty() {
         chargepilot_mod_ops::repo::ensure_bootstrap(
             &db,
@@ -221,22 +230,33 @@ async fn serve() -> anyhow::Result<()> {
         .context("后台引导账号创建失败")?;
     }
 
-    // 业务路由装配
-    let payment_services =
-        chargepilot_http_api::deps::PaymentServices::from_env(db.clone(), allocator.clone())
-            .context("支付域装配失败")?;
+    // 业务路由装配（模式与凭据全部经统一配置，票 16）。
+    let payment_services = chargepilot_http_api::deps::PaymentServices::assemble(
+        db.clone(),
+        allocator.clone(),
+        cfg.payment_mode,
+        &cfg.wechat,
+    )
+    .context("支付域装配失败")?;
     let deps = Arc::new(chargepilot_http_api::deps::ApiDeps {
         db: db.clone(),
         redis_url: Arc::new(cfg.redis_url.clone()),
-        jwt_secret: Arc::new(cfg.jwt_secret.clone()),
+        jwt_secret: Arc::new(cfg.auth.jwt_secret.clone()),
         allocator,
-        exchanger: Arc::new(chargepilot_http_api::deps::exchanger_from_env()?),
+        exchanger: Arc::new(chargepilot_http_api::deps::exchanger_of(
+            cfg.login_mode,
+            &cfg.wechat,
+        )),
         wallet: Some(Arc::new(chargepilot_http_api::deps::WalletServices::build(
             db.clone(),
         ))),
         checkout: Some(payment_services.checkout),
         wallet_recharge: Some(payment_services.wallet_recharge),
         simulation_payment: payment_services.simulation_payment,
+        export: chargepilot_mod_export::ExportConfig {
+            export_dir: cfg.export.dir.clone(),
+            max_rows: cfg.export.max_rows,
+        },
         charging_stop: Some(Arc::new(chargepilot_mod_charging::StopService {
             pool: db.clone(),
             sink: Arc::new(chargepilot_gateway_runtime::GatewayCommandSink::new(
@@ -248,11 +268,12 @@ async fn serve() -> anyhow::Result<()> {
     let app = chargepilot_http_api::build_router(
         deps,
         prometheus,
-        std::env::var("ADMIN_STATIC_DIR").ok().as_deref(),
+        cfg.static_assets.admin_dir.as_deref(),
+        cfg.static_assets.h5_dir.as_deref(),
     )
     .await;
-    let listener = tokio::net::TcpListener::bind(&cfg.http_addr).await?;
-    tracing::info!(addr = %cfg.http_addr, "HTTP 服务启动");
+    let listener = tokio::net::TcpListener::bind(&cfg.listen.http_addr).await?;
+    tracing::info!(addr = %cfg.listen.http_addr, "HTTP 服务启动");
 
     // 停机编排：信号 → HTTP 停止接活 → 取消后台任务并 join → 关连接池
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);

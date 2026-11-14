@@ -215,16 +215,15 @@ async fn cleanup(
 #[tokio::test]
 async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
     let _flow_lock = flow_lock();
-    let app = TestApp::builder().build().await;
-    let router = app.router;
-    let db = app.db;
-    let alloc = app.allocator;
     let export_dir = std::env::temp_dir()
         .join(format!("chargepilot-export-test-{}", rand_suffix()))
         .to_string_lossy()
         .into_owned();
-    // 进程级配置：主缝路由每次请求时读取（旧版 ExportDir 环境变量语义）。
-    unsafe { std::env::set_var("EXPORT_DIR", &export_dir) };
+    // 导出目录经统一配置注入 ApiDeps（票 16：HTTP 层不再直读环境变量）。
+    let app = TestApp::builder().with_export(&export_dir, 0).build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let (token_a, admin_a, role_a) = login_export_admin(
         &router,
         &db,

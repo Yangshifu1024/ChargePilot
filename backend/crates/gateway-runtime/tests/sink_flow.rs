@@ -15,6 +15,7 @@ use std::sync::Arc;
 use chargepilot_gateway_runtime::{GatewaySink, SnapshotStore, TelemetryBuffer};
 use chargepilot_protocol::{Event, EventType, Registration, SessionRecord, SessionRecorder as _};
 
+#[allow(clippy::disallowed_methods)] // 票 16 豁免：测试模块的连接变量
 fn env_or_skip(name: &str) -> Option<String> {
     match std::env::var(name) {
         Ok(v) if !v.is_empty() => Some(v),

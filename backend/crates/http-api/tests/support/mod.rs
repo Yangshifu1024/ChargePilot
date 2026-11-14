@@ -48,6 +48,7 @@ impl TestApp {
             snapshots: false,
             admin_static_dir: None,
             exchanger: None,
+            export: None,
         }
     }
 }
@@ -62,8 +63,10 @@ pub struct TestAppBuilder {
     charging_stop: bool,
     snapshots: bool,
     admin_static_dir: Option<String>,
-    /// 微信交换器覆写（Wechat 分支测试注入；默认按 LOGIN_MODE 解析）。
+    /// 微信交换器覆写（Wechat 分支测试注入；默认 Development）。
     exchanger: Option<chargepilot_mod_identity::wechat::Exchanger>,
+    /// 导出配置（export flow 注入目录；缺省空目录走 service 层临时目录回退）。
+    export: Option<chargepilot_mod_export::ExportConfig>,
 }
 
 impl TestAppBuilder {
@@ -121,8 +124,19 @@ impl TestAppBuilder {
         self
     }
 
+    /// 导出配置（export flow 注入目录，经 ApiDeps 与处理器同源）。
+    #[must_use]
+    pub fn with_export(mut self, dir: impl Into<String>, max_rows: i64) -> Self {
+        self.export = Some(chargepilot_mod_export::ExportConfig {
+            export_dir: dir.into(),
+            max_rows,
+        });
+        self
+    }
+
     /// 装配并返回测试应用。任何一步失败（环境缺失、连接失败、预热失败）
     /// 都 `panic!`——集成轮判失败，不静默跳过。
+    #[allow(clippy::disallowed_methods)] // 票 16 豁免：测试模块的连接变量
     pub async fn build(self) -> TestApp {
         let _ = tracing_subscriber::fmt()
             .with_test_writer()
@@ -180,10 +194,13 @@ impl TestAppBuilder {
             redis_url: Arc::new(redis_url),
             jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
             allocator: allocator.clone(),
-            // LOGIN_MODE 未设置时即 Development（与全部测试文件现状一致；
-            // 集成轮不注入 LOGIN_MODE）；Wechat 分支测试经 with_exchanger 覆写。
+            // 默认 Development（与全部测试文件现状一致；集成轮不注入
+            // LOGIN_MODE）；Wechat 分支测试经 with_exchanger 覆写。
             exchanger: Arc::new(self.exchanger.unwrap_or_else(|| {
-                chargepilot_http_api::deps::exchanger_from_env().expect("LOGIN_MODE 取值非法")
+                chargepilot_http_api::deps::exchanger_of(
+                    chargepilot_platform::config::LoginMode::Development,
+                    &Default::default(),
+                )
             })),
             wallet: self
                 .wallet
@@ -200,11 +217,16 @@ impl TestAppBuilder {
             snapshots: self
                 .snapshots
                 .then(|| Arc::new(chargepilot_gateway_runtime::SnapshotStore::new())),
+            export: self.export.unwrap_or(chargepilot_mod_export::ExportConfig {
+                export_dir: String::new(),
+                max_rows: 0,
+            }),
         });
         let router = chargepilot_http_api::build_router(
             deps,
             prometheus_handle(),
             self.admin_static_dir.as_deref(),
+            None,
         )
         .await;
         TestApp {
@@ -216,6 +238,7 @@ impl TestAppBuilder {
 }
 
 /// 环境变量读取（panic 版）：种子直连库的文件用（不走 TestApp 装配）。
+#[allow(clippy::disallowed_methods)] // 票 16 豁免：测试模块的连接变量
 pub fn mysql_url() -> String {
     std::env::var("TEST_MYSQL_URL").unwrap_or_else(|_| {
         panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）")

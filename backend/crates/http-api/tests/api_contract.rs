@@ -216,9 +216,13 @@ async fn build() -> Router {
         simulation_payment: false,
         charging_stop: None,
         snapshots: None,
+        export: chargepilot_mod_export::ExportConfig {
+            export_dir: String::new(),
+            max_rows: 0,
+        },
     });
     let prometheus = support::prometheus_handle();
-    chargepilot_http_api::build_router(deps, prometheus, None).await
+    chargepilot_http_api::build_router(deps, prometheus, None, None).await
 }
 
 fn request(method: &str, path: &str) -> Request<Body> {

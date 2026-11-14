@@ -33,6 +33,7 @@ pub async fn build_router(
     deps: std::sync::Arc<deps::ApiDeps>,
     prometheus: metrics_exporter_prometheus::PrometheusHandle,
     admin_static_dir: Option<&str>,
+    h5_static_dir: Option<&str>,
 ) -> axum::Router {
     let mut app = axum::Router::new()
         .merge(admin_auth::router())
@@ -88,9 +89,7 @@ pub async fn build_router(
         }
     }
     // H5 静态产物：hash 路由，资源直出即可（/h5/ 入口由 index.html 承载）。
-    if let Ok(h5_dir) = std::env::var("H5_STATIC_DIR")
-        && !h5_dir.is_empty()
-    {
+    if let Some(h5_dir) = h5_static_dir {
         app = app.nest_service("/h5", tower_http::services::ServeDir::new(h5_dir));
     }
     app

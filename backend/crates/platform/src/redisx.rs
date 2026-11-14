@@ -15,6 +15,7 @@ pub fn open_pool(redis_url: &str, max_size: usize) -> anyhow::Result<Pool> {
 #[cfg(test)]
 mod tests {
     #[tokio::test]
+    #[allow(clippy::disallowed_methods)] // 票 16 豁免：测试模块的连接变量
     async fn ping_real_redis() {
         let Ok(url) = std::env::var("TEST_REDIS_URL") else {
             return;

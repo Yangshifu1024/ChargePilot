@@ -19,6 +19,8 @@ pub struct ApiDeps {
     pub wallet_recharge: Option<Arc<chargepilot_mod_wallet::recharge::RechargeService>>,
     /// 支付渠道模式：simulation 时开放模拟确认路由（旧版 PAYMENT_MODE）。
     pub simulation_payment: bool,
+    /// 导出配置（票 16 经统一配置传入，HTTP 层不再直读环境变量）。
+    pub export: chargepilot_mod_export::ExportConfig,
     /// 充电停止服务（批 4）：授权与计费截止冻结；命令下沉随阶段 06 替换。
     pub charging_stop: Option<Arc<chargepilot_mod_charging::StopService>>,
     /// 设备实时快照（G2）：快照端点读实时端口读数，缺失回退查库；
@@ -57,31 +59,44 @@ pub struct PaymentServices {
 }
 
 impl PaymentServices {
-    /// 按环境变量 PAYMENT_MODE 装配（disabled / simulation / wechat_direct）。
+    /// 按统一配置装配（票 16）：支付模式为枚举，凭据来自配置结构微信组。
     /// wechat_direct 要求微信凭据与 HTTP 执行器齐备（真实商户联调属上线前清单）。
-    pub fn from_env(db: sqlx::MySqlPool, allocator: Arc<SegmentAllocator>) -> anyhow::Result<Self> {
-        let mode = std::env::var("PAYMENT_MODE").unwrap_or_else(|_| "simulation".into());
-        let provider: Arc<dyn chargepilot_mod_payment::PayProvider> = match mode.as_str() {
-            "simulation" => Arc::new(chargepilot_mod_payment::channel::SimulationProvider),
-            "wechat_direct" => {
-                let config = chargepilot_mod_payment::wechat::WechatConfig::from_env()?;
-                let appid = std::env::var("WECHAT_APPID").unwrap_or_default();
-                if appid.is_empty() {
+    pub fn assemble(
+        db: sqlx::MySqlPool,
+        allocator: Arc<SegmentAllocator>,
+        mode: chargepilot_platform::config::PaymentMode,
+        wechat: &chargepilot_platform::config::WechatCreds,
+    ) -> anyhow::Result<Self> {
+        let provider: Arc<dyn chargepilot_mod_payment::PayProvider> = match mode {
+            chargepilot_platform::config::PaymentMode::Simulation => {
+                Arc::new(chargepilot_mod_payment::channel::SimulationProvider)
+            }
+            chargepilot_platform::config::PaymentMode::WechatDirect => {
+                if wechat.appid.is_empty() {
                     anyhow::bail!("wechat_direct 需要 WECHAT_APPID");
                 }
-                let notify_url = std::env::var("WECHAT_NOTIFY_URL").unwrap_or_default();
-                if notify_url.is_empty() {
+                if wechat.notify_url.is_empty() {
                     anyhow::bail!("wechat_direct 需要 WECHAT_NOTIFY_URL");
                 }
+                let config = chargepilot_mod_payment::wechat::WechatConfig::parse(
+                    chargepilot_mod_payment::wechat::WechatCredsRaw {
+                        mch_id: wechat.mch_id.clone(),
+                        mch_serial_no: wechat.mch_serial.clone(),
+                        key_pem: wechat.private_key_pem.clone(),
+                        certs_raw: wechat.platform_certs.clone(),
+                        api_v3: wechat.api_v3_key.clone(),
+                    },
+                )?;
                 Arc::new(chargepilot_mod_payment::wechat::WechatDirectProvider {
                     config,
-                    appid,
+                    appid: wechat.appid.clone(),
                     http: Arc::new(chargepilot_mod_payment::wechat::WechatHttpExecutor),
-                    notify_url,
+                    notify_url: wechat.notify_url.clone(),
                 })
             }
-            "disabled" => Arc::new(chargepilot_mod_payment::channel::DisabledProvider),
-            other => anyhow::bail!("PAYMENT_MODE 取值非法: {other}"),
+            chargepilot_platform::config::PaymentMode::Disabled => {
+                Arc::new(chargepilot_mod_payment::channel::DisabledProvider)
+            }
         };
         let scanner: Arc<dyn chargepilot_mod_payment::PortScanner> = Arc::new(
             chargepilot_mod_payment::scan::TablePortScanner::new(db.clone()),
@@ -106,22 +121,22 @@ impl PaymentServices {
         Ok(Self {
             checkout,
             wallet_recharge,
-            simulation_payment: mode == "simulation",
+            simulation_payment: mode == chargepilot_platform::config::PaymentMode::Simulation,
         })
     }
 }
 
-/// 登录模式解析（LOGIN_MODE 环境变量，旧版语义）。
-pub fn exchanger_from_env() -> anyhow::Result<Exchanger> {
-    match std::env::var("LOGIN_MODE")
-        .unwrap_or_else(|_| "development".into())
-        .as_str()
-    {
-        "development" => Ok(Exchanger::Development),
-        "wechat" => Ok(Exchanger::Wechat {
-            appid: std::env::var("WECHAT_APPID").unwrap_or_default(),
-            secret: std::env::var("WECHAT_SECRET").unwrap_or_default(),
-        }),
-        other => anyhow::bail!("LOGIN_MODE 取值非法: {other}（可选 wechat / development）"),
+/// 登录模式换出器（票 16：模式与凭据经统一配置传入，非法取值在配置层
+/// 启动即失败，本函数只做枚举分派）。
+pub fn exchanger_of(
+    mode: chargepilot_platform::config::LoginMode,
+    wechat: &chargepilot_platform::config::WechatCreds,
+) -> Exchanger {
+    match mode {
+        chargepilot_platform::config::LoginMode::Development => Exchanger::Development,
+        chargepilot_platform::config::LoginMode::Wechat => Exchanger::Wechat {
+            appid: wechat.appid.clone(),
+            secret: wechat.secret.clone(),
+        },
     }
 }

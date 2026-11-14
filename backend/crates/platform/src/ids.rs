@@ -158,6 +158,7 @@ mod tests {
         LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
     }
 
+    #[allow(clippy::disallowed_methods)] // 票 16 豁免：测试模块的连接变量
     fn test_pool_url() -> String {
         std::env::var("TEST_MYSQL_URL").unwrap_or_default()
     }

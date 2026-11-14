@@ -4,7 +4,13 @@
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 
-disallowed-methods = []
+# 票 16：环境变量直读禁令——全部读取收编进 platform::config 的统一入口
+# （EnvSource/SystemEnv），装配根从 Config 结构消费。豁免（显式 allow 登记）：
+# 测试模块的连接变量、migrate/压测子命令的数据库地址。
+disallowed-methods = [
+  { path = "std::env::var", reason = "环境变量直读禁令（票 16）：经 platform::config::EnvSource 统一读取" },
+  { path = "std::env::var_os", reason = "环境变量直读禁令（票 16）：经 platform::config::EnvSource 统一读取" },
+]
 
 # ApiError 按契约携带字段级错误数组与内部原因（code+message+fields+cause），
 # HTTP 处理器调用后立即转响应，不 Box（result_large_err 阈值上调为工程决策）。

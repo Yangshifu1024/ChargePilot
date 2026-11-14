@@ -11,6 +11,7 @@ use chargepilot_domain::money::PaymentOrderStatus;
 
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
+#[allow(clippy::disallowed_methods)] // 票 16 豁免：测试模块的连接变量
 async fn enum_bind_decode_default_and_option() {
     let url = std::env::var("TEST_MYSQL_URL").unwrap_or_else(|_| {
         panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）")

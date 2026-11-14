@@ -28,16 +28,28 @@ pub struct WechatConfig {
     pub api_v3_key: [u8; 32],
 }
 
+/// 微信凭据原始字符串组（票 16：环境读取上移统一配置，本域只解析）。
+#[derive(Debug, Clone, Default)]
+pub struct WechatCredsRaw {
+    pub mch_id: String,
+    pub mch_serial_no: String,
+    pub key_pem: String,
+    /// 平台证书（序列号,PEM;... 多条分号分隔）。
+    pub certs_raw: String,
+    pub api_v3: String,
+}
+
 impl WechatConfig {
-    /// 从环境变量加载配置（WECHAT_MCH_ID / WECHAT_MCH_SERIAL /
-    /// WECHAT_PRIVATE_KEY_PEM / WECHAT_PLATFORM_CERT_SERIAL,PEM;... /
-    /// WECHAT_APIV3_KEY）。缺项返回错误，由调用方决定降级模式。
-    pub fn from_env() -> anyhow::Result<Self> {
-        let mch_id = std::env::var("WECHAT_MCH_ID").unwrap_or_default();
-        let mch_serial_no = std::env::var("WECHAT_MCH_SERIAL").unwrap_or_default();
-        let key_pem = std::env::var("WECHAT_PRIVATE_KEY_PEM").unwrap_or_default();
-        let certs_raw = std::env::var("WECHAT_PLATFORM_CERTS").unwrap_or_default();
-        let api_v3 = std::env::var("WECHAT_APIV3_KEY").unwrap_or_default();
+    /// 解析凭据原始字符串（来源为统一配置的微信组）。缺项返回错误，
+    /// 由调用方决定降级模式。
+    pub fn parse(raw: WechatCredsRaw) -> anyhow::Result<Self> {
+        let WechatCredsRaw {
+            mch_id,
+            mch_serial_no,
+            key_pem,
+            certs_raw,
+            api_v3,
+        } = raw;
         if mch_id.is_empty()
             || mch_serial_no.is_empty()
             || key_pem.is_empty()

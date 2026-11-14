@@ -24,6 +24,7 @@ use chargepilot_protocol_dc589::frame::{self, Frame};
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt as _;
 
+#[allow(clippy::disallowed_methods)] // 票 16 豁免：测试模块的连接变量
 fn env_or_skip(name: &str) -> Option<String> {
     match std::env::var(name) {
         Ok(v) if !v.is_empty() => Some(v),
