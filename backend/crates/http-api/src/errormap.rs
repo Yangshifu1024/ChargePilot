@@ -9,6 +9,7 @@ use axum::response::{IntoResponse, Response};
 use chargepilot_mod_identity::IdentityError as IdE;
 use chargepilot_mod_ops::OpsError;
 use chargepilot_platform::error::{ApiError, Code};
+use chargepilot_platform::httpx;
 
 /// 从请求头解析 Bearer 凭证（<scheme> <token>）。
 pub fn bearer(headers: &axum::http::HeaderMap) -> Option<&str> {
@@ -124,3 +125,24 @@ const _: () = {
     assert!(Code::QueryExpired as i64 == 2018);
     assert!(Code::InternalError as i64 == 5000);
 };
+
+/// WalletError → HTTP 响应（票 18：从 views/wallet 门面收编，充值桥跨域消费）。
+pub fn wallet_error(e: chargepilot_mod_wallet::WalletError, rid: &str) -> Response {
+    use chargepilot_mod_wallet::WalletError as E;
+    match &e {
+        E::Forbidden => crate::respond(403, 1003, "没有操作权限", rid),
+        E::Frozen => crate::respond(409, 2009, "钱包已冻结，请等待审核", rid),
+        E::InsufficientBalance => crate::respond(409, 2009, "可用余额不足", rid),
+        E::Identity => crate::respond(409, 2009, "请求号冲突或钱包已冻结", rid),
+        E::RequestConflict => crate::respond(409, 2009, "申请冲突或原充值可退额度不足", rid),
+        E::PrepayNotConfigured | E::PrepayUnavailable => {
+            crate::respond(502, 3001, "支付渠道暂不可用，申请已保留", rid)
+        }
+        E::NotFound => crate::respond(404, 1004, "记录不存在", rid),
+        E::Inactive | E::InvalidBalance | E::Storage(_) => {
+            tracing::warn!(error = %e, "钱包请求处理失败");
+            let api = chargepilot_platform::error::ApiError::from(anyhow::anyhow!(e.to_string()));
+            httpx::error(&api, rid)
+        }
+    }
+}

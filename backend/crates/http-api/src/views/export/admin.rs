@@ -1,5 +1,4 @@
-//! 后台导出路由（路径/权限码对齐旧版 admin/export 装配）：
-//! 列表与详情 finance.read；受理与下载 export.create；下载以文件体直出。
+//! 导出域后台门面（票 18 冷区批：原 admin_export.rs 归位）。
 
 use crate::admin_guard::AdminGuard;
 use crate::deps::ApiDeps;

@@ -1,5 +1,4 @@
-//! 后台身份路由（路径/码值/文案对齐旧版）：
-//! POST login | mfa | refresh | logout，GET me。实时鉴权由 `admin_guard` 提供。
+//! 运营域后台门面·认证（票 18 冷区批：原 admin_auth.rs 归位）。
 
 use crate::deps::ApiDeps;
 use crate::errormap::{bearer, ops_error, respond};
@@ -10,7 +9,7 @@ use chargepilot_mod_ops::service::{AccessReply, LoginOutcome, SessionService};
 use chargepilot_platform::httpx;
 use std::sync::Arc;
 
-pub fn router() -> axum::Router<Arc<ApiDeps>> {
+pub fn auth_router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
         .route("/api/v1/admin/auth/login", axum::routing::post(login))
         .route("/api/v1/admin/auth/mfa", axum::routing::post(verify_mfa))

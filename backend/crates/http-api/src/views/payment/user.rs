@@ -1,6 +1,4 @@
-//! C 端支付路由：扫码套餐、下单支付准备、模拟确认与钱包充值申请。
-//! 路径对齐旧版：POST /scan/offers、/scan/start、/development/payments/confirm、
-//! /wallet/recharge；模拟确认仅在 PAYMENT_MODE=simulation 时装配。
+//! 支付域用户端门面（票 18 冷区批：原 user_payment.rs 归位）。
 
 use crate::deps::{ApiDeps, PaymentState, UserSessionBase};
 use axum::Json as AxumJson;
@@ -170,7 +168,7 @@ async fn wallet_recharge(
     };
     match recharge.create(uid, &input).await {
         Ok(v) => httpx::ok(serde_json::to_value(v).unwrap_or(json!(null)), &rid),
-        Err(e) => crate::user_wallet::wallet_error(e, &rid),
+        Err(e) => crate::errormap::wallet_error(e, &rid),
     }
 }
 

@@ -1,6 +1,4 @@
-//! 后台营销路由：优惠券模板、发放统计与人工发券（路径/权限码对齐旧版
-//! admin/marketing 装配）。活动规则路由随批 3 追加到本文件。
-//! 审计（module/target = coupon）由服务层与业务写入同事务落库。
+//! 营销域后台门面（票 18 冷区批：原 admin_marketing.rs 归位）。
 
 use crate::admin_guard::AdminGuard;
 use crate::deps::ApiDeps;

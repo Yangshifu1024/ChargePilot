@@ -1,5 +1,4 @@
-//! 后台诊断接口（阶段 08）：后台循环运行态 + 待处理队列深度快照。
-//! 权限 `audit.read`；每次调用写 ops 诊断审计（旧版无此接口，语义见 ADR 002）。
+//! 运营域后台门面·诊断（票 18 冷区批：原 admin_diagnostics.rs 归位）。
 
 use crate::admin_guard::AdminGuard;
 use crate::deps::ApiDeps;
@@ -10,7 +9,7 @@ use chargepilot_platform::sweeperx;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-pub fn router() -> axum::Router<Arc<ApiDeps>> {
+pub fn diagnostics_router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new().route("/api/v1/admin/diagnostics", axum::routing::get(diagnostics))
 }
 

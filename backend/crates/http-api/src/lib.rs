@@ -1,14 +1,8 @@
 //! HTTP 适配：axum 路由合并 + 鉴权中间件 + 统一信封输出（测试主缝所在层）。
 //! 依赖方向：本层只调各域模块服务，不写业务 SQL、不持有业务表。
 
-pub mod admin_auth;
-pub mod admin_diagnostics;
-pub mod admin_export;
 pub mod admin_finance;
 pub mod admin_guard;
-pub mod admin_management;
-pub mod admin_marketing;
-pub mod admin_misc;
 pub mod admin_orders;
 pub mod admin_pricing_device;
 pub mod admin_users_cards;
@@ -17,14 +11,10 @@ pub mod device_and_user;
 pub mod errormap;
 pub mod params;
 pub mod user_auth;
-pub mod user_charging;
 pub mod user_guard;
 pub mod user_identity_cards;
-pub mod user_marketing;
-pub mod user_ops;
-pub mod user_payment;
 pub mod user_settlement;
-pub mod user_wallet;
+pub mod views;
 
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
@@ -42,36 +32,39 @@ pub async fn build_router(
         // 域路由注册绑定装配开关（票 17）：开关开启后该域路由才存在，
         // 域处理器对服务的取用必达（ChargingStopState/PaymentState 等）。
         .merge(if deps.wallet.is_some() {
-            user_wallet::refund_router()
+            views::wallet::user::refund_router()
         } else {
             axum::Router::new()
         })
         .merge(if deps.checkout.is_some() {
-            user_payment::checkout_router()
+            views::payment::user::checkout_router()
         } else {
             axum::Router::new()
         })
         .merge(if deps.charging_stop.is_some() {
-            user_charging::stop_router()
+            views::charging::user::stop_router()
         } else {
             axum::Router::new()
         })
-        .merge(admin_auth::router())
-        .merge(admin_management::router())
-        .merge(admin_diagnostics::router())
-        .merge(admin_export::router())
-        .merge(admin_marketing::router())
+        .merge(views::ops::auth::auth_router())
+        .merge(views::ops::admin::management_router())
+        .merge(views::ops::diagnostics::diagnostics_router())
+        .merge(views::ops::audit::router())
+        .merge(views::export::admin::router())
+        .merge(views::marketing::admin::router())
         .merge(admin_finance::router())
-        .merge(admin_misc::router())
+        .merge(views::order::admin::router())
         .merge(admin_orders::router())
         .merge(admin_pricing_device::router())
+        .merge(views::pricing::admin::router())
+        .merge(views::device::admin::router())
         .merge(admin_users_cards::router())
         .merge(device_and_user::router())
-        .merge(user_marketing::router())
-        .merge(user_ops::router())
-        .merge(user_wallet::router())
-        .merge(user_payment::simulation_router())
-        .merge(user_charging::router())
+        .merge(views::marketing::user::router())
+        .merge(views::ops::user::router())
+        .merge(views::wallet::user::router())
+        .merge(views::payment::user::simulation_router())
+        .merge(views::charging::user::router())
         .merge(user_settlement::router())
         .merge(user_identity_cards::router())
         .merge(user_auth::router())

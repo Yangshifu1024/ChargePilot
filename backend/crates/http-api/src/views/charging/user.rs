@@ -1,11 +1,4 @@
-//! C 端充电路由：订单查询族（历史/详情/充电中/快照/曲线，旧版
-//! internal/http/user/order 与 internal/charging/query 组合对齐）+ 用户停止。
-//!
-//! 停止双形状：`POST /charging/{order_no}/stop`（新版路径）与
-//! `POST /charge/stop`（旧版请求体 {order_no}）共用同一停止链。
-//! 授权与计费截止冻结在服务层事务内；停止命令下沉经 CommandSink。
-//! 快照端点经 deps.snapshots（SnapshotStore）读实时端口读数，
-//! 缺失时回退查库；估费沿旧版「依赖缺失」分支输出 live_unavailable 提示。
+//! 充电域用户端门面（票 18 冷区批：原 user_charging.rs 归位）。
 
 use crate::deps::{ApiDeps, ChargingStopState, UserSessionBase};
 use axum::extract::{Path, Query, State};

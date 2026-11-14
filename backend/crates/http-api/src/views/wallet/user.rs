@@ -1,5 +1,4 @@
-//! C 端钱包路由：余额、流水、充值记录、退款进度与退款申请（路径对齐旧版）。
-//! 充值申请入口（POST /wallet/recharge）依赖支付渠道准备，随批 3 接线。
+//! 钱包域用户端门面（票 18 冷区批：原 user_wallet.rs 归位）。
 
 use crate::deps::{ApiDeps, UserSessionBase, WalletState};
 use axum::Json as AxumJson;
@@ -57,27 +56,6 @@ fn paging(q: &Paging) -> (u32, u32) {
     )
 }
 
-/// 钱包域错误 → HTTP（码值与文案沿用旧版字面量契约）。
-pub fn wallet_error(e: chargepilot_mod_wallet::WalletError, rid: &str) -> Response {
-    use chargepilot_mod_wallet::WalletError as E;
-    match &e {
-        E::Forbidden => crate::respond(403, 1003, "没有操作权限", rid),
-        E::Frozen => crate::respond(409, 2009, "钱包已冻结，请等待审核", rid),
-        E::InsufficientBalance => crate::respond(409, 2009, "可用余额不足", rid),
-        E::Identity => crate::respond(409, 2009, "请求号冲突或钱包已冻结", rid),
-        E::RequestConflict => crate::respond(409, 2009, "申请冲突或原充值可退额度不足", rid),
-        E::PrepayNotConfigured | E::PrepayUnavailable => {
-            crate::respond(502, 3001, "支付渠道暂不可用，申请已保留", rid)
-        }
-        E::NotFound => crate::respond(404, 1004, "记录不存在", rid),
-        E::Inactive | E::InvalidBalance | E::Storage(_) => {
-            tracing::warn!(error = %e, "钱包请求处理失败");
-            let api = chargepilot_platform::error::ApiError::from(anyhow::anyhow!(e.to_string()));
-            httpx::error(&api, rid)
-        }
-    }
-}
-
 async fn wallet_balance(
     State(deps): State<Arc<ApiDeps>>,
     State(base): State<UserSessionBase>,
@@ -90,7 +68,7 @@ async fn wallet_balance(
     };
     match chargepilot_mod_wallet::query::balance(&deps.db, uid).await {
         Ok(v) => httpx::ok(serde_json::to_value(v).unwrap_or(json!(null)), &rid),
-        Err(e) => wallet_error(e, &rid),
+        Err(e) => crate::errormap::wallet_error(e, &rid),
     }
 }
 
@@ -112,7 +90,7 @@ async fn wallet_txns(
             json!({"items": p.items, "total": p.total, "page": p.page, "page_size": p.page_size}),
             &rid,
         ),
-        Err(e) => wallet_error(e, &rid),
+        Err(e) => crate::errormap::wallet_error(e, &rid),
     }
 }
 
@@ -135,7 +113,7 @@ async fn wallet_recharges(
             json!({"items": p.items, "total": p.total, "page": p.page, "page_size": p.page_size}),
             &rid,
         ),
-        Err(e) => wallet_error(e, &rid),
+        Err(e) => crate::errormap::wallet_error(e, &rid),
     }
 }
 
@@ -156,7 +134,7 @@ async fn wallet_refunds(
             json!({"items": p.items, "total": p.total, "page": p.page, "page_size": p.page_size}),
             &rid,
         ),
-        Err(e) => wallet_error(e, &rid),
+        Err(e) => crate::errormap::wallet_error(e, &rid),
     }
 }
 
@@ -187,6 +165,6 @@ async fn wallet_refund(
     };
     match wallet.refund.request(uid, &input).await {
         Ok(receipt) => httpx::ok(serde_json::to_value(receipt).unwrap_or(json!(null)), &rid),
-        Err(e) => wallet_error(e, &rid),
+        Err(e) => crate::errormap::wallet_error(e, &rid),
     }
 }

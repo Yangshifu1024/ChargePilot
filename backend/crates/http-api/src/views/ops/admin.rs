@@ -1,4 +1,4 @@
-//! 后台管理路由：账号管理、角色管理、公告、仪表盘（路径/权限码/响应形状对齐旧版）。
+//! 运营域后台门面（票 18 冷区批）：账号管理（原 admin_management.rs）。
 
 use crate::admin_guard::AdminGuard;
 use crate::deps::ApiDeps;
@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-pub fn router() -> axum::Router<Arc<ApiDeps>> {
+pub fn management_router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
         // 账号管理
         .route(

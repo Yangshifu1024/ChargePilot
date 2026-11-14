@@ -1,5 +1,4 @@
-//! C 端营销路由：本人持券分页与支付前可用券（路径对齐旧版 user/marketing 装配）。
-//! 只读视图：到期状态由服务层按当前时间派生展示，不写回数据库。
+//! 营销域用户端门面（票 18 冷区批：原 user_marketing.rs 归位）。
 
 use crate::deps::{ApiDeps, UserSessionBase};
 use axum::extract::{Query, State};

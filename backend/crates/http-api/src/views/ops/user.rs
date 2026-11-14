@@ -1,4 +1,4 @@
-//! C 端公告查询（无需登录）：GET /api/v1/user/announcement/list。
+//! 运营域用户端门面（票 18 冷区批：原 user_ops.rs 归位）。
 
 use crate::deps::ApiDeps;
 use axum::extract::{Query, State};
