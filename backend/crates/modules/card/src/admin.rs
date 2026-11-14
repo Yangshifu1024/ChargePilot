@@ -186,8 +186,8 @@ pub async fn bind_card(
     .rows_affected()
         == 1;
     // 行锁核对归属（旧版 LockCardByNo）：首次绑定也已插行，缺失即存储异常。
-    let row: Option<(u64, u64, String)> = sqlx::query_as(
-        "SELECT `id`, `user_id`, CAST(`status` AS CHAR) FROM `online_card` \
+    let row: Option<(u64, u64, chargepilot_domain::card::CardStatus)> = sqlx::query_as(
+        "SELECT `id`, `user_id`, `status` FROM `online_card` \
          WHERE `card_no` = ? FOR UPDATE",
     )
     .bind(card_no)
@@ -195,8 +195,8 @@ pub async fn bind_card(
     .await?;
     let (id, locked_user, status) = row.ok_or(CardAdminError::NotFound)?;
     if !created {
-        if status != "unbound" {
-            if locked_user == user_id && status == "active" {
+        if status != chargepilot_domain::card::CardStatus::Unbound {
+            if locked_user == user_id && status == chargepilot_domain::card::CardStatus::Active {
                 // 同用户已启用：幂等重放，提交空事务且不重复审计。
                 tx.commit().await?;
                 return Ok(id);

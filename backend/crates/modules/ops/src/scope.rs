@@ -17,12 +17,11 @@ pub async fn load_data_scope_tx(
         "SELECT `scope_type`, `scope_id` FROM `admin_data_scope` WHERE `admin_user_id` = ?{}",
         if shared { " FOR SHARE" } else { "" }
     );
-    let rows: Vec<(String, u64)> = sqlx::query_as(&sql)
+    let rows: Vec<(chargepilot_domain::operations::AdminScopeType, u64)> = sqlx::query_as(&sql)
         .bind(profile.id as i64)
         .fetch_all(&mut *c)
         .await?;
-    let items: Vec<(String, u64)> = rows.into_iter().collect();
-    Ok(operations::new_data_scope(&items))
+    Ok(operations::new_data_scope(&rows))
 }
 
 /// 读取角色脱敏规则；role_id=0 返回空规则，不脱敏

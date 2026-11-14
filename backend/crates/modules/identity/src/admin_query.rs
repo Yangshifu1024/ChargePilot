@@ -42,10 +42,10 @@ pub struct ChargeUserRow {
     /// 微信昵称；未授权昵称时为 null，前端回退到「用户 #id」。
     pub nickname: Option<String>,
     pub avatar_url: Option<String>,
-    /// user.gender：unknown/male/female。
-    pub gender: String,
-    /// user.status：active 正常 / frozen 冻结。
-    pub status: String,
+    /// user.gender 词表（chargepilot_domain::identity::UserGender）。
+    pub gender: chargepilot_domain::identity::UserGender,
+    /// user.status 词表（chargepilot_domain::identity::UserStatus）。
+    pub status: chargepilot_domain::identity::UserStatus,
     pub first_seen_at: String,
     /// 从未登录过为 null。
     pub last_login_at: Option<String>,
@@ -211,7 +211,7 @@ pub async fn list_users(
     let list_sql = format!(
         "SELECT CAST(`id` AS CHAR) AS `id`, CAST(`openid` AS CHAR) AS `openid`, \
                 CAST(`unionid` AS CHAR) AS `union_id`, `nickname`, `avatar_url`, \
-                CAST(`gender` AS CHAR) AS `gender`, CAST(`status` AS CHAR) AS `status`, \
+                `gender`, `status`, \
                 {ts_first} AS `first_seen_at`, {ts_last} AS `last_login_at`, \
                 CAST(`inviter_id` AS CHAR) AS `inviter_id`, {ts_created} AS `created_at`, \
                 '' AS `phone`, FALSE AS `phone_bound`, \
@@ -364,7 +364,7 @@ pub async fn load_user_detail(
     let row = sqlx::query_as::<_, ChargeUserRow>(&format!(
         "SELECT CAST(`id` AS CHAR) AS `id`, CAST(`openid` AS CHAR) AS `openid`, \
                 CAST(`unionid` AS CHAR) AS `union_id`, `nickname`, `avatar_url`, \
-                CAST(`gender` AS CHAR) AS `gender`, CAST(`status` AS CHAR) AS `status`, \
+                `gender`, `status`, \
                 {ts_first} AS `first_seen_at`, {ts_last} AS `last_login_at`, \
                 CAST(`inviter_id` AS CHAR) AS `inviter_id`, {ts_created} AS `created_at`, \
                 '' AS `phone`, FALSE AS `phone_bound`, \

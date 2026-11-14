@@ -52,7 +52,7 @@ pub struct AdminUserRow {
     pub role_name: Option<String>,
     pub phone: Option<String>,
     pub email: Option<String>,
-    pub status: String,
+    pub status: chargepilot_domain::operations::AdminUserStatus,
     pub mfa_enabled: bool,
     pub last_login_at: Option<String>,
     pub locked_until: Option<String>,
@@ -218,11 +218,15 @@ pub async fn update_admin(
             return Err(OpsError::bad_input("邮箱格式无效"));
         }
     }
-    if let Some(s) = &input.status
-        && s != "active"
-        && s != "disabled"
-    {
-        return Err(OpsError::bad_input("账号状态无效"));
+    if let Some(s) = &input.status {
+        // 仅允许设置 active/disabled；locked 是登录风控专用状态（旧版语义）。
+        match chargepilot_domain::operations::AdminUserStatus::parse(s) {
+            Ok(
+                chargepilot_domain::operations::AdminUserStatus::Active
+                | chargepilot_domain::operations::AdminUserStatus::Disabled,
+            ) => {}
+            _ => return Err(OpsError::bad_input("账号状态无效")),
+        }
     }
     if input.display_name.is_none()
         && input.phone.is_none()
@@ -249,7 +253,11 @@ pub async fn update_admin(
     let role_changed = input
         .role_id
         .is_some_and(|r| r != target.role_id.unwrap_or(0));
-    let status_changed = input.status.as_deref().is_some_and(|s| s != target.status);
+    let status_changed = input.status.as_deref().is_some_and(|s| {
+        chargepilot_domain::operations::AdminUserStatus::parse(s)
+            .map(|parsed| parsed != target.status)
+            .unwrap_or(true)
+    });
     if target.id == actor.id && (status_changed || role_changed) {
         return Err(OpsError::conflict("不能修改自己的账号状态或角色"));
     }
@@ -261,7 +269,8 @@ pub async fn update_admin(
     }
     if let Some(s) = &input.status {
         sqlx::query("UPDATE `admin_user` SET `status` = ?, `auth_version` = `auth_version` + 1 WHERE `id` = ?")
-            .bind(s).bind(target.id).execute(&mut *tx).await.map_err(OpsError::from)?;
+            .bind(chargepilot_domain::operations::AdminUserStatus::parse(s).map_err(|_| OpsError::bad_input("账号状态无效"))?)
+            .bind(target.id).execute(&mut *tx).await.map_err(OpsError::from)?;
         sessions_revoked = true;
     }
     if let Some(d) = &input.display_name {
@@ -352,10 +361,11 @@ pub async fn delete_admin(
         }
     }
     sqlx::query(
-        "UPDATE `admin_user` SET `deleted_at` = UTC_TIMESTAMP(3), `deleted_by` = ?, `status` = 'disabled', \
+        "UPDATE `admin_user` SET `deleted_at` = UTC_TIMESTAMP(3), `deleted_by` = ?, `status` = ?, \
          `auth_version` = `auth_version` + 1 WHERE `id` = ?",
     )
     .bind(actor.id)
+    .bind(chargepilot_domain::operations::AdminUserStatus::Disabled)
     .bind(target.id)
     .execute(&mut *tx)
     .await
@@ -398,11 +408,12 @@ pub async fn unlock_admin(
         .await
         .map_err(OpsError::from)?
         .ok_or_else(|| OpsError::bad_input("记录不存在或已删除"))?;
-    if target.status != "active" {
+    if target.status != chargepilot_domain::operations::AdminUserStatus::Active {
         sqlx::query(
-            "UPDATE `admin_user` SET `status` = 'active', `failed_login_count` = 0, `locked_until` = NULL, \
+            "UPDATE `admin_user` SET `status` = ?, `failed_login_count` = 0, `locked_until` = NULL, \
              `auth_version` = `auth_version` + 1 WHERE `id` = ?",
         )
+        .bind(chargepilot_domain::operations::AdminUserStatus::Active)
         .bind(target.id)
         .execute(&mut *tx)
         .await
@@ -454,8 +465,10 @@ pub async fn reset_admin_password(
     sqlx::query(
         "UPDATE `admin_user` SET `password_hash` = ?, `auth_version` = `auth_version` + 1, \
          `failed_login_count` = 0, `locked_until` = NULL, \
-         `status` = IF(`status` = 'locked', 'active', `status`) WHERE `id` = ?",
+         `status` = IF(`status` = ?, ?, `status`) WHERE `id` = ?",
     )
+    .bind(chargepilot_domain::operations::AdminUserStatus::Locked)
+    .bind(chargepilot_domain::operations::AdminUserStatus::Active)
     .bind(hash)
     .bind(target.id)
     .execute(&mut *tx)

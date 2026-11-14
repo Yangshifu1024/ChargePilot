@@ -23,7 +23,7 @@ pub struct AdminAccount {
     pub mfa_enabled: bool,
     pub mfa_secret: Option<String>,
     pub mfa_last_step: Option<i64>,
-    pub status: String,
+    pub status: chargepilot_domain::operations::AdminUserStatus,
     pub failed_login_count: u32,
     pub locked_until: Option<chrono::DateTime<chrono::Utc>>,
     pub auth_version: u64,

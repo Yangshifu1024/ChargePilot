@@ -45,7 +45,7 @@ pub async fn login_or_create(
 }
 
 async fn find_active_by_openid(pool: &MySqlPool, openid: &str) -> anyhow::Result<Option<User>> {
-    let row = sqlx::query_as::<_, (u64, Option<String>, Option<String>, Option<String>, Option<String>, String)>(
+    let row = sqlx::query_as::<_, (u64, Option<String>, Option<String>, Option<String>, Option<String>, chargepilot_domain::identity::UserStatus)>(
         "SELECT `id`, `nickname`, `avatar_url`, `phone`, NULL, `status` FROM `user` WHERE `openid` = ? AND `deleted_at` IS NULL LIMIT 1",
     )
     .bind(openid)

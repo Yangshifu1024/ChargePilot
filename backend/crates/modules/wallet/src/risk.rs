@@ -360,13 +360,14 @@ impl RiskService {
         .bind(user_id)
         .fetch_one(&mut *tx)
         .await?;
-        let (user_status,): (String,) = sqlx::query_as(
+        let (user_status,): (chargepilot_domain::identity::UserStatus,) = sqlx::query_as(
             "SELECT `status` FROM `user` WHERE `id` = ? AND `deleted_at` IS NULL LIMIT 1",
         )
         .bind(user_id)
         .fetch_one(&mut *tx)
         .await?;
-        let restore = active == 0 && user_status == "active";
+        let restore =
+            active == 0 && user_status == chargepilot_domain::identity::UserStatus::Active;
         if restore {
             // 钱包 ID 从锁内账户行取（lock_wallet_account_tx 返回后按 user 查一次主键）。
             let (wallet_id,): (u64,) = sqlx::query_as(

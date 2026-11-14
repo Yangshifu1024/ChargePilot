@@ -533,6 +533,7 @@ name = "chargepilot-mod-identity"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chargepilot-domain",
  "chargepilot-mod-ops",
  "chargepilot-mod-wallet",
  "chargepilot-platform",

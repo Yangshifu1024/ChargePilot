@@ -18,12 +18,12 @@ pub struct User {
     pub nickname: Option<String>,
     pub avatar_url: Option<String>,
     pub phone: Option<String>,
-    pub status: String,
+    pub status: chargepilot_domain::identity::UserStatus,
 }
 
 impl User {
     pub fn is_active(&self) -> bool {
-        self.status == "active"
+        self.status == chargepilot_domain::identity::UserStatus::Active
     }
 }
 

@@ -54,9 +54,8 @@ pub async fn publish(
     {
         return Err(OpsError::bad_input("请填写标题、内容、有效时间和公告目标"));
     }
-    if !matches!(input.scope.as_str(), "global" | "station" | "city") {
-        return Err(OpsError::bad_input("公告目标无效"));
-    }
+    let scope = chargepilot_domain::operations::AnnouncementScope::parse(input.scope.as_str())
+        .map_err(|_| OpsError::bad_input("公告目标无效"))?;
     let start = chrono::DateTime::parse_from_rfc3339(&input.start_at)
         .ok()
         .filter(|t| *t > chrono::Utc::now() - chrono::Duration::hours(1))
@@ -72,8 +71,8 @@ pub async fn publish(
         }
         None => None,
     };
-    let targets = match (&input.scope[..], &input.target_ids) {
-        ("global", _) => Some(json!([])),
+    let targets = match (scope, &input.target_ids) {
+        (chargepilot_domain::operations::AnnouncementScope::Global, _) => Some(json!([])),
         (_, None) => return Err(OpsError::bad_input("请填写标题、内容、有效时间和公告目标")),
         (_, Some(ids)) => {
             if ids.is_empty() || ids.len() > 100 {
@@ -102,13 +101,14 @@ pub async fn publish(
     let id = allocator.next_id().await.map_err(OpsError::from)?;
     sqlx::query(
         "INSERT INTO `announcement` (`id`, `title`, `content`, `scope`, `target_ids`, `status`, `start_at`, `end_at`, `created_by`) \
-         VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(input.title.trim())
     .bind(&input.content)
-    .bind(&input.scope)
+    .bind(scope)
     .bind(&targets)
+    .bind(chargepilot_domain::operations::AnnouncementStatus::Published)
     .bind(start.with_timezone(&chrono::Utc))
     .bind(end)
     .bind(actor.id)
@@ -156,10 +156,12 @@ pub async fn public_list(
                 DATE_FORMAT(`start_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `start_at`, \
                 DATE_FORMAT(`end_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `end_at` \
          FROM `announcement` \
-         WHERE `deleted_at` IS NULL AND `status` = 'published' AND `scope` = 'global' \
+         WHERE `deleted_at` IS NULL AND `status` = ? AND `scope` = ? \
            AND `start_at` <= NOW(3) AND (`end_at` IS NULL OR `end_at` >= NOW(3)) \
          ORDER BY `start_at` DESC, `id` DESC LIMIT ? OFFSET ?",
     )
+    .bind(chargepilot_domain::operations::AnnouncementStatus::Published)
+    .bind(chargepilot_domain::operations::AnnouncementScope::Global)
     .bind(page_size as i64)
     .bind(((page - 1) as i64) * (page_size as i64))
     .fetch_all(pool)

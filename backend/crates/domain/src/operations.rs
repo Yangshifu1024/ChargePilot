@@ -1,18 +1,45 @@
 //! 后台运营纯规则与词表（旧版 domain/operations 的 scope/export/account 纯部分）。
 //! 零框架依赖：只承载归并、校验与单元格防护，不触碰数据库与 HTTP。
 
-/// admin_data_scope.scope_type 列的数据范围类型（station/vendor）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScopeType(pub String);
+use crate::wordlist::wordlist_enum;
 
-impl ScopeType {
-    pub const STATION: &'static str = "station";
-    pub const VENDOR: &'static str = "vendor";
-
-    pub fn known(&self) -> bool {
-        matches!(self.0.as_str(), Self::STATION | Self::VENDOR)
+wordlist_enum!(
+    /// admin_data_scope.scope_type 列的数据范围类型（两值；对照表裁决由
+    /// `ScopeType` 更名——String 新类型转正，消除与设备域词表的泛名歧义）。
+    AdminScopeType: {
+        Station = "station",
+        Vendor = "vendor",
     }
-}
+);
+
+wordlist_enum!(
+    /// admin_user.status 列的后台账号状态（三值；与 C 端
+    /// [`crate::identity::UserStatus`] 是不同表的独立词表，不合并）。
+    AdminUserStatus: {
+        Active = "active",
+        Disabled = "disabled",
+        Locked = "locked",
+    }
+);
+
+wordlist_enum!(
+    /// announcement.scope 列的公告可见范围（三值）。
+    AnnouncementScope: {
+        Global = "global",
+        Station = "station",
+        City = "city",
+    }
+);
+
+wordlist_enum!(
+    /// announcement.status 列的公告状态（三值；当前创建即 published，
+    /// draft/expired 为词表保留值）。
+    AnnouncementStatus: {
+        Draft = "draft",
+        Published = "published",
+        Expired = "expired",
+    }
+);
 
 /// 单个账号可配置的数据范围条数上限。
 pub const MAX_SCOPE_ITEMS: usize = 500;
@@ -36,19 +63,18 @@ pub struct DataScope {
 }
 
 /// 由一组原始范围行归并出内存范围集合（旧版 NewDataScope）。空输入即不受限。
+/// 未知范围类型在 DB→Rust 解码即被词表拒绝（严格失败），此处无需兜底分支。
 #[must_use]
-pub fn new_data_scope(rows: &[(String, u64)]) -> DataScope {
+pub fn new_data_scope(rows: &[(AdminScopeType, u64)]) -> DataScope {
     let mut scope = DataScope::default();
     if rows.is_empty() {
         scope.unrestricted = true;
         return scope;
     }
     for (scope_type, scope_id) in rows {
-        match scope_type.as_str() {
-            ScopeType::STATION => scope.station_ids.push(*scope_id),
-            ScopeType::VENDOR => scope.vendor_ids.push(*scope_id),
-            // 未知类型按旧版行为静默忽略，不报错。
-            _ => {}
+        match scope_type {
+            AdminScopeType::Station => scope.station_ids.push(*scope_id),
+            AdminScopeType::Vendor => scope.vendor_ids.push(*scope_id),
         }
     }
     scope
@@ -197,19 +223,17 @@ mod tests {
         assert!(s.allows_station(1));
         // 站点与厂商归并。
         let s = new_data_scope(&[
-            ("station".into(), 1),
-            ("station".into(), 3),
-            ("vendor".into(), 9),
+            (AdminScopeType::Station, 1),
+            (AdminScopeType::Station, 3),
+            (AdminScopeType::Vendor, 9),
         ]);
         assert!(!s.unrestricted);
         assert!(s.allows_station(1));
         assert!(!s.allows_station(2));
         assert!(s.allows_vendor(9));
         assert!(!s.allows_vendor(8));
-        // 未知类型静默忽略。
-        let s = new_data_scope(&[("region".into(), 5)]);
-        assert!(!s.unrestricted);
-        assert!(s.allows_station(1), "无站点限制即放行站点");
+        // 旧版「未知类型静默忽略」由词表严格失败承接：未知 scope_type 在
+        // DB→Rust 解码即报错，归并函数不再有未知分支（票 11 语义收紧登记）。
     }
 
     #[test]
@@ -258,7 +282,7 @@ mod tests {
             !ExportFileFormat("pdf".into()).known(),
             "历史 PDF 不在合法集合"
         );
-        assert!(ScopeType("station".into()).known());
-        assert!(!ScopeType("region".into()).known());
+        assert!(AdminScopeType::parse("station").is_ok());
+        assert!(AdminScopeType::parse("region").is_err());
     }
 }

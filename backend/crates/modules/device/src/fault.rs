@@ -269,9 +269,10 @@ pub async fn dispatch(
          JOIN `role` r ON r.`id` = u.`role_id` AND r.`deleted_at` IS NULL \
          JOIN `role_permission` rp ON rp.`role_id` = r.`id` \
          JOIN `permission` p ON p.`id` = rp.`permission_id` AND p.`code` = 'fault.resolve' \
-         WHERE u.`id` = ? AND u.`status` = 'active' AND u.`deleted_at` IS NULL",
+         WHERE u.`id` = ? AND u.`status` = ? AND u.`deleted_at` IS NULL",
     )
     .bind(assigned_to)
+    .bind(chargepilot_domain::operations::AdminUserStatus::Active)
     .fetch_optional(&mut *tx)
     .await?;
     if assignee_ok.is_none() {

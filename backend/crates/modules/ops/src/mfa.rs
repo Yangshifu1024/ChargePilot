@@ -510,7 +510,7 @@ fn to_admin_account(a: &MfaAccount) -> super::AdminAccount {
         mfa_enabled: a.mfa_enabled,
         mfa_secret: a.mfa_secret.clone(),
         mfa_last_step: a.mfa_last_step,
-        status: "active".into(),
+        status: chargepilot_domain::operations::AdminUserStatus::Active,
         failed_login_count: 0,
         locked_until: None,
         auth_version: a.auth_version,

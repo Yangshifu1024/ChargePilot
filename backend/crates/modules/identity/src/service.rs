@@ -114,7 +114,7 @@ impl<'a> SessionService<'a> {
             nickname: None,
             avatar_url: None,
             phone: None,
-            status: "active".into(),
+            status: chargepilot_domain::identity::UserStatus::Active,
         };
         let jwt = sign_access(
             self.jwt_secret,

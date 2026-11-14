@@ -33,7 +33,7 @@ struct AdminRow {
     mfa_enabled: bool,
     mfa_secret: Option<String>,
     mfa_last_step: Option<i64>,
-    status: String,
+    status: chargepilot_domain::operations::AdminUserStatus,
     failed_login_count: u32,
     locked_until: Option<chrono::DateTime<chrono::Utc>>,
     auth_version: u64,
@@ -73,7 +73,7 @@ pub async fn verify_login(
         return Err(OpsError::Credentials);
     };
     let now = chrono::Utc::now();
-    if account.status == "disabled" {
+    if account.status == chargepilot_domain::operations::AdminUserStatus::Disabled {
         return Err(OpsError::Credentials);
     }
     if let Some(until) = account.locked_until
@@ -129,7 +129,7 @@ pub async fn verify_mfa(
     ip: &str,
 ) -> Result<(), OpsError> {
     let now = chrono::Utc::now();
-    if account.status == "disabled" {
+    if account.status == chargepilot_domain::operations::AdminUserStatus::Disabled {
         return Err(OpsError::Credentials);
     }
     if let Some(until) = account.locked_until
@@ -541,7 +541,7 @@ pub async fn lock_active_admin_tx(
             mfa_enabled: false,
             mfa_secret: None,
             mfa_last_step: None,
-            status: "active".into(),
+            status: chargepilot_domain::operations::AdminUserStatus::Active,
             failed_login_count: 0,
             locked_until: None,
             auth_version,
