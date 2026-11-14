@@ -19,4 +19,5 @@ Status: done
 - **迁移站点**：identity lib/repo/service（User.status 枚举字段与 is_active）、ops management（软删/解锁/重置密码三处 SQL + AdminUserRow/AdminAccount/AdminRow 链枚举化 + 入参校验 parse 化——locked 为风控专用状态不可设置，旧版语义保留）、ops announcement（scope parse + INSERT/SELECT 绑定）、ops repo（登录准入 disabled 判定、种子账号构造）、ops scope（范围行投影）、跨模块 user/admin_user 状态：card admin（在线卡锁定读投影）、wallet risk（解冻恢复判定）、device fault（派单人 admin_user 校验）。
 - **两套账号状态不合并**：C 端 `UserStatus`(active/frozen) 与后台 `AdminUserStatus`(active/disabled/locked) 独立建型，票文本裁决落实。
 - **保留字符串（合法）**：`http-api/admin_users_cards.rs:136` 的状态筛选入参白名单（显式 400 语义，票 15 双语义定论按调用点保留）；公告审计 after 里的 scope/status 原串（审计语义）。
+- **补漏（提交后核验发现，单独修复提交）**：`card/swipe.rs` 刷卡准入的 `user.status` 投影与 `!= "active"` 判定转 `UserStatus`——首轮迁移遗漏的跨模块消费点，真库轮全绿后按残留清单补齐。
 - **过程记录**：公告 INSERT 的 status 绑定漏插（9 占位符 8 绑定）被真库轮 503 抓出补齐——与票 08/10 同类错误，票 10 已登记「两步式替换」教训，本票为最后一处；identity 模块首次接入 domain 依赖。
