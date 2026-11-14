@@ -7,7 +7,6 @@
 //! 不是全量取值，使用处必须引用具名常量。
 
 use chrono::{DateTime, Datelike, Utc};
-use serde::{Deserialize, Serialize};
 
 // ---------- 词表枚举范式（二期票 06） ----------
 //
@@ -104,26 +103,6 @@ wordlist_enum!(
         Coupon = "coupon",
     }
 );
-
-/// charge_payment_intent.status 列的支付意图状态（五值）。
-/// 与 PaymentOrderStatus 分立：共享 initiated/paid 字面量但含义不同，不得互相赋值。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaymentIntentStatus(pub String);
-
-impl PaymentIntentStatus {
-    pub const INITIATED: &'static str = "initiated";
-    pub const PAID: &'static str = "paid";
-    pub const EXPIRED: &'static str = "expired";
-    pub const CLOSED: &'static str = "closed";
-    pub const REFUND_REQUIRED: &'static str = "refund_required";
-
-    pub fn known(&self) -> bool {
-        matches!(
-            self.0.as_str(),
-            Self::INITIATED | Self::PAID | Self::EXPIRED | Self::CLOSED | Self::REFUND_REQUIRED
-        )
-    }
-}
 
 wordlist_enum!(
     /// refund_record.execution_policy 列的退款执行策略。

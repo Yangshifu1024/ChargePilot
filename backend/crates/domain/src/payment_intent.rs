@@ -5,21 +5,23 @@
 use crate::charging_scheme::{Package, Scheme};
 use crate::charging_settle::Estimate;
 use crate::charging_spec::beijing;
+use crate::wordlist::wordlist_enum;
 
-/// 支付意图状态（charge_payment_intent.status 的取值词汇）。
-pub struct IntentStatus;
-impl IntentStatus {
-    /// 已创建待支付（占用端口）。
-    pub const INITIATED: &'static str = "initiated";
-    /// 已支付并关联充电订单。
-    pub const PAID: &'static str = "paid";
-    /// 到期未支付（预占释放）。
-    pub const EXPIRED: &'static str = "expired";
-    /// 手工关闭。
-    pub const CLOSED: &'static str = "closed";
-    /// 支付迟到，需要原路退款。
-    pub const REFUND_REQUIRED: &'static str = "refund_required";
-}
+wordlist_enum!(
+    /// 支付意图状态（charge_payment_intent.status 列，五值）。
+    /// 与 [`crate::money::PaymentOrderStatus`] 分立：共享 initiated/paid 字面量
+    /// 但含义不同，不得互相赋值（票 09 对照表裁决的唯一属主落位本域）。
+    /// 生成列 `active_port_code` 不建 Rust 类型，由数据库派生。
+    // 取值语义：initiated 已创建待支付（占用端口）；paid 已支付并关联充电订单；
+    // expired 到期未支付（预占释放）；closed 手工关闭；refund_required 支付迟到需原路退款。
+    PaymentIntentStatus: {
+        Initiated = "initiated",
+        Paid = "paid",
+        Expired = "expired",
+        Closed = "closed",
+        RefundRequired = "refund_required",
+    }
+);
 
 /// 支付意图业务冲突（旧版 ErrPaymentIntentConflict 的语义族）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,5 +166,27 @@ mod tests {
         assert!(!is_late_payment(expires, expires, expires));
         assert!(is_late_payment(expires + 1, expires, expires));
         assert!(is_late_payment(expires, expires + 1, expires));
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::PaymentIntentStatus;
+
+    /// 字面量对照（票 09 硬规则）：serde 输出与 DB ENUM 字面量逐字节一致。
+    #[test]
+    fn db_literals_match_serde() {
+        use serde_json::to_string as json;
+        let intents = [
+            (PaymentIntentStatus::Initiated, "initiated"),
+            (PaymentIntentStatus::Paid, "paid"),
+            (PaymentIntentStatus::Expired, "expired"),
+            (PaymentIntentStatus::Closed, "closed"),
+            (PaymentIntentStatus::RefundRequired, "refund_required"),
+        ];
+        for (v, s) in intents {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
     }
 }

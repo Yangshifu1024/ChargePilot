@@ -227,9 +227,9 @@ pub async fn apply_start_receipt(
     sqlx::query(
         "UPDATE `charge_payment_intent` SET `status` = ? WHERE `charge_order_id` = ? AND `status` = ?",
     )
-    .bind(chargepilot_domain::payment_intent::IntentStatus::REFUND_REQUIRED)
+    .bind(chargepilot_domain::payment_intent::PaymentIntentStatus::RefundRequired)
     .bind(id as i64)
-    .bind(chargepilot_domain::payment_intent::IntentStatus::PAID)
+    .bind(chargepilot_domain::payment_intent::PaymentIntentStatus::Paid)
     .execute(&mut *c)
     .await?;
     chargepilot_mod_order::append_domain_event_tx(

@@ -7,7 +7,7 @@ use super::scan::{ScanError, ScanResult};
 use chargepilot_domain::charging_actual::Rule;
 use chargepilot_domain::charging_settle::{Estimate, Offer};
 use chargepilot_domain::money::{BizType, PayMethod, PaymentOrderStatus};
-use chargepilot_domain::payment_intent::{IntentError, IntentStatus, intent_estimate};
+use chargepilot_domain::payment_intent::{IntentError, PaymentIntentStatus, intent_estimate};
 use chargepilot_platform::ids::SegmentAllocator;
 use sqlx::{Acquire, MySqlPool};
 
@@ -298,7 +298,7 @@ impl CheckoutService {
         )
         .bind(user_id as i64)
         .bind(&input.client_request_id)
-        .bind(IntentStatus::INITIATED)
+        .bind(PaymentIntentStatus::Initiated)
         .fetch_optional(&self.pool)
         .await?;
         let Some(row) = row else {
@@ -409,9 +409,9 @@ impl CheckoutService {
             "UPDATE `charge_payment_intent` SET `status` = ? \
              WHERE `port_code` = ? AND `status` = ? AND `expires_at` <= UTC_TIMESTAMP(3)",
         )
-        .bind(IntentStatus::EXPIRED)
+        .bind(PaymentIntentStatus::Expired)
         .bind(&scan_port.port_id)
-        .bind(IntentStatus::INITIATED)
+        .bind(PaymentIntentStatus::Initiated)
         .execute(&mut *conn)
         .await?;
         // 端口可用性：有效预占或进行中订单存在即冲突（旧版 CheckoutPortAvailable）。
@@ -422,8 +422,8 @@ impl CheckoutService {
                OR (i.`status` = ? AND c.`status` IN (?, ?)))",
         )
         .bind(&scan_port.port_id)
-        .bind(IntentStatus::INITIATED)
-        .bind(IntentStatus::PAID)
+        .bind(PaymentIntentStatus::Initiated)
+        .bind(PaymentIntentStatus::Paid)
         .bind(chargepilot_domain::order::ChargeOrderStatus::Paid)
         .bind(chargepilot_domain::order::ChargeOrderStatus::Charging)
         .fetch_one(&mut *conn)
@@ -494,7 +494,7 @@ impl CheckoutService {
         .bind(estimate.total_cents)
         .bind(estimate.charge_mode)
         .bind(estimate.charge_quantity as i64)
-        .bind(IntentStatus::INITIATED)
+        .bind(PaymentIntentStatus::Initiated)
         .bind(expires_at)
         .bind(offer.id as i64)
         .execute(&mut *conn)

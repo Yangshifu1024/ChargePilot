@@ -96,9 +96,9 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
                 "UPDATE `charge_payment_intent` SET `status` = ? \
                  WHERE `charge_order_id` = ? AND `status` = ?",
             )
-            .bind(chargepilot_domain::payment_intent::IntentStatus::REFUND_REQUIRED)
+            .bind(chargepilot_domain::payment_intent::PaymentIntentStatus::RefundRequired)
             .bind(id as i64)
-            .bind(chargepilot_domain::payment_intent::IntentStatus::PAID)
+            .bind(chargepilot_domain::payment_intent::PaymentIntentStatus::Paid)
             .execute(&mut *tx)
             .await?;
             let cleaned = command_id.replace('-', "");

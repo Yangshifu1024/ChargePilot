@@ -4,7 +4,7 @@
 //! 每一步幂等：重放同报文返回相同回执，不同报文报冲突。
 
 use chargepilot_domain::money::{BizType, PaymentOrderStatus};
-use chargepilot_domain::payment_intent::{IntentStatus, is_late_payment};
+use chargepilot_domain::payment_intent::{PaymentIntentStatus, is_late_payment};
 use sqlx::{Acquire, MySqlPool};
 
 /// 已验签（或模拟确认）的支付事实（旧版 VerifiedPayment）。
@@ -308,13 +308,13 @@ pub async fn apply_payment(
         }
         // 迟到退款登记后的重放：意图仍 refund_required → 原样返回。
         if intent_order_id.is_none() {
-            let current_status: String = sqlx::query_scalar(
+            let current_status: PaymentIntentStatus = sqlx::query_scalar(
                 "SELECT `status` FROM `charge_payment_intent` WHERE `intent_id` = ?",
             )
             .bind(&intent_id)
             .fetch_one(&mut *conn)
             .await?;
-            if current_status == IntentStatus::REFUND_REQUIRED {
+            if current_status == PaymentIntentStatus::RefundRequired {
                 tx.commit().await?;
                 return Ok(ApplyResult {
                     refund_required: true,
@@ -385,9 +385,9 @@ pub async fn apply_payment(
             "UPDATE `charge_payment_intent` SET `status` = ? \
              WHERE `intent_id` = ? AND `status` = ? AND `charge_order_id` IS NULL",
         )
-        .bind(IntentStatus::REFUND_REQUIRED)
+        .bind(PaymentIntentStatus::RefundRequired)
         .bind(&intent_id)
-        .bind(IntentStatus::INITIATED)
+        .bind(PaymentIntentStatus::Initiated)
         .execute(&mut *conn)
         .await?
         .rows_affected();
@@ -519,11 +519,11 @@ pub async fn apply_payment(
         "UPDATE `charge_payment_intent` SET `status` = ?, `paid_at` = ?, `charge_order_id` = ? \
          WHERE `intent_id` = ? AND `status` = ? AND `charge_order_id` IS NULL",
     )
-    .bind(IntentStatus::PAID)
+    .bind(PaymentIntentStatus::Paid)
     .bind(paid_at)
     .bind(charge_order_id as i64)
     .bind(&intent_id)
-    .bind(IntentStatus::INITIATED)
+    .bind(PaymentIntentStatus::Initiated)
     .execute(&mut *conn)
     .await?
     .rows_affected();
