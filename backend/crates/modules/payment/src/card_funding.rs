@@ -3,7 +3,7 @@
 //! 由 card 用例在同一事务原子提交，本模块不扣钱包、不调用支付渠道。
 
 use crate::channel::futures_bounds::BoxFuture;
-use chargepilot_domain::money::PaymentStatus;
+use chargepilot_domain::money::PaymentOrderStatus;
 
 /// 卡续购没有匹配到已付余额支付单（旧版 ErrCardFundingConflict）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,8 +116,8 @@ pub async fn extend_card_payment_in_tx(
     .bind(cents)
     .bind(cents)
     .bind(payment_order_id as i64)
-    .bind(PaymentStatus::PAID)
-    .bind(PaymentStatus::PARTIAL_REFUNDED)
+    .bind(PaymentOrderStatus::Paid)
+    .bind(PaymentOrderStatus::PartialRefunded)
     .execute(&mut *tx)
     .await
     .map_err(|_| CardFundingConflict)?

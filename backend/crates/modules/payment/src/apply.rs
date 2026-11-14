@@ -3,7 +3,7 @@
 //! （charge 业务）订单创建 + 快照冻结 + 事件出站；钱包充值走钱包入账。
 //! 每一步幂等：重放同报文返回相同回执，不同报文报冲突。
 
-use chargepilot_domain::money::{PaymentBizType, PaymentStatus};
+use chargepilot_domain::money::{BizType, PaymentOrderStatus};
 use chargepilot_domain::payment_intent::{IntentStatus, is_late_payment};
 use sqlx::{Acquire, MySqlPool};
 
@@ -112,14 +112,15 @@ pub async fn apply_payment(
     let conn = tx.acquire().await?;
 
     // 先按渠道商户单号锁定支付订单，再按业务类型分流。
-    // 锁读投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
+    // 锁读投影元组（列序即 SELECT 顺序）——type_complexity 要求具名；
+    // 词表列直接解出枚举（票 06 手写 sqlx Type）。
     type PayOrderRow = (
         u64,
-        String,
+        BizType,
         u64,
         u64,
         i64,
-        String,
+        PaymentOrderStatus,
         Option<String>,
         chrono::NaiveDate,
     );
@@ -145,7 +146,7 @@ pub async fn apply_payment(
         return Err(ApplyError::Conflict);
     };
 
-    if biz_type == PaymentBizType::WALLET_RECHARGE {
+    if biz_type == BizType::WalletRecharge {
         // 钱包充值分支（旧版 settleWalletRecharge）：支付单推进 paid 后
         // 经钱包入账事务落余额与流水；摘要即流水号。
         let previous: Option<(String,)> = sqlx::query_as(
@@ -159,7 +160,7 @@ pub async fn apply_payment(
         {
             return Err(ApplyError::Conflict);
         }
-        if order_status == PaymentStatus::PAID {
+        if order_status == PaymentOrderStatus::Paid {
             if previous.is_none() {
                 return Err(ApplyError::Conflict);
             }
@@ -169,7 +170,7 @@ pub async fn apply_payment(
                 ..Default::default()
             });
         }
-        if order_status != PaymentStatus::INITIATED
+        if order_status != PaymentOrderStatus::Initiated
             || previous.is_some()
             || total_cents != payment.paid_cents
         {
@@ -187,12 +188,12 @@ pub async fn apply_payment(
              `wechat_transaction_id` = ?, `paid_at` = ? \
              WHERE `id` = ? AND `status` = ? AND `paid_cents` = 0",
         )
-        .bind(PaymentStatus::PAID)
+        .bind(PaymentOrderStatus::Paid)
         .bind(payment.paid_cents)
         .bind(&payment.transaction_id)
         .bind(paid_at)
         .bind(order_id as i64)
-        .bind(PaymentStatus::INITIATED)
+        .bind(PaymentOrderStatus::Initiated)
         .execute(&mut *conn)
         .await?
         .rows_affected();
@@ -221,7 +222,7 @@ pub async fn apply_payment(
         tx.commit().await?;
         return Ok(ApplyResult::default());
     }
-    if biz_type != PaymentBizType::CHARGE {
+    if biz_type != BizType::Charge {
         return Err(ApplyError::Conflict);
     }
 
@@ -296,9 +297,9 @@ pub async fn apply_payment(
         return Err(ApplyError::Conflict);
     }
 
-    let paid_status_like = order_status == PaymentStatus::PAID
-        || order_status == PaymentStatus::PARTIAL_REFUNDED
-        || order_status == PaymentStatus::REFUNDED;
+    let paid_status_like = order_status == PaymentOrderStatus::Paid
+        || order_status == PaymentOrderStatus::PartialRefunded
+        || order_status == PaymentOrderStatus::Refunded;
     if paid_status_like {
         // 已到账重放：必须与首次报文一致（交易号、金额、摘要已核对）。
         let txn_matches = existing_txn.as_deref() == Some(payment.transaction_id.as_str());
@@ -340,7 +341,7 @@ pub async fn apply_payment(
         });
     }
     // 首次处理：必须 initiated 且未关联业务、摘要未登记。
-    if order_status != PaymentStatus::INITIATED || biz_id != 0 || previous.is_some() {
+    if order_status != PaymentOrderStatus::Initiated || biz_id != 0 || previous.is_some() {
         return Err(ApplyError::Conflict);
     }
     sqlx::query(
@@ -357,13 +358,13 @@ pub async fn apply_payment(
          `wechat_transaction_id` = ?, `paid_at` = ? \
          WHERE `id` = ? AND `order_no` = ? AND `status` = ? AND `total_cents` = ? AND `paid_cents` = 0",
     )
-    .bind(PaymentStatus::PAID)
+    .bind(PaymentOrderStatus::Paid)
     .bind(payment.paid_cents)
     .bind(&payment.transaction_id)
     .bind(paid_at)
     .bind(order_id as i64)
     .bind(&payment.merchant_order_no)
-    .bind(PaymentStatus::INITIATED)
+    .bind(PaymentOrderStatus::Initiated)
     .bind(payment.paid_cents)
     .execute(&mut *conn)
     .await?
@@ -402,11 +403,11 @@ pub async fn apply_payment(
         .bind(&refund_no)
         .bind(order_id as i64)
         .bind(order_user)
-        .bind(PaymentBizType::CHARGE)
+        .bind(BizType::Charge)
         .bind(payment.paid_cents)
         .bind("支付迟到，自动原路退款")
-        .bind(chargepilot_domain::money::RefundStatus::PENDING)
-        .bind(chargepilot_domain::money::ExecutionPolicy::AUTOMATIC)
+        .bind(chargepilot_domain::money::RefundStatus::Pending)
+        .bind(chargepilot_domain::money::ExecutionPolicy::Automatic)
         .bind(chargepilot_mod_order::month_start_of(now))
         .execute(&mut *conn)
         .await?;
@@ -507,7 +508,7 @@ pub async fn apply_payment(
     )
     .bind(charge_order_id as i64)
     .bind(order_id as i64)
-    .bind(PaymentStatus::PAID)
+    .bind(PaymentOrderStatus::Paid)
     .execute(&mut *conn)
     .await?
     .rows_affected();

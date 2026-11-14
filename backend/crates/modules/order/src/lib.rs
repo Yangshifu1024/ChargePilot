@@ -6,7 +6,7 @@ pub mod admin_query;
 pub mod feedback;
 pub mod user_query;
 
-use chargepilot_domain::money::PaymentStatus;
+use chargepilot_domain::money::PaymentOrderStatus;
 use chargepilot_platform::ids::SegmentAllocator;
 use chrono::Datelike;
 use sqlx::MySqlConnection;
@@ -125,7 +125,7 @@ pub async fn create_paid_in_tx(
     .bind(&draft.port_code)
     .bind(draft.payment_order_id as i64)
     .bind(OrderStatus::PAID)
-    .bind(PaymentStatus::PAID)
+    .bind(PaymentOrderStatus::Paid)
     .bind(draft.charge_mode)
     .bind(draft.charge_quantity)
     .bind(draft.discount_cents)

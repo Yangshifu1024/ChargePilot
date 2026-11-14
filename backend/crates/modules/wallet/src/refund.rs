@@ -3,7 +3,7 @@
 //! manual_review 表示待审核，均不表示渠道已退回资金。
 
 use super::{WalletError, account};
-use chargepilot_domain::money::{PaymentBizType, RefundDraft};
+use chargepilot_domain::money::{BizType, RefundDraft};
 use serde::Serialize;
 use sqlx::{Acquire, MySqlConnection, MySqlPool};
 
@@ -271,7 +271,7 @@ impl RefundService {
                         refund_no: format!("WR{digest}"),
                         payment_order_id: pay.id,
                         user_id: req.user_id,
-                        biz_type: PaymentBizType("wallet_recharge".into()),
+                        biz_type: BizType::WalletRecharge,
                         biz_id: pay.biz_id,
                         amount_cents: amount,
                         reason: req.reason.clone(),

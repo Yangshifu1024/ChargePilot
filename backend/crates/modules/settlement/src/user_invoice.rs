@@ -3,6 +3,7 @@
 //! 金额；一单只允许一份申请（uk_invoice_active），同号同内容重放幂等复用。
 //! 可开票状态与计费任务共用同一判定：completed / refunding / refunded。
 
+use chargepilot_domain::money::BizType;
 use serde_json::json;
 use sqlx::{Acquire, MySqlPool};
 
@@ -162,7 +163,7 @@ pub async fn apply_invoice(
     type InvoiceExistingRow = (
         u64,
         String,
-        String,
+        BizType,
         String,
         i64,
         String,
@@ -171,7 +172,7 @@ pub async fn apply_invoice(
         String,
     );
     let existing: Option<InvoiceExistingRow> = sqlx::query_as(
-        "SELECT `id`, CAST(`user_id` AS CHAR), CAST(`biz_type` AS CHAR), \
+        "SELECT `id`, CAST(`user_id` AS CHAR), `biz_type`, \
              CAST(`biz_id` AS CHAR), `total_cents`, CAST(`invoice_type` AS CHAR), \
              CAST(`title` AS CHAR), COALESCE(CAST(`tax_no` AS CHAR), ''), \
              COALESCE(CAST(`email` AS CHAR), '') \
@@ -194,7 +195,7 @@ pub async fn apply_invoice(
             email,
         )) => {
             let same = owner == user_id.to_string()
-                && biz_type == "charge"
+                && biz_type == BizType::Charge
                 && biz_id == order_id.to_string()
                 && existing_total == total
                 && invoice_type == input.invoice_type

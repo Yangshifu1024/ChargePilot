@@ -1,7 +1,7 @@
 //! 资金域共享词表与纯规则：支付/退款状态、业务类型、人工复核校验与重放比对。
 //! 语义基准：旧仓库 internal/domain/money/{payment,method,review,refund}.go，逐条对齐。
 //!
-//! 词表纪律：`PaymentBizType`（charge/wallet_recharge）与钱包流水的
+//! 词表纪律：`BizType`（charge/wallet_recharge）与钱包流水的
 //! `TxnBizType`（recharge/pay/refund/gift/freeze/unfreeze/adjust）是两组不同的词表，
 //! 禁止取并集。各词表的「判定集合」（如 RefundablePaymentStatuses）是业务规则，
 //! 不是全量取值，使用处必须引用具名常量。
@@ -9,109 +9,161 @@
 use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize};
 
-// ---------- payment_order 词表（旧版 payment.go） ----------
+// ---------- 词表枚举范式（二期票 06） ----------
+//
+// DB ENUM 字面量即 serde/sqlx 输出，由 [`wordlist_enum!`] 统一生成：
+// `as_str` 是字面量锚点，serde 靠 `rename_all = "snake_case"` 与之同源，
+// 并由 `db_literals_match_serde` 测试逐字节锁定。
+//
+// sqlx 三件套为什么手写（打样结论，2026-11-14 真库验证）：sqlx 0.8.6 的
+// `#[derive(sqlx::Type)]` 强枚举只生成 `type_info() = MySqlTypeInfo::__enum()`
+// （type=String + ENUM 标志，该形态是为参数绑定设计的），不覆写 `compatible`，
+// 于是解码走默认的严格类型相等——而 MySQL 结果集把 ENUM 列报告为
+// `ColumnType::Enum`，两者永不相等，连 `CAST AS CHAR`（VarString）也被拒。
+// 因此兼容判定委托 `<str>::compatible` 的宽松白名单（接受 Enum 列且非 BINARY），
+// 解码按字面量 parse，未知值即 schema 漂移报警。
 
-/// 支付与退款关联的业务类型：`payment_order.biz_type` 与 `refund_record.biz_type`
-/// 共享同一词表（charge / wallet_recharge）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaymentBizType(pub String);
-
-impl PaymentBizType {
-    pub const CHARGE: &'static str = "charge";
-    pub const WALLET_RECHARGE: &'static str = "wallet_recharge";
-
-    pub fn valid(&self) -> bool {
-        matches!(self.0.as_str(), Self::CHARGE | Self::WALLET_RECHARGE)
-    }
+/// DB 字面量不属于词表（schema 漂移或脏数据）。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("未知字面量 `{value}`（词表 {wordlist}）")]
+pub struct UnknownLiteral {
+    /// 词表（Rust 类型名）。
+    pub wordlist: &'static str,
+    /// 实际读到的字面量。
+    pub value: String,
 }
 
-/// payment_order.status 列的支付单业务状态（六值）。
-/// 注意与订单侧 charge_order.payment_status 区分：后者由金额推导得出。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaymentStatus(pub String);
+macro_rules! wordlist_enum {
+    (
+        $(#[$meta:meta])*
+        $name:ident : { $( $variant:ident = $literal:literal ),+ $(,)? }
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        pub enum $name { $( $variant ),+ }
 
-impl PaymentStatus {
-    pub const INITIATED: &'static str = "initiated";
-    pub const PAID: &'static str = "paid";
-    pub const CLOSED: &'static str = "closed";
-    pub const REFUNDED: &'static str = "refunded";
-    pub const PARTIAL_REFUNDED: &'static str = "partial_refunded";
-    pub const FAILED: &'static str = "failed";
+        impl $name {
+            /// DB 字面量锚点（与 `migrations/0001_init.sql` 逐字节一致）。
+            #[must_use]
+            pub const fn as_str(self) -> &'static str {
+                match self { $( Self::$variant => $literal ),+ }
+            }
 
-    /// 全量取值词表（读取路径遇到未知值保持原值透传）。
-    pub fn valid(&self) -> bool {
-        matches!(
-            self.0.as_str(),
-            Self::INITIATED
-                | Self::PAID
-                | Self::CLOSED
-                | Self::REFUNDED
-                | Self::PARTIAL_REFUNDED
-                | Self::FAILED
-        )
+            /// DB/serde 字面量 → 枚举；未知值报词表名。
+            pub fn parse(value: &str) -> Result<Self, UnknownLiteral> {
+                match value {
+                    $( $literal => Ok(Self::$variant), )+
+                    other => Err(UnknownLiteral {
+                        wordlist: stringify!($name),
+                        value: other.to_owned(),
+                    }),
+                }
+            }
+        }
+
+        impl sqlx::Type<sqlx::MySql> for $name {
+            fn type_info() -> sqlx::mysql::MySqlTypeInfo {
+                <str as sqlx::Type<sqlx::MySql>>::type_info()
+            }
+
+            fn compatible(ty: &sqlx::mysql::MySqlTypeInfo) -> bool {
+                <str as sqlx::Type<sqlx::MySql>>::compatible(ty)
+            }
+        }
+
+        impl<'de> sqlx::Decode<'de, sqlx::MySql> for $name {
+            fn decode(
+                value: sqlx::mysql::MySqlValueRef<'de>,
+            ) -> Result<Self, sqlx::error::BoxDynError> {
+                let literal = <&str as sqlx::Decode<sqlx::MySql>>::decode(value)?;
+                Ok(Self::parse(literal)?)
+            }
+        }
+
+        impl sqlx::Encode<'_, sqlx::MySql> for $name {
+            fn encode_by_ref(
+                &self,
+                buf: &mut Vec<u8>,
+            ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+                <&str as sqlx::Encode<sqlx::MySql>>::encode(self.as_str(), buf)
+            }
+        }
+    };
+}
+
+// ---------- payment_order 词表（旧版 payment.go） ----------
+
+wordlist_enum!(
+    /// 支付与退款关联的业务类型：`payment_order.biz_type` 与 `refund_record.biz_type`
+    /// 共享同一词表（一型三用，`invoice_request.biz_type` 同词表）。
+    BizType: {
+        Charge = "charge",
+        WalletRecharge = "wallet_recharge",
     }
+);
 
+wordlist_enum!(
+    /// payment_order.status 列的支付单业务状态（六值）。
+    /// 注意与订单侧 `charge_order.payment_status` 区分：后者由金额推导得出。
+    PaymentOrderStatus: {
+        Initiated = "initiated",
+        Paid = "paid",
+        Closed = "closed",
+        Refunded = "refunded",
+        PartialRefunded = "partial_refunded",
+        Failed = "failed",
+    }
+);
+
+impl PaymentOrderStatus {
     /// 到账或已退回的判定集合（订单侧支付状态推导按此判定）。
-    pub fn is_paid_like(&self) -> bool {
-        matches!(
-            self.0.as_str(),
-            Self::PAID | Self::REFUNDED | Self::PARTIAL_REFUNDED
-        )
+    #[must_use]
+    pub const fn is_paid_like(self) -> bool {
+        matches!(self, Self::Paid | Self::Refunded | Self::PartialRefunded)
     }
 
     /// 仍可发起渠道退款的支付单状态集合（比 paid_like 少 refunded）。
-    pub fn is_refundable(&self) -> bool {
-        matches!(self.0.as_str(), Self::PAID | Self::PARTIAL_REFUNDED)
+    #[must_use]
+    pub const fn is_refundable(self) -> bool {
+        matches!(self, Self::Paid | Self::PartialRefunded)
     }
 }
 
-/// refund_record.status 列的退款单状态（五值）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RefundStatus(pub String);
+wordlist_enum!(
+    /// refund_record.status 列的退款单状态（五值）。
+    RefundStatus: {
+        Pending = "pending",
+        Processing = "processing",
+        Success = "success",
+        Failed = "failed",
+        Rejected = "rejected",
+    }
+);
 
 impl RefundStatus {
-    pub const PENDING: &'static str = "pending";
-    pub const PROCESSING: &'static str = "processing";
-    pub const SUCCESS: &'static str = "success";
-    pub const FAILED: &'static str = "failed";
-    pub const REJECTED: &'static str = "rejected";
-
-    pub fn valid(&self) -> bool {
-        matches!(
-            self.0.as_str(),
-            Self::PENDING | Self::PROCESSING | Self::SUCCESS | Self::FAILED | Self::REJECTED
-        )
-    }
-
     /// 在途退款占用的取值集合：可退额度校验须扣除这些记录，
     /// 否则同一笔款项会被重复预占（旧版 UnsettledRefundStatuses）。
-    pub fn is_unsettled(&self) -> bool {
-        matches!(self.0.as_str(), Self::PENDING | Self::PROCESSING)
+    #[must_use]
+    pub const fn is_unsettled(self) -> bool {
+        matches!(self, Self::Pending | Self::Processing)
     }
 }
 
 // ---------- method 词表（旧版 method.go） ----------
 
-/// payment_order.pay_method 列的支付方式（wechat/balance/mixed/coupon）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PayMethod(pub String);
-
-impl PayMethod {
-    pub const WECHAT: &'static str = "wechat";
-    pub const BALANCE: &'static str = "balance";
-    pub const MIXED: &'static str = "mixed";
-    pub const COUPON: &'static str = "coupon";
-
-    pub fn known(&self) -> bool {
-        matches!(
-            self.0.as_str(),
-            Self::WECHAT | Self::BALANCE | Self::MIXED | Self::COUPON
-        )
+wordlist_enum!(
+    /// payment_order.pay_method 列的支付方式。
+    PayMethod: {
+        Wechat = "wechat",
+        Balance = "balance",
+        Mixed = "mixed",
+        Coupon = "coupon",
     }
-}
+);
 
 /// charge_payment_intent.status 列的支付意图状态（五值）。
-/// 与 PaymentStatus 分立：共享 initiated/paid 字面量但含义不同，不得互相赋值。
+/// 与 PaymentOrderStatus 分立：共享 initiated/paid 字面量但含义不同，不得互相赋值。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaymentIntentStatus(pub String);
 
@@ -130,32 +182,33 @@ impl PaymentIntentStatus {
     }
 }
 
-/// refund_record.execution_policy 列的退款执行策略（manual_review/automatic）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutionPolicy(pub String);
-
-impl ExecutionPolicy {
-    pub const MANUAL_REVIEW: &'static str = "manual_review";
-    pub const AUTOMATIC: &'static str = "automatic";
-
-    pub fn known(&self) -> bool {
-        matches!(self.0.as_str(), Self::MANUAL_REVIEW | Self::AUTOMATIC)
+wordlist_enum!(
+    /// refund_record.execution_policy 列的退款执行策略。
+    ExecutionPolicy: {
+        ManualReview = "manual_review",
+        Automatic = "automatic",
     }
-}
+);
 
-/// charge_bill.status 列的账单状态（issued/settled/voided）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BillStatus(pub String);
-
-impl BillStatus {
-    pub const ISSUED: &'static str = "issued";
-    pub const SETTLED: &'static str = "settled";
-    pub const VOIDED: &'static str = "voided";
-
-    pub fn known(&self) -> bool {
-        matches!(self.0.as_str(), Self::ISSUED | Self::SETTLED | Self::VOIDED)
+wordlist_enum!(
+    /// charge_bill.status 列的账单状态。
+    BillStatus: {
+        Issued = "issued",
+        Settled = "settled",
+        Voided = "voided",
     }
-}
+);
+
+wordlist_enum!(
+    /// charge_order.payment_status 列的订单支付轴（四值；与
+    /// [`PaymentOrderStatus`] 分立：仅随资金实际到账/退回推进，由金额推导）。
+    ChargePaymentStatus: {
+        Pending = "pending",
+        Paid = "paid",
+        Refunded = "refunded",
+        PartialRefunded = "partial_refunded",
+    }
+);
 
 // ---------- 人工复核共用规则（旧版 review.go） ----------
 
@@ -220,7 +273,7 @@ pub struct RefundDraft {
     /// 支付所属用户。
     pub user_id: u64,
     /// charge 或 wallet_recharge。
-    pub biz_type: PaymentBizType,
+    pub biz_type: BizType,
     /// 业务编号；迟到支付尚未建单时为 0。
     pub biz_id: u64,
     /// 本笔待退金额，单位分，必须大于 0。
@@ -269,9 +322,84 @@ mod tests {
 
     #[test]
     fn status_sets() {
-        assert!(PaymentStatus("paid".into()).is_paid_like());
-        assert!(!PaymentStatus("initiated".into()).is_refundable());
-        assert!(RefundStatus("pending".into()).is_unsettled());
-        assert!(!RefundStatus("failed".into()).is_unsettled());
+        assert!(PaymentOrderStatus::Paid.is_paid_like());
+        assert!(!PaymentOrderStatus::Initiated.is_refundable());
+        assert!(RefundStatus::Pending.is_unsettled());
+        assert!(!RefundStatus::Failed.is_unsettled());
+    }
+
+    /// 字面量对照（票 06 硬规则）：serde 输出与 DB ENUM 字面量逐字节一致，
+    /// 同时锁 serde 与 sqlx 两套 rename_all 的同源。
+    #[test]
+    fn db_literals_match_serde() {
+        use serde_json::to_string as json;
+        let payment = [
+            (PaymentOrderStatus::Initiated, "initiated"),
+            (PaymentOrderStatus::Paid, "paid"),
+            (PaymentOrderStatus::Closed, "closed"),
+            (PaymentOrderStatus::Refunded, "refunded"),
+            (PaymentOrderStatus::PartialRefunded, "partial_refunded"),
+            (PaymentOrderStatus::Failed, "failed"),
+        ];
+        for (v, s) in payment {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
+        let charge_axis = [
+            (ChargePaymentStatus::Pending, "pending"),
+            (ChargePaymentStatus::Paid, "paid"),
+            (ChargePaymentStatus::Refunded, "refunded"),
+            (ChargePaymentStatus::PartialRefunded, "partial_refunded"),
+        ];
+        for (v, s) in charge_axis {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
+        let biz = [
+            (BizType::Charge, "charge"),
+            (BizType::WalletRecharge, "wallet_recharge"),
+        ];
+        for (v, s) in biz {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
+        let refund = [
+            (RefundStatus::Pending, "pending"),
+            (RefundStatus::Processing, "processing"),
+            (RefundStatus::Success, "success"),
+            (RefundStatus::Failed, "failed"),
+            (RefundStatus::Rejected, "rejected"),
+        ];
+        for (v, s) in refund {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
+        let policy = [
+            (ExecutionPolicy::ManualReview, "manual_review"),
+            (ExecutionPolicy::Automatic, "automatic"),
+        ];
+        for (v, s) in policy {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
+        let bill = [
+            (BillStatus::Issued, "issued"),
+            (BillStatus::Settled, "settled"),
+            (BillStatus::Voided, "voided"),
+        ];
+        for (v, s) in bill {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
+        let method = [
+            (PayMethod::Wechat, "wechat"),
+            (PayMethod::Balance, "balance"),
+            (PayMethod::Mixed, "mixed"),
+            (PayMethod::Coupon, "coupon"),
+        ];
+        for (v, s) in method {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
     }
 }

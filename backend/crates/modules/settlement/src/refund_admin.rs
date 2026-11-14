@@ -4,7 +4,7 @@
 //! 已结束充电必须先有费用回执，不能抢在计费之前退款。
 
 use chargepilot_domain::money::{
-    ExecutionPolicy, PayMethod, PaymentBizType, PaymentStatus, RefundStatus,
+    BizType, ExecutionPolicy, PayMethod, PaymentOrderStatus, RefundStatus,
 };
 use serde::Serialize;
 use sqlx::{Acquire, MySqlPool};
@@ -194,7 +194,7 @@ pub async fn request_manual_refund(
     let Some((payment_order_id, order_user_id, order_status, has_started)) = order else {
         return Err(RefundAdminError::NotFound);
     };
-    let payment: Option<(u64, i64, i64, String, String)> = sqlx::query_as(
+    let payment: Option<(u64, i64, i64, PaymentOrderStatus, PayMethod)> = sqlx::query_as(
         "SELECT `id`, `paid_cents`, `refunded_cents`, `status`, `pay_method` \
          FROM `payment_order` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
     )
@@ -228,13 +228,13 @@ pub async fn request_manual_refund(
     // refunded 被随后单独排除；refunding 不在集合——已受理退款不得重复发起）。
     let refundable_order = matches!(order_status.as_str(), "completed" | "cancelled" | "failed");
     let refundable_pay = matches!(
-        pay_status.as_str(),
-        PaymentStatus::PAID | PaymentStatus::PARTIAL_REFUNDED
+        pay_status,
+        PaymentOrderStatus::Paid | PaymentOrderStatus::PartialRefunded
     );
     if !refundable_order
         || order_status == "refunded"
         || !refundable_pay
-        || pay_method != PayMethod::WECHAT
+        || pay_method != PayMethod::Wechat
         || amount_cents > paid_cents - refunded_cents
     {
         return Err(RefundAdminError::Conflict);
@@ -261,8 +261,8 @@ pub async fn request_manual_refund(
          WHERE `payment_order_id` = ? AND `status` IN (?, ?) AND `deleted_at` IS NULL FOR UPDATE",
     )
     .bind(pay_id as i64)
-    .bind(RefundStatus::PENDING)
-    .bind(RefundStatus::PROCESSING)
+    .bind(RefundStatus::Pending)
+    .bind(RefundStatus::Processing)
     .fetch_one(&mut *c)
     .await?;
     if pending > paid_cents - refunded_cents - amount_cents {
@@ -276,12 +276,12 @@ pub async fn request_manual_refund(
     .bind(&refund_no)
     .bind(pay_id as i64)
     .bind(order_user_id as i64)
-    .bind(PaymentBizType::CHARGE)
+    .bind(BizType::Charge)
     .bind(order_id as i64)
     .bind(amount_cents)
     .bind(reason)
-    .bind(RefundStatus::PENDING)
-    .bind(ExecutionPolicy::MANUAL_REVIEW)
+    .bind(RefundStatus::Pending)
+    .bind(ExecutionPolicy::ManualReview)
     .bind(chargepilot_mod_order::month_start_of(chrono::Utc::now()))
     .execute(&mut *c)
     .await?;
@@ -356,7 +356,7 @@ pub async fn review_manual_refund(
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
 
-    let record: Option<(u64, u64, u64, i64, String, u64)> = sqlx::query_as(
+    let record: Option<(u64, u64, u64, i64, BizType, u64)> = sqlx::query_as(
         "SELECT `id`, `payment_order_id`, `user_id`, `refund_cents`, `biz_type`, `biz_id` \
          FROM `refund_record` WHERE CAST(`refund_no` AS CHAR) = ? AND `deleted_at` IS NULL",
     )
@@ -368,7 +368,7 @@ pub async fn review_manual_refund(
         return Err(RefundAdminError::NotFound);
     };
     // 支付 → 退款锁序。
-    let payment: Option<(u64, i64, i64, String, String)> = sqlx::query_as(
+    let payment: Option<(u64, i64, i64, PaymentOrderStatus, PayMethod)> = sqlx::query_as(
         "SELECT `id`, `paid_cents`, `refunded_cents`, `status`, `pay_method` \
          FROM `payment_order` WHERE `id` = ? FOR UPDATE",
     )
@@ -379,7 +379,7 @@ pub async fn review_manual_refund(
         return Err(RefundAdminError::NotFound);
     };
     let _ = pay_id;
-    let state: Option<(String, String)> = sqlx::query_as(
+    let state: Option<(RefundStatus, ExecutionPolicy)> = sqlx::query_as(
         "SELECT `status`, `execution_policy` FROM `refund_record` WHERE `id` = ? FOR UPDATE",
     )
     .bind(record_id as i64)
@@ -388,7 +388,7 @@ pub async fn review_manual_refund(
     let Some((status, policy)) = state else {
         return Err(RefundAdminError::NotFound);
     };
-    if status != RefundStatus::PENDING || policy != ExecutionPolicy::MANUAL_REVIEW {
+    if status != RefundStatus::Pending || policy != ExecutionPolicy::ManualReview {
         return Err(RefundAdminError::Conflict);
     }
     // 驳回：单人即可，写拒绝记录。
@@ -403,7 +403,7 @@ pub async fn review_manual_refund(
         .execute(&mut *c)
         .await?;
         sqlx::query("UPDATE `refund_record` SET `status` = ?, `failure_reason` = ? WHERE `id` = ?")
-            .bind(RefundStatus::REJECTED)
+            .bind(RefundStatus::Rejected)
             .bind(reason)
             .bind(record_id as i64)
             .execute(&mut *c)
@@ -421,14 +421,14 @@ pub async fn review_manual_refund(
         return Ok(ReviewOutcome::Rejected);
     }
     // 通过：金额与归属核对（审核期间可变状态不参与快照一致性）。
-    if pay_method != PayMethod::WECHAT
+    if pay_method != PayMethod::Wechat
         || refund_cents <= 0
         || refund_cents > paid_cents - refunded_cents
     {
         return Err(RefundAdminError::Conflict);
     }
     // 升级前已申请的人工退款同样不能在费用确认前批准。
-    if biz_type == PaymentBizType::CHARGE {
+    if biz_type == BizType::Charge {
         let (order_started, order_status): (i64, String) = sqlx::query_as(
             "SELECT `started_at` IS NOT NULL, `status` FROM `charge_order` WHERE `id` = ?",
         )
@@ -524,7 +524,7 @@ pub async fn review_manual_refund(
                 "UPDATE `refund_record` SET `execution_policy` = ?, \
                  `next_attempt_at` = UTC_TIMESTAMP(3) WHERE `id` = ?",
             )
-            .bind(ExecutionPolicy::AUTOMATIC)
+            .bind(ExecutionPolicy::Automatic)
             .bind(record_id as i64)
             .execute(&mut *c)
             .await?;
@@ -588,7 +588,7 @@ pub async fn retry_refund(
         .await?;
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
-    let record: Option<(u64, String, String)> = sqlx::query_as(
+    let record: Option<(u64, ExecutionPolicy, RefundStatus)> = sqlx::query_as(
         "SELECT `id`, `execution_policy`, `status` FROM `refund_record` \
          WHERE CAST(`refund_no` AS CHAR) = ? AND `deleted_at` IS NULL FOR UPDATE",
     )
@@ -598,11 +598,8 @@ pub async fn retry_refund(
     let Some((record_id, policy, status)) = record else {
         return Err(RefundAdminError::NotFound);
     };
-    let unsettled = matches!(
-        status.as_str(),
-        RefundStatus::PENDING | RefundStatus::PROCESSING
-    );
-    if policy != ExecutionPolicy::AUTOMATIC || !unsettled {
+    let unsettled = matches!(status, RefundStatus::Pending | RefundStatus::Processing);
+    if policy != ExecutionPolicy::Automatic || !unsettled {
         return Err(RefundAdminError::Conflict);
     }
     sqlx::query("UPDATE `refund_record` SET `next_attempt_at` = UTC_TIMESTAMP(3) WHERE `id` = ?")

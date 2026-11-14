@@ -3,6 +3,7 @@
 //! 预支付只在事务提交后请求，渠道失败保留申请，相同 request_id 可恢复支付参数。
 
 use super::{WalletError, account};
+use chargepilot_domain::money::PaymentOrderStatus;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{Acquire, MySqlConnection, MySqlPool};
@@ -44,8 +45,8 @@ pub struct RechargePayment {
     /// 商户单号，预支付重试不改变。
     pub order_no: String,
     pub amount_cents: i64,
-    /// 支付单状态字面量（initiated/paid/...，domain::money::PaymentStatus 词表）。
-    pub status: String,
+    /// 支付单业务状态（payment_order.status 词表）。
+    pub status: PaymentOrderStatus,
     /// UTC 支付截止，None 表示没有有效期限。
     pub expires_at: Option<DateTime<Utc>>,
 }
@@ -65,7 +66,7 @@ pub struct RechargeResult {
     pub payment_order_id: u64,
     pub merchant_order_no: String,
     pub amount_cents: i64,
-    pub status: String,
+    pub status: PaymentOrderStatus,
     pub can_pay: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payment_params: Option<serde_json::Value>,
@@ -152,14 +153,14 @@ impl RechargeService {
             }
         };
         tx.commit().await?;
-        let can_pay =
-            pay.status == "initiated" && pay.expires_at.is_some_and(|t| t > chrono::Utc::now());
+        let can_pay = pay.status == PaymentOrderStatus::Initiated
+            && pay.expires_at.is_some_and(|t| t > chrono::Utc::now());
         let mut out = RechargeResult {
             request_id: input.request_id.clone(),
             payment_order_id: pay.id,
             merchant_order_no: pay.order_no.clone(),
             amount_cents: pay.amount_cents,
-            status: pay.status.clone(),
+            status: pay.status,
             can_pay,
             payment_params: None,
         };

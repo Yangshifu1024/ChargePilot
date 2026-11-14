@@ -453,12 +453,13 @@ async fn admin_users_and_online_cards_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "号码片段模糊命中: {body}");
+    let want_a = seed.user_a.to_string();
     assert!(
         body["data"]["items"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|u| u["id"] == seed.user_a),
+            .any(|u| u["id"].as_str() == Some(want_a.as_str())),
         "号码片段应命中 A"
     );
     let (status, body) = req(
@@ -482,12 +483,17 @@ async fn admin_users_and_online_cards_flow() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let frozen_items = body["data"]["items"].as_array().unwrap();
+    let (want_a, want_b) = (seed.user_a.to_string(), seed.user_b.to_string());
     assert!(
-        frozen_items.iter().any(|u| u["id"] == seed.user_b),
+        frozen_items
+            .iter()
+            .any(|u| u["id"].as_str() == Some(want_b.as_str())),
         "frozen 筛选应含 B"
     );
     assert!(
-        !frozen_items.iter().any(|u| u["id"] == seed.user_a),
+        !frozen_items
+            .iter()
+            .any(|u| u["id"].as_str() == Some(want_a.as_str())),
         "frozen 筛选不应含 A"
     );
 

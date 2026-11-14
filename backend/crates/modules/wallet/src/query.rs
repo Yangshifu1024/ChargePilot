@@ -2,6 +2,7 @@
 //! 只查询调用方用户的数据；未开户返回可用的零余额视图，不以流水重算余额。
 
 use super::{Page, WalletError, account};
+use chargepilot_domain::money::PaymentOrderStatus;
 use serde::Serialize;
 use sqlx::MySqlPool;
 
@@ -101,7 +102,7 @@ pub async fn transactions(
 pub struct RechargeRow {
     pub request_id: String,
     pub amount_cents: i64,
-    pub status: String,
+    pub status: PaymentOrderStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
     pub created_at: Option<String>,
@@ -140,7 +141,7 @@ pub async fn recharges(
             .await?;
     let mut items = items;
     for r in items.iter_mut() {
-        r.can_pay = r.status == "initiated"
+        r.can_pay = r.status == PaymentOrderStatus::Initiated
             && r.expires_at
                 .as_ref()
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())

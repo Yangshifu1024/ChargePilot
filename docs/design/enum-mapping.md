@@ -7,8 +7,9 @@
 
 ## 一、总则（S3a–S3h 统一范式）
 
-1. **目标范式**：每列一个 Rust 枚举，`#[derive(sqlx::Type, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]`，`#[sqlx(rename_all = "snake_case")]` 与 `#[serde(rename_all = "snake_case")]` **成对书写**（两套独立配置），每枚举配「字面量对照测试」锁 serde/sqlx 输出与 DB ENUM 字面量逐字节一致。
-2. **未知值策略（三分支）**：数据库→Rust 方向**严格失败**（sqlx 派生的 decode 原生行为，未知值即 schema 漂移报警）；设备/外部上报方向**透传保留**（仅适用于第四节 JSON 词表，63 列中无此前提）；API 入参方向解析失败返回参数错误（现状即 400/1005）。生成列（`charge_order.business_status`、`charge_payment_intent.active_port_code`）**不建 Rust 类型**，由数据库派生。
+1. **目标范式**：每列一个 Rust 枚举，`#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]` + `#[serde(rename_all = "snake_case")]`，**sqlx 三件套（`Type`/`Encode`/`Decode`）由 `wordlist_enum!` 宏统一手写生成**（money 域见 `domain/src/money.rs`）。每枚举配「字面量对照测试」锁 serde 输出与 DB ENUM 字面量逐字节一致。
+   **派生更正（票 06 真库打样结论，2026-11-14）**：`#[derive(sqlx::Type)]` 强枚举在 MySQL 下**只可用 Encode，不可用 Decode**——派生只生成 `type_info() = MySqlTypeInfo::__enum()`（type=String + ENUM 标志，为参数绑定设计），不覆写 `compatible`，解码走默认严格类型相等，而 MySQL 结果集把 ENUM 列报告为 `ColumnType::Enum`，两者永不相等，连 `CAST AS CHAR` 也被拒。此前评审依据（sqlx-macros-core 源码）只覆盖了绑定方向，未验证解码方向。手写宏的兼容判定委托 `<str>::compatible`（接受 Enum 列且非 BINARY），解码按字面量 parse，未知值即 schema 漂移报警——严格失败语义与原设计一致。真库打样证据：`domain/tests/money_db_proof.rs`（DEFAULT 行解码、枚举绑定、`Option` 包裹 NULL/Some、真实表 COUNT 四项）。
+2. **未知值策略（三分支）**：数据库→Rust 方向**严格失败**（手写 decode 的 parse 原生行为，未知值即 schema 漂移报警）；设备/外部上报方向**透传保留**（仅适用于第四节 JSON 词表，63 列中无此前提）；API 入参方向解析失败返回参数错误（现状即 400/1005）。生成列（`charge_order.business_status`、`charge_payment_intent.active_port_code`）**不建 Rust 类型**，由数据库派生。
 3. **共享词表规则**：同一词表服务多列时一型多用（如 `BizType` 三列）；不同表的同义/同值词表各自建型（如两套 `active/disabled` 与 `active/frozen` 不合并；`user.status` 与 `wallet_account.status` 同值不同义）。
 4. **词表归属**：一律落 `domain/<域>/` 子树，写点 crate 按依赖规则引用 domain。由此对方案 3.2 目录树补五个子树：`order/`、`settlement/`、`wallet/`、`pricing/`、`export/`。
 5. **入参白名单与 DB 词表分两层**：API 过滤参数的取值集合（含派生表达式的 `none/processing` 等非枚举值）用判定集合建模，不与 DB 枚举共用类型。

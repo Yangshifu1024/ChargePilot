@@ -3,20 +3,20 @@
 //! 支付单 refunded_cents 推进（CHECK 约束保护）→ 订单 refunding→refunded。
 //! 真实渠道执行随批 6 微信封装接入；claimed 领取防并发重复执行。
 
-use chargepilot_domain::money::{PaymentBizType, PaymentStatus, RefundStatus};
+use chargepilot_domain::money::{BizType, PaymentOrderStatus, RefundStatus};
 use sqlx::{Acquire, MySqlPool};
 
 /// 执行一轮到期自动退款，返回成功笔数。
 pub async fn run_once(pool: &MySqlPool, limit: u32) -> anyhow::Result<usize> {
     // 领取：automatic、pending、到期（旧版 idx_refund_dispatch 路径）。
-    let rows: Vec<(u64, i64, u64, u64, u64, String)> = sqlx::query_as(
+    let rows: Vec<(u64, i64, u64, u64, u64, BizType)> = sqlx::query_as(
         "SELECT r.`id`, r.`refund_cents`, r.`payment_order_id`, r.`user_id`, r.`biz_id`, r.`biz_type` \
          FROM `refund_record` r \
          WHERE r.`execution_policy` = 'automatic' AND r.`status` = ? \
            AND r.`next_attempt_at` <= UTC_TIMESTAMP(3) AND r.`deleted_at` IS NULL \
          ORDER BY r.`id` LIMIT ?",
     )
-    .bind(RefundStatus::PENDING)
+    .bind(RefundStatus::Pending)
     .bind(limit as i64)
     .fetch_all(pool)
     .await?;
@@ -29,7 +29,7 @@ pub async fn run_once(pool: &MySqlPool, limit: u32) -> anyhow::Result<usize> {
             payment_order_id,
             user_id,
             biz_id,
-            &biz_type,
+            biz_type,
         )
         .await
         {
@@ -53,7 +53,7 @@ async fn execute_one(
     payment_order_id: u64,
     user_id: u64,
     biz_id: u64,
-    biz_type: &str,
+    biz_type: BizType,
 ) -> anyhow::Result<bool> {
     let mut conn = pool.acquire().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
@@ -67,9 +67,9 @@ async fn execute_one(
         "UPDATE `refund_record` SET `status` = ?, `claimed_by` = 1, `claimed_at` = UTC_TIMESTAMP(3) \
          WHERE `id` = ? AND `status` = ? AND `execution_policy` = 'automatic'",
     )
-    .bind(RefundStatus::PROCESSING)
+    .bind(RefundStatus::Processing)
     .bind(refund_id as i64)
-    .bind(RefundStatus::PENDING)
+    .bind(RefundStatus::Pending)
     .execute(&mut *c)
     .await?
     .rows_affected();
@@ -78,7 +78,7 @@ async fn execute_one(
         return Ok(false);
     }
     // 锁支付单（资金推进必须持支付锁；锁序：退款 → 支付，与预占的 钱包→支付 不同路径）。
-    let payment: Option<(i64, i64, String)> = sqlx::query_as(
+    let payment: Option<(i64, i64, PaymentOrderStatus)> = sqlx::query_as(
         "SELECT `paid_cents`, `refunded_cents`, `status` FROM `payment_order` \
          WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
     )
@@ -91,8 +91,8 @@ async fn execute_one(
         return Ok(true);
     };
     if !matches!(
-        pay_status.as_str(),
-        PaymentStatus::PAID | PaymentStatus::PARTIAL_REFUNDED
+        pay_status,
+        PaymentOrderStatus::Paid | PaymentOrderStatus::PartialRefunded
     ) {
         tx.rollback().await?;
         fail_refund(pool, refund_id, "支付单状态不允许退款").await?;
@@ -106,9 +106,9 @@ async fn execute_one(
     // 渠道执行：simulation 直接成功（真实渠道随批 6；未知结果走 retry_later）。
     let new_refunded = refunded_cents + refund_cents;
     let new_status = if new_refunded >= paid_cents {
-        PaymentStatus::REFUNDED
+        PaymentOrderStatus::Refunded
     } else {
-        PaymentStatus::PARTIAL_REFUNDED
+        PaymentOrderStatus::PartialRefunded
     };
     let advanced = sqlx::query(
         "UPDATE `payment_order` SET `refunded_cents` = ?, `status` = ? \
@@ -132,13 +132,13 @@ async fn execute_one(
         "UPDATE `refund_record` SET `status` = ?, `completed_at` = UTC_TIMESTAMP(3), \
          `wechat_refund_id` = CONCAT('SIMRF', ?) WHERE `id` = ?",
     )
-    .bind(RefundStatus::SUCCESS)
+    .bind(RefundStatus::Success)
     .bind(refund_id as i64)
     .bind(refund_id as i64)
     .execute(&mut *c)
     .await?;
     // 充值退款（wallet_recharge）：simulation 无原路，金额直接回钱包余额。
-    if biz_type == PaymentBizType::WALLET_RECHARGE {
+    if biz_type == BizType::WalletRecharge {
         let mut wallet = chargepilot_mod_wallet::ledger::lock_tx(&mut *c, user_id).await?;
         chargepilot_mod_wallet::ledger::move_tx(
             &mut *c,
@@ -151,7 +151,7 @@ async fn execute_one(
         .await?;
     }
     // 充电订单：refunding → refunded（余款退清；旧版 SetStatusRefunded 语义）。
-    if biz_type == PaymentBizType::CHARGE {
+    if biz_type == BizType::Charge {
         sqlx::query(
             "UPDATE `charge_order` SET `status` = 'refunded' \
              WHERE `id` = ? AND `status` = 'refunding' AND `payment_order_id` = ?",
@@ -198,10 +198,10 @@ async fn fail_refund(pool: &MySqlPool, refund_id: u64, reason: &str) -> anyhow::
         "UPDATE `refund_record` SET `status` = ?, `failure_reason` = ?, `completed_at` = UTC_TIMESTAMP(3) \
          WHERE `id` = ? AND `status` = ?",
     )
-    .bind(RefundStatus::FAILED)
+    .bind(RefundStatus::Failed)
     .bind(reason)
     .bind(refund_id as i64)
-    .bind(RefundStatus::PROCESSING)
+    .bind(RefundStatus::Processing)
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -214,9 +214,9 @@ async fn retry_later(pool: &MySqlPool, refund_id: u64) -> anyhow::Result<()> {
          `next_attempt_at` = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 2 MINUTE), `retry_count` = `retry_count` + 1 \
          WHERE `id` = ? AND `status` = ?",
     )
-    .bind(RefundStatus::PENDING)
+    .bind(RefundStatus::Pending)
     .bind(refund_id as i64)
-    .bind(RefundStatus::PROCESSING)
+    .bind(RefundStatus::Processing)
     .execute(pool)
     .await?;
     Ok(())

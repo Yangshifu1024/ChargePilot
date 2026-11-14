@@ -78,7 +78,7 @@ async fn find_development_payment(
         )
         .bind(order_no)
         .bind(user_id as i64)
-        .bind(chargepilot_domain::money::PayMethod::WECHAT)
+        .bind(chargepilot_domain::money::PayMethod::Wechat)
         .fetch_optional(pool)
         .await?;
     let Some((id, biz_type, total_cents, openid, created_at, status)) = row else {

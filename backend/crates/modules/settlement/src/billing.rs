@@ -6,7 +6,7 @@
 use chargepilot_domain::charging_actual::{ActualMeter, EndMeter};
 use chargepilot_domain::charging_settle::settle_session;
 use chargepilot_domain::charging_spec::BillingError;
-use chargepilot_domain::money::{ExecutionPolicy, PaymentBizType, PaymentStatus, RefundStatus};
+use chargepilot_domain::money::{BizType, ExecutionPolicy, PaymentOrderStatus, RefundStatus};
 use sqlx::{Acquire, MySqlPool};
 
 /// 计费任务状态词表（charge_billing_job.status）。
@@ -172,12 +172,12 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     let c = tx.acquire().await?;
 
     // 支付单锁定并核对（旧版 Apply 的核心核对集合）。
-    let payment: Option<(String, i64, i64, u64)> = sqlx::query_as(
+    let payment: Option<(PaymentOrderStatus, i64, i64, u64)> = sqlx::query_as(
         "SELECT `status`, `paid_cents`, `refunded_cents`, `id` FROM `payment_order` \
          WHERE `id` = ? AND `biz_type` = ? AND `deleted_at` IS NULL FOR UPDATE",
     )
     .bind(payment_order_id as i64)
-    .bind(PaymentBizType::CHARGE)
+    .bind(BizType::Charge)
     .fetch_optional(&mut *c)
     .await?;
     let Some((pay_status, paid_cents, refunded_cents, pay_id)) = payment else {
@@ -186,8 +186,8 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         return Ok(false);
     };
     if !matches!(
-        pay_status.as_str(),
-        PaymentStatus::PAID | PaymentStatus::PARTIAL_REFUNDED
+        pay_status,
+        PaymentOrderStatus::Paid | PaymentOrderStatus::PartialRefunded
     ) || paid_cents <= 0
         || refunded_cents < 0
         || refunded_cents > paid_cents
@@ -268,8 +268,8 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
          WHERE `payment_order_id` = ? AND `status` IN (?, ?) AND `deleted_at` IS NULL FOR UPDATE",
     )
     .bind(pay_id as i64)
-    .bind(RefundStatus::PENDING)
-    .bind(RefundStatus::PROCESSING)
+    .bind(RefundStatus::Pending)
+    .bind(RefundStatus::Processing)
     .fetch_one(&mut *c)
     .await?;
     let surplus = paid_cents - total - refunded_cents - reserved;
@@ -284,12 +284,12 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         .bind(&refund_no)
         .bind(pay_id as i64)
         .bind(user_id as i64)
-        .bind(PaymentBizType::CHARGE)
+        .bind(BizType::Charge)
         .bind(charge_order_id as i64)
         .bind(surplus)
         .bind("实际计费后的预付差额")
-        .bind(RefundStatus::PENDING)
-        .bind(ExecutionPolicy::AUTOMATIC)
+        .bind(RefundStatus::Pending)
+        .bind(ExecutionPolicy::Automatic)
         .bind(chargepilot_mod_order::month_start_of(chrono::Utc::now()))
         .execute(&mut *c)
         .await?;

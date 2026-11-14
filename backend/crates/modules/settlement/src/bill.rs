@@ -154,7 +154,7 @@ pub async fn issue_bill_in_tx(
             .bind(shortfall)
             .bind(charge_order_id as i64)
             .bind(charge_order_id as i64)
-            .bind(BillStatus::ISSUED)
+            .bind(BillStatus::Issued)
             .bind(&issued_at)
             .bind(month)
             .execute(&mut *c)

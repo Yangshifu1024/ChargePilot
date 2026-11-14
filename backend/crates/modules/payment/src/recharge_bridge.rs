@@ -3,7 +3,7 @@
 //! wallet::RechargePayments 的唯一生产实现（cmd 装配注入）。
 
 use super::channel::{PayProvider, PrepayRequest};
-use chargepilot_domain::money::{PayMethod, PaymentBizType, PaymentStatus};
+use chargepilot_domain::money::{BizType, PayMethod, PaymentOrderStatus};
 use chargepilot_mod_wallet::recharge::RechargePayment;
 use chargepilot_mod_wallet::recharge::futures_bounds::BoxFuture;
 use chargepilot_platform::ids::SegmentAllocator;
@@ -22,7 +22,7 @@ impl RechargePaymentBridge {
         id: u64,
         order_no: String,
         total_cents: i64,
-        status: String,
+        status: PaymentOrderStatus,
         expired_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> RechargePayment {
         RechargePayment {
@@ -47,7 +47,7 @@ impl chargepilot_mod_wallet::recharge::RechargePayments for RechargePaymentBridg
                 u64,
                 String,
                 i64,
-                String,
+                PaymentOrderStatus,
                 Option<chrono::DateTime<chrono::Utc>>,
             );
             let row: Option<RechargeOrderRow> = sqlx::query_as(
@@ -85,11 +85,11 @@ impl chargepilot_mod_wallet::recharge::RechargePayments for RechargePaymentBridg
                  VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&order_no)
-            .bind(PaymentBizType::WALLET_RECHARGE)
+            .bind(BizType::WalletRecharge)
             .bind(user_id as i64)
-            .bind(PayMethod::WECHAT)
+            .bind(PayMethod::Wechat)
             .bind(amount_cents)
-            .bind(PaymentStatus::INITIATED)
+            .bind(PaymentOrderStatus::Initiated)
             .bind(expires_at)
             .bind(month)
             .execute(&mut *tx)
@@ -99,7 +99,7 @@ impl chargepilot_mod_wallet::recharge::RechargePayments for RechargePaymentBridg
                 payment_id,
                 order_no,
                 amount_cents,
-                PaymentStatus::INITIATED.to_string(),
+                PaymentOrderStatus::Initiated,
                 Some(expires_at),
             ))
         })

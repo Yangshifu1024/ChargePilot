@@ -6,7 +6,7 @@
 //! 按 ID 锁定并复核状态。不能直接按支付状态扫描加锁，否则可能锁到待支付记录，
 //! 与到账事务形成死锁。
 
-use chargepilot_domain::money::{PayMethod, PaymentBizType, PaymentStatus};
+use chargepilot_domain::money::{BizType, PayMethod, PaymentOrderStatus};
 use chargepilot_mod_wallet::WalletError;
 use chargepilot_mod_wallet::refund::RechargeSource;
 use sqlx::MySqlConnection;
@@ -16,8 +16,11 @@ use sqlx::MySqlConnection;
 pub struct RechargeSources;
 
 /// 仍可发起渠道退款的支付单状态集合（旧版 refundablePaymentStatuses）。
-fn refundable_statuses() -> [&'static str; 2] {
-    [PaymentStatus::PAID, PaymentStatus::PARTIAL_REFUNDED]
+fn refundable_statuses() -> [PaymentOrderStatus; 2] {
+    [
+        PaymentOrderStatus::Paid,
+        PaymentOrderStatus::PartialRefunded,
+    ]
 }
 
 impl chargepilot_mod_wallet::refund::RechargeSourceReader for RechargeSources {
@@ -48,8 +51,8 @@ impl RechargeSources {
                AND `status` IN (?, ?) AND `deleted_at` IS NULL ORDER BY `id`",
         )
         .bind(user_id as i64)
-        .bind(PaymentBizType::WALLET_RECHARGE)
-        .bind(PayMethod::WECHAT)
+        .bind(BizType::WalletRecharge)
+        .bind(PayMethod::Wechat)
         .bind(refundable_statuses()[0])
         .bind(refundable_statuses()[1])
         .fetch_all(&mut *tx)
@@ -74,8 +77,8 @@ impl RechargeSources {
         }
         q = q
             .bind(user_id as i64)
-            .bind(PaymentBizType::WALLET_RECHARGE)
-            .bind(PayMethod::WECHAT)
+            .bind(BizType::WalletRecharge)
+            .bind(PayMethod::Wechat)
             .bind(refundable_statuses()[0])
             .bind(refundable_statuses()[1]);
         let rows = q.fetch_all(&mut *tx).await?;

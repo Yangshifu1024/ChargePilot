@@ -6,7 +6,7 @@ use super::channel::PrepayRequest;
 use super::scan::{ScanError, ScanResult};
 use chargepilot_domain::charging_actual::Rule;
 use chargepilot_domain::charging_settle::{Estimate, Offer};
-use chargepilot_domain::money::{PayMethod, PaymentBizType, PaymentStatus};
+use chargepilot_domain::money::{BizType, PayMethod, PaymentOrderStatus};
 use chargepilot_domain::payment_intent::{IntentError, IntentStatus, intent_estimate};
 use chargepilot_platform::ids::SegmentAllocator;
 use sqlx::{Acquire, MySqlPool};
@@ -455,11 +455,11 @@ impl CheckoutService {
              VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&merchant_order_no)
-        .bind(PaymentBizType::CHARGE)
+        .bind(BizType::Charge)
         .bind(user_id as i64)
-        .bind(PayMethod::WECHAT)
+        .bind(PayMethod::Wechat)
         .bind(payable)
-        .bind(PaymentStatus::INITIATED)
+        .bind(PaymentOrderStatus::Initiated)
         .bind(expires_at)
         .bind(month)
         .execute(&mut *conn)
