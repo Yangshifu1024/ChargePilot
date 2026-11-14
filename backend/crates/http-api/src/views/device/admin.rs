@@ -107,12 +107,15 @@ fn device_error(e: DeviceError, rid: &str) -> Response {
             crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid)
         }
         DeviceError::Conflict(msg) => crate::respond(409, Code::Conflict as i64, msg, rid),
-        DeviceError::Storage(_) => crate::respond(
-            503,
-            Code::ServiceUnavailable as i64,
-            "数据暂时无法读取或保存，请稍后重试",
-            rid,
-        ),
+        DeviceError::Storage(_) => {
+            tracing::warn!(cause = %e, "设备域存储操作失败");
+            crate::respond(
+                503,
+                Code::ServiceUnavailable as i64,
+                "数据暂时无法读取或保存，请稍后重试",
+                rid,
+            )
+        }
     }
 }
 #[derive(Deserialize)]

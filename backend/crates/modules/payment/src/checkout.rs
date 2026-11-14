@@ -249,7 +249,10 @@ impl CheckoutService {
             Some(&port.device_id),
         )
         .await
-        .map_err(|_| CheckoutError::Pricing)
+        .map_err(|e| {
+            tracing::warn!(error = %e, "生效规则读取失败");
+            CheckoutError::Pricing
+        })
     }
 
     /// 同（user, request）的意图恢复：参数一致返回冻结事实，不一致报冲突

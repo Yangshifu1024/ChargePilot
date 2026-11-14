@@ -76,7 +76,7 @@ impl PortScanner for TablePortScanner {
                 return Err(ScanError::NotFound);
             }
             let row: Option<(String, u8, String, u64, Option<String>)> = sqlx::query_as(
-                "SELECT p.`device_id`, p.`port_no`, d.`status`, d.`station_id`, p.`status` \
+                "SELECT p.`device_id`, p.`port_no`, d.`status`, COALESCE(d.`station_id`, CAST(0 AS UNSIGNED)) AS `station_id`, p.`status` \
                  FROM `device_port` p JOIN `device` d ON d.`device_id` = p.`device_id` \
                  WHERE p.`port_code` = ? AND p.`deleted_at` IS NULL AND d.`deleted_at` IS NULL LIMIT 1",
             )

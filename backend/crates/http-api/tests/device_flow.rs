@@ -123,6 +123,51 @@ async fn import_devices_and_fault_flow() {
         "空串过滤的列表应含已开通设备"
     );
 
+    // 运行态合并契约（回归防护）：列表行带站点/厂商名、心跳/信号/端口与
+    // runtime_available（device 行存在即可读），对齐旧版 Management.Enrich。
+    let row = body["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["device_id"].as_str() == Some(d1.as_str()))
+        .unwrap();
+    assert_eq!(row["runtime_available"], true, "已登记设备应可读摘要");
+    assert!(
+        row["last_heartbeat_at"].is_null(),
+        "未发心跳时心跳时刻为 null"
+    );
+    assert_eq!(
+        row["ports"].as_array().map(|a| a.len()),
+        Some(2),
+        "端口运行态应带 port_count=2 的上报行"
+    );
+    let detail_id: u64 = sqlx::query_scalar("SELECT `id` FROM `device_meta` WHERE `device_id` = ?")
+        .bind(&d1)
+        .fetch_one(db.as_ref())
+        .await
+        .unwrap();
+    let (status, body) = req(
+        &router,
+        "GET",
+        &format!("/api/v1/admin/devices/{detail_id}"),
+        None,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "详情应可读: {body}");
+    assert!(
+        body["data"]["station_name"].is_string(),
+        "详情应带站点名: {body}"
+    );
+    assert!(
+        body["data"]["warranty_until"].is_null(),
+        "未设保修时为 null"
+    );
+    assert!(
+        body["data"]["tags"].is_array() && body["data"]["updated_at"].is_string(),
+        "详情 tags 为数组且带 updated_at 乐观锁值"
+    );
+
     // 设备启停：disabled 后仅 enabled/disabled 可写
     let meta_id: u64 = sqlx::query_scalar("SELECT `id` FROM `device_meta` WHERE `device_id` = ?")
         .bind(&d1)

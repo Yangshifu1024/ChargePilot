@@ -1,6 +1,8 @@
 //! 设备台账管理（device_meta）：列表/详情/资料更新（乐观锁）/运营启停。
 //! 语义对齐旧版：资料更新全字段必填 + expected_updated_at 乐观锁；
 //! 状态可写子集只有 enabled|disabled（fault/retired 不可经此接口设置）。
+//! 运行态合并（站点/厂商名、心跳/信号/端口、runtime_available）对齐旧版
+//! Management.Enrich：设备行存在即可读（单体同库直查等价旧版摘要成功）。
 
 use super::{DeviceError, StationResult};
 use chargepilot_mod_ops::Profile;
@@ -14,15 +16,35 @@ pub struct DeviceRow {
     pub id: u64,
     pub device_id: String,
     pub station_id: Option<u64>,
+    pub station_name: Option<String>,
     pub vendor_id: Option<u64>,
+    pub vendor_name: Option<String>,
     pub model: Option<String>,
     pub protocol_adapter: String,
     pub charge_mode: String,
     pub serial_no: Option<String>,
     pub status: String,
-    pub tags_json: Option<serde_json::Value>,
-    #[serde(skip_serializing)]
+    pub warranty_until: Option<String>,
+    /// 对外标签数组（tags_json 列直出，NULL 读为空数组；响应名 tags 对齐旧版）。
+    #[serde(rename = "tags")]
+    pub tags_json: serde_json::Value,
+    /// 资料编辑的并发校验值（expected_updated_at 的来源），UTC 毫秒精度。
     pub updated_at: String,
+    pub last_heartbeat_at: Option<String>,
+    /// 最近心跳上报的信号强度原始值（tinyint unsigned；0 仍是有效读数）。
+    pub signal_strength: Option<u8>,
+    pub signal_at: Option<String>,
+    #[sqlx(skip)]
+    pub ports: Vec<DevicePortRow>,
+    pub runtime_available: bool,
+}
+
+/// 端口运行态（上报事实：device_port 表；无上报行时数组为空）。
+#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+pub struct DevicePortRow {
+    pub port_no: u64,
+    pub status_code: Option<u8>,
+    pub status_at: Option<String>,
 }
 
 /// 资料更新输入（全字段必填：serde 区分缺失与 null，旧版 RawMessage 语义）。
@@ -83,11 +105,23 @@ pub async fn list(
     .bind(&kw).bind(&kw).bind(&kw)
     .fetch_one(pool)
     .await?;
-    let items = sqlx::query_as::<_, DeviceRow>(
-        "SELECT d.`id`, d.`device_id`, d.`station_id`, d.`vendor_id`, d.`model`, d.`protocol_adapter`, \
-                d.`charge_mode`, d.`serial_no`, d.`status`, d.`tags_json`, \
-                DATE_FORMAT(d.`updated_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `updated_at` \
-         FROM `device_meta` d LEFT JOIN `station` s ON s.`id` = d.`station_id` \
+    // 运行态直查同库事实（旧版经网关摘要合并，单体等价）：心跳/信号/信号采样
+    // 来自 device 表心跳 UPSERT；runtime_available = 网关已登记该设备。
+    let mut items = sqlx::query_as::<_, DeviceRow>(
+        "SELECT d.`id`, d.`device_id`, d.`station_id`, s.`name` AS `station_name`, \
+                d.`vendor_id`, v.`vendor_name` AS `vendor_name`, d.`model`, d.`protocol_adapter`, \
+                d.`charge_mode`, d.`serial_no`, d.`status`, \
+                DATE_FORMAT(d.`warranty_until`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `warranty_until`, \
+                COALESCE(d.`tags_json`, '[]') AS `tags_json`, \
+                DATE_FORMAT(d.`updated_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `updated_at`, \
+                DATE_FORMAT(dev.`last_heartbeat_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `last_heartbeat_at`, \
+                dev.`signal_strength`, \
+                DATE_FORMAT(dev.`signal_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `signal_at`, \
+                (dev.`device_id` IS NOT NULL) AS `runtime_available` \
+         FROM `device_meta` d \
+         LEFT JOIN `station` s ON s.`id` = d.`station_id` \
+         LEFT JOIN `vendor` v ON v.`id` = d.`vendor_id` AND v.`deleted_at` IS NULL \
+         LEFT JOIN `device` dev ON dev.`device_id` = d.`device_id` \
          WHERE d.`deleted_at` IS NULL \
          AND (? IS NULL OR d.`station_id` = ?) AND (? IS NULL OR d.`status` = ?) \
          AND (d.`device_id` LIKE ? ESCAPE '!' OR d.`model` LIKE ? ESCAPE '!' OR s.`name` LIKE ? ESCAPE '!') \
@@ -99,20 +133,70 @@ pub async fn list(
     .bind(((page.page - 1) as i64) * (page.page_size as i64))
     .fetch_all(pool)
     .await?;
+    attach_ports(pool, &mut items).await?;
     Ok((items, total))
 }
 
 pub async fn get(pool: &MySqlPool, id: u64) -> StationResult<DeviceRow> {
-    sqlx::query_as::<_, DeviceRow>(
-        "SELECT `id`, `device_id`, `station_id`, `vendor_id`, `model`, `protocol_adapter`, \
-                `charge_mode`, `serial_no`, `status`, `tags_json`, \
-                DATE_FORMAT(`updated_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `updated_at` \
-         FROM `device_meta` WHERE `id` = ? AND `deleted_at` IS NULL LIMIT 1",
+    let mut rows = sqlx::query_as::<_, DeviceRow>(
+        "SELECT d.`id`, d.`device_id`, d.`station_id`, s.`name` AS `station_name`, \
+                d.`vendor_id`, v.`vendor_name` AS `vendor_name`, d.`model`, d.`protocol_adapter`, \
+                d.`charge_mode`, d.`serial_no`, d.`status`, \
+                DATE_FORMAT(d.`warranty_until`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `warranty_until`, \
+                COALESCE(d.`tags_json`, '[]') AS `tags_json`, \
+                DATE_FORMAT(d.`updated_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `updated_at`, \
+                DATE_FORMAT(dev.`last_heartbeat_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `last_heartbeat_at`, \
+                dev.`signal_strength`, \
+                DATE_FORMAT(dev.`signal_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `signal_at`, \
+                (dev.`device_id` IS NOT NULL) AS `runtime_available` \
+         FROM `device_meta` d \
+         LEFT JOIN `station` s ON s.`id` = d.`station_id` \
+         LEFT JOIN `vendor` v ON v.`id` = d.`vendor_id` AND v.`deleted_at` IS NULL \
+         LEFT JOIN `device` dev ON dev.`device_id` = d.`device_id` \
+         WHERE d.`id` = ? AND d.`deleted_at` IS NULL LIMIT 1",
     )
     .bind(id)
-    .fetch_optional(pool)
-    .await?
-    .ok_or(DeviceError::NotFound)
+    .fetch_all(pool)
+    .await?;
+    let Some(mut row) = rows.pop() else {
+        return Err(DeviceError::NotFound);
+    };
+    attach_ports(pool, std::slice::from_mut(&mut row)).await?;
+    Ok(row)
+}
+
+/// 批量补端口运行态（device_port 上报事实；无上报行时保持空数组）。
+async fn attach_ports(pool: &MySqlPool, rows: &mut [DeviceRow]) -> sqlx::Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let mut qb = sqlx::QueryBuilder::new(
+        "SELECT `device_id`, `port_no`, `reported_status`, \
+         DATE_FORMAT(`reported_status_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `status_at` \
+         FROM `device_port` WHERE `device_id` IN (",
+    );
+    let mut sep = qb.separated(", ");
+    for row in rows.iter() {
+        sep.push_bind(&row.device_id);
+    }
+    sep.push_unseparated(") ORDER BY `device_id`, `port_no`");
+    let ports: Vec<(String, u64, Option<u8>, Option<String>)> =
+        qb.build_query_as().fetch_all(pool).await?;
+    let mut by_device: std::collections::HashMap<String, Vec<DevicePortRow>> =
+        std::collections::HashMap::new();
+    for (device_id, port_no, status_code, status_at) in ports {
+        by_device.entry(device_id).or_default().push(DevicePortRow {
+            port_no,
+            status_code,
+            status_at,
+        });
+    }
+    for row in rows.iter_mut() {
+        if let Some(list) = by_device.remove(row.device_id.as_str()) {
+            row.ports = list;
+        }
+    }
+    Ok(())
 }
 
 /// 资料更新：锁设备 → expected_updated_at 乐观锁 → 只写资料字段 → 审计（同事务）。
