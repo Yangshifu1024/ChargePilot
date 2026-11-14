@@ -269,6 +269,7 @@ async fn bill_issue_and_manual_refund_review() {
     let request_id = chargepilot_platform::ids::uuid_v4();
     let (created, refund_no) = chargepilot_mod_settlement::refund_admin::request_manual_refund(
         db.as_ref(),
+        None,
         9001,
         order_id,
         &request_id,
@@ -282,6 +283,7 @@ async fn bill_issue_and_manual_refund_review() {
     // 同请求重放。
     let (replayed, no2) = chargepilot_mod_settlement::refund_admin::request_manual_refund(
         db.as_ref(),
+        None,
         9001,
         order_id,
         &request_id,
@@ -295,6 +297,7 @@ async fn bill_issue_and_manual_refund_review() {
     // 内容不同冲突。
     let err = chargepilot_mod_settlement::refund_admin::request_manual_refund(
         db.as_ref(),
+        None,
         9001,
         order_id,
         &request_id,
@@ -311,6 +314,7 @@ async fn bill_issue_and_manual_refund_review() {
     // 4. 双人审核：第一审 → awaiting_second；第二审（不同人）→ Approved 转 automatic。
     let r1 = chargepilot_mod_settlement::refund_admin::review_manual_refund(
         db.as_ref(),
+        None,
         9001,
         &refund_no,
         true,
@@ -327,6 +331,7 @@ async fn bill_issue_and_manual_refund_review() {
     // 同人二审冲突。
     let err = chargepilot_mod_settlement::refund_admin::review_manual_refund(
         db.as_ref(),
+        None,
         9001,
         &refund_no,
         true,
@@ -343,6 +348,7 @@ async fn bill_issue_and_manual_refund_review() {
     // 首审人权限失效冲突。
     let err = chargepilot_mod_settlement::refund_admin::review_manual_refund(
         db.as_ref(),
+        None,
         9002,
         &refund_no,
         true,
@@ -358,6 +364,7 @@ async fn bill_issue_and_manual_refund_review() {
     );
     let r2 = chargepilot_mod_settlement::refund_admin::review_manual_refund(
         db.as_ref(),
+        None,
         9002,
         &refund_no,
         true,
@@ -445,6 +452,7 @@ async fn meter_review_and_manual_amount() {
     // 提案：修正分段守恒（合计 200Wh，与总量一致）。
     let review_id = chargepilot_mod_settlement::meter_review::propose_meter_review(
         db.as_ref(),
+        None,
         8001,
         order_id,
         &chargepilot_platform::ids::uuid_v4(),
@@ -470,6 +478,7 @@ async fn meter_review_and_manual_amount() {
     // 首审人二审冲突。
     let err = chargepilot_mod_settlement::meter_review::review_meter(
         db.as_ref(),
+        None,
         8001,
         order_id,
         review_id,
@@ -486,6 +495,7 @@ async fn meter_review_and_manual_amount() {
     // 二审批准 → 任务重排队。
     chargepilot_mod_settlement::meter_review::review_meter(
         db.as_ref(),
+        None,
         8002,
         order_id,
         review_id,
@@ -540,6 +550,7 @@ async fn meter_review_and_manual_amount() {
     // 人工金额合计 50 ≤ 套餐价 100。
     chargepilot_mod_settlement::meter_review::resolve_manual_amount(
         db.as_ref(),
+        None,
         8003,
         order_b,
         &chargepilot_platform::ids::uuid_v4(),
@@ -568,6 +579,7 @@ async fn meter_review_and_manual_amount() {
     // 超套餐价拒绝。
     let err = chargepilot_mod_settlement::meter_review::resolve_manual_amount(
         db.as_ref(),
+        None,
         8003,
         order_b,
         &chargepilot_platform::ids::uuid_v4(),

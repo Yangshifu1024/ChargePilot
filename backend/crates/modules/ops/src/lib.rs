@@ -3,8 +3,10 @@
 //! 账号/角色管理 CRUD、公告、仪表盘随第二批落地。
 
 pub mod announcement;
+pub mod audit_query;
 pub mod dashboard;
 pub mod management;
+pub mod mfa;
 pub mod repo;
 pub mod scope;
 pub mod service;

@@ -35,6 +35,7 @@ pub type StationResult<T> = Result<T, DeviceError>;
 pub type VendorResult<T> = Result<T, DeviceError>;
 
 pub mod alert;
+pub mod capabilities;
 pub mod fault;
 pub mod import;
 pub mod management;

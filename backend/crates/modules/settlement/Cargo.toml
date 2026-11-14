@@ -13,6 +13,7 @@ tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chargepilot-domain.workspace = true
+chargepilot-mod-ops.workspace = true
 chargepilot-mod-wallet.workspace = true
 chargepilot-mod-order.workspace = true
 chargepilot-mod-payment.workspace = true

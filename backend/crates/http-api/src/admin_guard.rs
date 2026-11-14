@@ -8,8 +8,10 @@ use chargepilot_mod_ops::OpsError;
 use std::sync::Arc;
 
 /// 已通过实时鉴权的管理员（profile 每请求从库读取，权限不信任令牌）。
+/// `sid` 是当前会话 ID：本人 MFA 设置用它绑定发起会话（旧版 admin_sid 语义）。
 pub struct AdminGuard {
     pub profile: Profile,
+    pub sid: String,
 }
 
 impl AdminGuard {
@@ -35,7 +37,7 @@ impl axum::extract::FromRequestParts<Arc<ApiDeps>> for AdminGuard {
             jwt_secret: &state.jwt_secret,
         };
         match svc.authenticate(token).await {
-            Ok((profile, _sid)) => Ok(AdminGuard { profile }),
+            Ok((profile, sid)) => Ok(AdminGuard { profile, sid }),
             Err(e) => Err(ops_error(e, &rid)),
         }
     }

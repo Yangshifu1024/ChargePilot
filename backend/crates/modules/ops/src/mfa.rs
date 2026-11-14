@@ -1,0 +1,669 @@
+//! 管理员 MFA：本人安全设置（enrol/confirm/disable，Redis 待绑定 + 租锁 + 频次）、
+//! 管理端重置（admin-users/{id}/mfa）与状态查询。
+//! 语义基准：旧仓库 internal/ops/mfa.go + account_management.go 的 MFA 分支，逐条对齐。
+//! 密码、密钥与验证码不进审计；登记材料只存短期缓存（5 分钟）。
+
+use super::Profile;
+use chargepilot_platform::sessiontoken::random_token;
+use serde_json::{Value, json};
+use sqlx::Acquire;
+use sqlx::MySqlPool;
+
+/// 待绑定窗口 5 分钟（旧版 mfaEnrollmentTTL）。
+const ENROLLMENT_TTL_SECS: u64 = 5 * 60;
+/// 设置租锁 30 秒（旧版 Acquire 30s），单次操作限时 10 秒。
+const LOCK_TTL_SECS: u64 = 30;
+/// 一分钟窗口内允许的安全设置次数（第 6 次拒绝，旧版 n>5）。
+const SETTINGS_RATE_LIMIT: i64 = 5;
+
+/// MFA 业务错误（HTTP 层按旧版 mfaSettingsFailure / AdminManagementFailure 映射）。
+#[derive(Debug, thiserror::Error)]
+pub enum MfaError {
+    /// 输入不合法（400/1005）。
+    #[error("请按操作提供当前密码、绑定标识和六位验证码")]
+    Input,
+    /// 带文案的输入错误（400/1005，管理端 confirm 用）。
+    #[error("{0}")]
+    InputMsg(String),
+    /// 密码或验证码校验失败（400/1002）。
+    #[error("密码或验证码校验失败")]
+    Proof,
+    /// 验证码已被消费（400/1002；文案与旧版 ErrUsedTOTP 一致）。
+    #[error("该验证码已使用，请等待下一个验证码")]
+    UsedTotp,
+    /// 待绑定记录已过期或被替换（409/2009）。
+    #[error("绑定已过期或已被替换，请重新开始")]
+    Pending,
+    /// 当前状态不支持该动作（409/2009）。
+    #[error("双因素认证状态已改变，请刷新后重试")]
+    State,
+    /// 同账号设置租锁被占用（409/2009）。
+    #[error("账号安全设置正在处理中，请稍后重试")]
+    Busy,
+    /// 安全验证过于频繁（429/4291 + Retry-After 60）。
+    #[error("安全验证过于频繁，请稍后重试")]
+    Rate,
+    /// 凭据失效（401/1001）。
+    #[error("credentials invalid")]
+    Credentials,
+    /// 本人 MFA 只走个人安全设置（409/2009）。
+    #[error("请使用本人账号的安全设置修改双因素认证")]
+    SelfMfa,
+    /// 记录不存在或已删除（404/1004）。
+    #[error("记录不存在或已删除")]
+    NotFound,
+    /// 存储错误（503/5003）。
+    #[error(transparent)]
+    Storage(#[from] anyhow::Error),
+}
+
+impl From<sqlx::Error> for MfaError {
+    fn from(e: sqlx::Error) -> Self {
+        MfaError::Storage(anyhow::anyhow!(e.to_string()))
+    }
+}
+
+impl From<redis::RedisError> for MfaError {
+    fn from(e: redis::RedisError) -> Self {
+        MfaError::Storage(anyhow::anyhow!(e.to_string()))
+    }
+}
+
+/// MFA 事务内锁读的账号行（含密钥代际；旧版 LockActiveAdmin 全列语义）。
+#[derive(Debug, sqlx::FromRow)]
+struct MfaAccount {
+    id: u64,
+    username: String,
+    password_hash: String,
+    mfa_enabled: bool,
+    mfa_secret: Option<String>,
+    mfa_secret_version: u64,
+    mfa_last_step: Option<i64>,
+    auth_version: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Redis IO（旧版 mfa_repo.go：pending / 租锁 / 频次）
+// ---------------------------------------------------------------------------
+
+/// 比较读取值后删除（待绑定记录和租锁共用；旧版 mfaCompareDelete）。
+const COMPARE_DELETE: &str =
+    "if redis.call('GET',KEYS[1]) == ARGV[1] then return redis.call('DEL',KEYS[1]) end; return 0";
+
+/// 原子增加计数，仅首次设置六十秒窗口（旧版 authRateScript）。
+const RATE_SCRIPT: &str = "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('EXPIRE',KEYS[1],60) end; return n";
+
+fn pending_key(id: u64) -> String {
+    format!("admin:mfa-settings:pending:{id}")
+}
+
+fn lock_key(id: u64) -> String {
+    format!("admin:mfa-settings:lock:{id}")
+}
+
+fn rate_key(id: u64) -> String {
+    format!("admin:mfa-settings:rate:{id}")
+}
+
+async fn conn(redis_url: &str) -> Result<redis::aio::MultiplexedConnection, MfaError> {
+    Ok(redis::Client::open(redis_url)?
+        .get_multiplexed_tokio_connection()
+        .await?)
+}
+
+/// 保存待绑定记录（JSON，TTL 5 分钟；旧版 SavePending）。
+async fn save_pending(redis_url: &str, id: u64, record: &Value) -> Result<(), MfaError> {
+    let mut c = conn(redis_url).await?;
+    redis::cmd("SET")
+        .arg(pending_key(id))
+        .arg(record.to_string())
+        .arg("EX")
+        .arg(ENROLLMENT_TTL_SECS)
+        .query_async::<()>(&mut c)
+        .await?;
+    Ok(())
+}
+
+/// 读取待绑定记录原文；缺失或损坏按 Pending 过期处理（旧版 Pending）。
+async fn read_pending(redis_url: &str, id: u64) -> Result<(Value, String), MfaError> {
+    let mut c = conn(redis_url).await?;
+    let raw: Option<String> = redis::cmd("GET")
+        .arg(pending_key(id))
+        .query_async(&mut c)
+        .await?;
+    let Some(raw) = raw else {
+        return Err(MfaError::Pending);
+    };
+    match serde_json::from_str::<Value>(&raw) {
+        Ok(v) => Ok((v, raw)),
+        Err(_) => Err(MfaError::Pending),
+    }
+}
+
+/// 仅在记录仍等于读取原文时删除（旧版 ConsumePending）。
+async fn consume_pending(redis_url: &str, id: u64, raw: &str) -> Result<bool, MfaError> {
+    let mut c = conn(redis_url).await?;
+    let n: i32 = redis::Script::new(COMPARE_DELETE)
+        .key(pending_key(id))
+        .arg(raw)
+        .invoke_async(&mut c)
+        .await?;
+    Ok(n == 1)
+}
+
+/// 删除待绑定记录（旧版 ClearPending）。
+async fn clear_pending(redis_url: &str, id: u64) -> Result<(), MfaError> {
+    let mut c = conn(redis_url).await?;
+    redis::cmd("DEL")
+        .arg(pending_key(id))
+        .query_async::<()>(&mut c)
+        .await?;
+    Ok(())
+}
+
+/// 取得账号设置租锁（旧版 Acquire，SET NX EX 30；成功返回 "OK"，占用返回 nil）。
+async fn acquire_lock(redis_url: &str, id: u64, owner: &str) -> Result<bool, MfaError> {
+    let mut c = conn(redis_url).await?;
+    let reply: Option<String> = redis::cmd("SET")
+        .arg(lock_key(id))
+        .arg(owner)
+        .arg("EX")
+        .arg(LOCK_TTL_SECS)
+        .arg("NX")
+        .query_async(&mut c)
+        .await?;
+    Ok(reply.is_some())
+}
+
+/// 只释放仍属于自己的租锁（旧版 Release）。
+async fn release_lock(redis_url: &str, id: u64, owner: &str) -> Result<(), MfaError> {
+    let mut c = conn(redis_url).await?;
+    let _: i32 = redis::Script::new(COMPARE_DELETE)
+        .key(lock_key(id))
+        .arg(owner)
+        .invoke_async(&mut c)
+        .await?;
+    Ok(())
+}
+
+/// 一分钟窗口计数（旧版 Count）。
+async fn count_rate(redis_url: &str, id: u64) -> Result<i64, MfaError> {
+    let mut c = conn(redis_url).await?;
+    let n: i64 = redis::Script::new(RATE_SCRIPT)
+        .key(rate_key(id))
+        .invoke_async(&mut c)
+        .await?;
+    Ok(n)
+}
+
+// ---------------------------------------------------------------------------
+// SQL 辅助（旧版 UpdateAdminMFASecret / consumeAdminTOTPStep 语义）
+// ---------------------------------------------------------------------------
+
+/// 锁读启用账号全列（含 MFA 与认证版本；旧版 LockActiveAdmin 的完整列版本）。
+async fn lock_active_admin_full_tx(
+    c: &mut sqlx::MySqlConnection,
+    id: u64,
+) -> Result<MfaAccount, MfaError> {
+    let row: Option<MfaAccount> = sqlx::query_as(
+        "SELECT `id`, `username`, `password_hash`, `mfa_enabled`, `mfa_secret`, \
+                `mfa_secret_version`, `mfa_last_step`, `auth_version` \
+         FROM `admin_user` WHERE `id` = ? AND `status` = 'active' AND `deleted_at` IS NULL FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(c)
+    .await?;
+    row.ok_or(MfaError::Credentials)
+}
+
+/// 更新 MFA 密钥与启用态（旧版 UpdateAdminMFASecret）：密钥代际变化（nil↔值或值不同）时
+/// 递增 mfa_secret_version 并重置 mfa_last_step；bump 时递增 auth_version 撤销旧会话。
+/// 调用方须已持有账号行锁，changed 依据锁内快照判定。
+async fn update_mfa_secret_tx(
+    c: &mut sqlx::MySqlConnection,
+    id: u64,
+    new_secret: Option<&str>,
+    current_secret: Option<&str>,
+    enabled: bool,
+    bump_auth_version: bool,
+) -> Result<(), MfaError> {
+    let changed = current_secret != new_secret;
+    sqlx::query(
+        "UPDATE `admin_user` SET `mfa_secret` = ?, `mfa_enabled` = ?, \
+         `mfa_secret_version` = `mfa_secret_version` + ?, \
+         `mfa_last_step` = IF(? = 1, NULL, `mfa_last_step`), \
+         `auth_version` = `auth_version` + ? \
+         WHERE `id` = ? AND `deleted_at` IS NULL",
+    )
+    .bind(new_secret)
+    .bind(enabled)
+    .bind(if changed { 1 } else { 0 })
+    .bind(if changed { 1 } else { 0 })
+    .bind(if bump_auth_version { 1 } else { 0 })
+    .bind(id)
+    .execute(c)
+    .await?;
+    Ok(())
+}
+
+/// 消费当前密钥代际的时间步（旧版 consumeAdminTOTPStep）：拒绝旧步或重复步；
+/// 代际不匹配或 0 行更新按验证码错误处理，由调用方整体回滚。
+async fn consume_totp_step_tx(
+    c: &mut sqlx::MySqlConnection,
+    account: &MfaAccount,
+    step: i64,
+) -> Result<(), MfaError> {
+    if account.mfa_last_step.is_some_and(|last| step <= last) {
+        return Err(MfaError::UsedTotp);
+    }
+    let n = sqlx::query(
+        "UPDATE `admin_user` SET `mfa_last_step` = ? \
+         WHERE `id` = ? AND `mfa_secret_version` = ? AND (`mfa_last_step` IS NULL OR `mfa_last_step` < ?)",
+    )
+    .bind(step)
+    .bind(account.id)
+    .bind(account.mfa_secret_version)
+    .bind(step)
+    .execute(c)
+    .await?
+    .rows_affected();
+    if n != 1 {
+        return Err(MfaError::Proof);
+    }
+    Ok(())
+}
+
+/// 校验验证码并返回命中的时间步（±1 步；与 repo::verify_mfa 同一匹配规则）。
+fn verify_with_step(secret: &str, code: &str, now: i64) -> Option<i64> {
+    let step = now.div_euclid(30);
+    (step - 1..=step + 1)
+        .find(|s| chargepilot_platform::totp::generate(secret, s * 30).as_deref() == Some(code))
+}
+
+/// 校验 MFA 设置输入（旧版 MFASettingsInput.Valid）：enrol 需密码且禁带码/绑定号；
+/// confirm 需 43 字符绑定号与六位数字码；disable 需密码加六位码。
+fn settings_input_valid(action: &str, password: &str, code: &str, enrollment_id: &str) -> bool {
+    let password_ok = !password.is_empty() && password.len() <= 72;
+    let code_ok = code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit());
+    match action {
+        "enrol" => password_ok && code.is_empty() && enrollment_id.is_empty(),
+        "confirm" => password.is_empty() && code_ok && enrollment_id.len() == 43,
+        "disable" => password_ok && code_ok && enrollment_id.is_empty(),
+        _ => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 本人安全设置（POST /api/v1/admin/auth/mfa-settings）
+// ---------------------------------------------------------------------------
+
+/// 本人 MFA 设置（旧版 MFAService.Apply）：频次 → 租锁 → 事务（锁账号 → 核对会话
+/// 认证版本 → 动作分支）。响应形状与旧版 MFASettingsReply 一致（omitempty 字段缺省省略）。
+#[allow(clippy::too_many_arguments)]
+pub async fn apply_settings(
+    pool: &MySqlPool,
+    redis_url: &str,
+    profile: &Profile,
+    sid: &str,
+    action: &str,
+    password: &str,
+    code: &str,
+    enrollment_id: &str,
+    ip: &str,
+) -> Result<Value, MfaError> {
+    let code = code.trim();
+    if !settings_input_valid(action, password, code, enrollment_id) {
+        return Err(MfaError::Input);
+    }
+    if sid.is_empty() {
+        return Err(MfaError::Credentials);
+    }
+    let n = count_rate(redis_url, profile.id).await?;
+    if n > SETTINGS_RATE_LIMIT {
+        return Err(MfaError::Rate);
+    }
+    let owner = random_token(16);
+    if !acquire_lock(redis_url, profile.id, &owner).await? {
+        return Err(MfaError::Busy);
+    }
+    let result = apply_locked(
+        pool,
+        redis_url,
+        profile,
+        sid,
+        action,
+        password,
+        code,
+        enrollment_id,
+        ip,
+    )
+    .await;
+    // 只释放仍属于自己的租锁；释放失败不掩盖业务结果。
+    let _ = release_lock(redis_url, profile.id, &owner).await;
+    result
+}
+
+/// 持锁执行设置（旧版 apply）。Redis 挑战在 SQL 提交后仍可能失败，不能恢复，须重新登记。
+#[allow(clippy::too_many_arguments)]
+async fn apply_locked(
+    pool: &MySqlPool,
+    redis_url: &str,
+    profile: &Profile,
+    sid: &str,
+    action: &str,
+    password: &str,
+    code: &str,
+    enrollment_id: &str,
+    ip: &str,
+) -> Result<Value, MfaError> {
+    let mut conn = pool.acquire().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        .execute(&mut *conn)
+        .await?;
+    let mut tx = conn.begin().await?;
+    let c = tx.acquire().await?;
+    let account = lock_active_admin_full_tx(&mut *c, profile.id).await?;
+    if account.auth_version != profile.auth_version {
+        return Err(MfaError::Credentials);
+    }
+    let now = chrono::Utc::now();
+    let reply = match action {
+        "enrol" => {
+            if !chargepilot_platform::password::verify(password, &account.password_hash) {
+                return Err(MfaError::Proof);
+            }
+            if account.mfa_enabled {
+                return Err(MfaError::State);
+            }
+            let secret = chargepilot_platform::totp::random_secret();
+            let enrollment = random_token(32);
+            let uri =
+                chargepilot_platform::totp::otpauth_uri("ChargePilot", &account.username, &secret);
+            let record = json!({
+                "id": enrollment,
+                "secret": secret,
+                "admin_id": account.id.to_string(),
+                "auth_version": account.auth_version.to_string(),
+                "session_id": sid,
+                "expires_at": (now + chrono::Duration::seconds(ENROLLMENT_TTL_SECS as i64))
+                    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            });
+            // 登记只写短期缓存，不改变当前 MFA，也不撤销会话。
+            save_pending(redis_url, account.id, &record).await?;
+            json!({
+                "enrollment_id": enrollment,
+                "secret": secret,
+                "otpauth_uri": uri,
+                "expires_in": ENROLLMENT_TTL_SECS,
+                "mfa_enabled": false,
+                "sessions_revoked": false,
+            })
+        }
+        "confirm" => {
+            if account.mfa_enabled {
+                return Err(MfaError::State);
+            }
+            let (pending, raw) = read_pending(redis_url, account.id).await?;
+            let pending_admin = pending["admin_id"].as_str().unwrap_or_default().to_string();
+            let pending_version = pending["auth_version"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            let pending_session = pending["session_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            let expires_at = pending["expires_at"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            let pending_id = pending["id"].as_str().unwrap_or_default().to_string();
+            let pending_secret = pending["secret"].as_str().unwrap_or_default().to_string();
+            let expired = chrono::DateTime::parse_from_rfc3339(&expires_at)
+                .map(|t| now >= t.with_timezone(&chrono::Utc))
+                .unwrap_or(true);
+            if pending_admin != account.id.to_string()
+                || pending_version != account.auth_version.to_string()
+                || pending_session != sid
+                || expired
+                || pending_id != enrollment_id
+            {
+                return Err(MfaError::Pending);
+            }
+            let Some(step) = verify_with_step(&pending_secret, code, now.timestamp()) else {
+                return Err(MfaError::Proof);
+            };
+            // 更新前比较并原子删除读取过的挑战；坏码、过期或已替换挑战不能启用 MFA。
+            if !consume_pending(redis_url, account.id, &raw).await? {
+                return Err(MfaError::Pending);
+            }
+            update_mfa_secret_tx(
+                &mut *c,
+                account.id,
+                Some(&pending_secret),
+                account.mfa_secret.as_deref(),
+                true,
+                true,
+            )
+            .await?;
+            // 首次确认消费新密钥时间步；重新登录须等待验证器切换验证码。
+            let updated = lock_active_admin_full_tx(&mut *c, account.id).await?;
+            consume_totp_step_tx(&mut *c, &updated, step).await?;
+            super::repo::write_auth_audit_tx(
+                &mut *c,
+                &to_admin_account(&updated),
+                "mfa_enable",
+                ip,
+            )
+            .await?;
+            json!({"mfa_enabled": true, "sessions_revoked": true})
+        }
+        "disable" => {
+            if !chargepilot_platform::password::verify(password, &account.password_hash) {
+                return Err(MfaError::Proof);
+            }
+            if !account.mfa_enabled || account.mfa_secret.is_none() {
+                return Err(MfaError::State);
+            }
+            let secret = account.mfa_secret.clone().expect("已判定存在");
+            let Some(step) = verify_with_step(&secret, code, now.timestamp()) else {
+                return Err(MfaError::Proof);
+            };
+            consume_totp_step_tx(&mut *c, &account, step).await?;
+            clear_pending(redis_url, account.id).await?;
+            update_mfa_secret_tx(
+                &mut *c,
+                account.id,
+                None,
+                account.mfa_secret.as_deref(),
+                false,
+                true,
+            )
+            .await?;
+            let updated = lock_active_admin_full_tx(&mut *c, account.id).await?;
+            super::repo::write_auth_audit_tx(
+                &mut *c,
+                &to_admin_account(&updated),
+                "mfa_disable",
+                ip,
+            )
+            .await?;
+            json!({"mfa_enabled": false, "sessions_revoked": true})
+        }
+        _ => return Err(MfaError::State),
+    };
+    tx.commit().await?;
+    Ok(reply)
+}
+
+/// MfaAccount → 审计所需的账号身份（旧版 WriteAuthAudit 接收 AdminAccount）。
+fn to_admin_account(a: &MfaAccount) -> super::AdminAccount {
+    super::AdminAccount {
+        id: a.id,
+        username: a.username.clone(),
+        display_name: None,
+        password_hash: String::new(),
+        role_id: None,
+        mfa_enabled: a.mfa_enabled,
+        mfa_secret: a.mfa_secret.clone(),
+        mfa_last_step: a.mfa_last_step,
+        status: "active".into(),
+        failed_login_count: 0,
+        locked_until: None,
+        auth_version: a.auth_version,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 管理端（POST /api/v1/admin/admin-users/{id}/mfa）
+// ---------------------------------------------------------------------------
+
+/// 管理端 MFA 重置（旧版 AccountService.MFA）：不能操作本人；确认密钥须与
+/// 锁定账号后读出的密钥一致。登记响应含当前验证码；审计不保存任何材料。
+pub async fn managed(
+    pool: &MySqlPool,
+    actor: &Profile,
+    target_id: u64,
+    action: &str,
+    secret_in: &str,
+    code: &str,
+    ip: &str,
+    request_id: &str,
+) -> Result<Value, MfaError> {
+    if target_id == actor.id {
+        return Err(MfaError::SelfMfa);
+    }
+    if !matches!(action, "enrol" | "confirm" | "disable") {
+        return Err(MfaError::InputMsg(
+            "请指定 enrol、confirm 或 disable".into(),
+        ));
+    }
+    if action == "confirm" && (secret_in.is_empty() || code.is_empty()) {
+        return Err(MfaError::InputMsg("请提供密钥和验证码".into()));
+    }
+    let mut conn = pool.acquire().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        .execute(&mut *conn)
+        .await?;
+    let mut tx = conn.begin().await?;
+    let c = tx.acquire().await?;
+    super::repo::lock_customer_admin_role_tx(&mut *c)
+        .await
+        .map_err(MfaError::from)?;
+    let actor_locked = super::repo::lock_actor_tx(&mut *c, actor.id)
+        .await
+        .map_err(|_| MfaError::Credentials)?;
+    if !actor_locked
+        .permissions
+        .iter()
+        .any(|p| p == "admin_user.update")
+    {
+        return Err(MfaError::Credentials);
+    }
+    let before = super::repo::lock_admin_tx(&mut *c, target_id)
+        .await
+        .map_err(MfaError::from)?
+        .ok_or(MfaError::NotFound)?;
+    let account = lock_active_admin_full_tx(&mut *c, target_id).await?;
+    let now = chrono::Utc::now();
+    let (reply, audit_action) = match action {
+        "enrol" => {
+            let secret = chargepilot_platform::totp::random_secret();
+            let uri =
+                chargepilot_platform::totp::otpauth_uri("ChargePilot", &account.username, &secret);
+            let code_now = chargepilot_platform::totp::generate(&secret, now.timestamp())
+                .ok_or_else(|| MfaError::Storage(anyhow::anyhow!("TOTP 生成失败")))?;
+            update_mfa_secret_tx(
+                &mut *c,
+                target_id,
+                Some(&secret),
+                account.mfa_secret.as_deref(),
+                false,
+                account.mfa_enabled,
+            )
+            .await?;
+            (
+                json!({"secret": secret, "otpauth_uri": uri, "code": code_now, "enabled": false}),
+                "mfa_enrol",
+            )
+        }
+        "confirm" => {
+            let Some(db_secret) = account.mfa_secret.as_deref() else {
+                return Err(MfaError::InputMsg("验证码校验失败".into()));
+            };
+            let matched = db_secret == secret_in;
+            let step = verify_with_step(secret_in, code, now.timestamp());
+            if !matched
+                || step.is_none()
+                || account
+                    .mfa_last_step
+                    .is_some_and(|s| step.is_some_and(|v| v <= s))
+            {
+                return Err(MfaError::InputMsg("验证码校验失败".into()));
+            }
+            let step = step.expect("已判定存在");
+            consume_totp_step_tx(&mut *c, &account, step)
+                .await
+                .map_err(|_| MfaError::InputMsg("验证码校验失败".into()))?;
+            update_mfa_secret_tx(
+                &mut *c,
+                target_id,
+                account.mfa_secret.as_deref(),
+                account.mfa_secret.as_deref(),
+                true,
+                !account.mfa_enabled,
+            )
+            .await?;
+            (json!({"id": target_id, "mfa_enabled": true}), "mfa_enable")
+        }
+        "disable" => {
+            update_mfa_secret_tx(
+                &mut *c,
+                target_id,
+                None,
+                account.mfa_secret.as_deref(),
+                false,
+                account.mfa_enabled || account.mfa_secret.is_some(),
+            )
+            .await?;
+            (
+                json!({"id": target_id, "mfa_enabled": false}),
+                "mfa_disable",
+            )
+        }
+        _ => unreachable!("动作已校验"),
+    };
+    super::repo::append_audit_tx(
+        &mut *c,
+        &actor_locked,
+        "admin_user",
+        audit_action,
+        "admin_user",
+        &target_id.to_string(),
+        &json!({
+            "id": before.id,
+            "username": before.username,
+            "mfa_enabled": before.mfa_enabled,
+            "status": before.status,
+        }),
+        &reply,
+        ip,
+        request_id,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(reply)
+}
+
+/// 当前管理员 MFA 状态（GET /api/v1/admin/auth/mfa-settings）。
+pub async fn status(pool: &MySqlPool, admin_id: u64) -> Result<Value, MfaError> {
+    let enabled: Option<bool> = sqlx::query_scalar(
+        "SELECT `mfa_enabled` FROM `admin_user` WHERE `id` = ? AND `deleted_at` IS NULL",
+    )
+    .bind(admin_id)
+    .fetch_optional(pool)
+    .await?;
+    enabled
+        .map(|mfa_enabled| json!({"mfa_enabled": mfa_enabled}))
+        .ok_or(MfaError::Credentials)
+}

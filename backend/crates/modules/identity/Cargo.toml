@@ -13,6 +13,7 @@ chrono.workspace = true
 redis.workspace = true
 tracing.workspace = true
 chargepilot-platform.workspace = true
+chargepilot-mod-ops.workspace = true
 chargepilot-mod-wallet.workspace = true
 
 [dev-dependencies]

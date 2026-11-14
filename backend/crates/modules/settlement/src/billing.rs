@@ -43,23 +43,11 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     .await?;
     let Some((order_no, user_id, payment_order_id)) = order else {
         // 订单不在 completed（异常回滚等）：任务转人工，避免空转。
-        defer_job(
-            pool,
-            charge_order_id,
-            JobStatus::MANUAL_REVIEW,
-            "订单不在已完成状态",
-        )
-        .await?;
+        defer_to_manual_review(pool, charge_order_id, "订单不在已完成状态", 0, None).await?;
         return Ok(false);
     };
     let Some(payment_order_id) = payment_order_id else {
-        defer_job(
-            pool,
-            charge_order_id,
-            JobStatus::MANUAL_REVIEW,
-            "订单缺少支付关联",
-        )
-        .await?;
+        defer_to_manual_review(pool, charge_order_id, "订单缺少支付关联", 0, None).await?;
         return Ok(false);
     };
     // 快照 rule（spec 为选中套餐的引擎规格）。
@@ -70,13 +58,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     .fetch_optional(pool)
     .await?;
     let Some(snapshot_json) = snapshot_json else {
-        defer_job(
-            pool,
-            charge_order_id,
-            JobStatus::MANUAL_REVIEW,
-            "订单缺少计费快照",
-        )
-        .await?;
+        defer_to_manual_review(pool, charge_order_id, "订单缺少计费快照", 0, None).await?;
         return Ok(false);
     };
     let snapshot: chargepilot_mod_payment::checkout::PricingSnapshot =
@@ -88,13 +70,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     .fetch_optional(pool)
     .await?;
     let Some(meter_json) = meter_json else {
-        defer_job(
-            pool,
-            charge_order_id,
-            JobStatus::MANUAL_REVIEW,
-            "订单缺少结束计量",
-        )
-        .await?;
+        defer_to_manual_review(pool, charge_order_id, "订单缺少结束计量", 0, None).await?;
         return Ok(false);
     };
     let mut meter: EndMeter =
@@ -156,11 +132,21 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         match settle_session(&rule.spec, &actual, paid.as_ref(), None) {
             Ok(s) => s,
             Err(BillingError::MeterReview) | Err(BillingError::InvalidPricing) => {
-                defer_job(
+                // 工单快照对齐旧版 readBillingSource：订单/用户/规则/套餐/计量全量。
+                let source = serde_json::json!({
+                    "charge_order_id": charge_order_id,
+                    "order_no": order_no,
+                    "user_id": user_id,
+                    "rule": snapshot.rule,
+                    "offer": snapshot.offer,
+                    "meter": meter,
+                });
+                defer_to_manual_review(
                     pool,
                     charge_order_id,
-                    JobStatus::MANUAL_REVIEW,
                     "实际计量或计费快照需核实",
+                    u64::from(meter.charged_wh),
+                    Some(source.to_string().as_str()),
                 )
                 .await?;
                 return Ok(false);
@@ -197,13 +183,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     .await?;
     let Some((pay_status, paid_cents, refunded_cents, pay_id)) = payment else {
         tx.rollback().await?;
-        defer_job(
-            pool,
-            charge_order_id,
-            JobStatus::MANUAL_REVIEW,
-            "支付单缺失或类型不符",
-        )
-        .await?;
+        defer_to_manual_review(pool, charge_order_id, "支付单缺失或类型不符", 0, None).await?;
         return Ok(false);
     };
     if !matches!(
@@ -214,13 +194,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         || refunded_cents > paid_cents
     {
         tx.rollback().await?;
-        defer_job(
-            pool,
-            charge_order_id,
-            JobStatus::MANUAL_REVIEW,
-            "支付单状态不允许结算",
-        )
-        .await?;
+        defer_to_manual_review(pool, charge_order_id, "支付单状态不允许结算", 0, None).await?;
         return Ok(false);
     }
 
@@ -238,6 +212,14 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
             .bind(charge_order_id as i64)
             .execute(&mut *c)
             .await?;
+        // 回执已存在的重放同样关闭待核实工单（幂等重入路径）。
+        sqlx::query(
+            "UPDATE `manual_fee_review` SET `status` = 'resolved', `resolved_at` = UTC_TIMESTAMP(3) \
+             WHERE `charge_order_id` = ? AND `status` = 'pending'",
+        )
+        .bind(charge_order_id as i64)
+        .execute(&mut *c)
+        .await?;
         tx.commit().await?;
         return Ok(true);
     }
@@ -357,8 +339,72 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         .bind(charge_order_id as i64)
         .execute(&mut *c)
         .await?;
+    // 人工核实后的订单成功入账：关闭待核实工单（旧版 fee_calculation_repo
+    // 的 pending→resolved 同事务推进）。
+    sqlx::query(
+        "UPDATE `manual_fee_review` SET `status` = 'resolved', `resolved_at` = UTC_TIMESTAMP(3) \
+         WHERE `charge_order_id` = ? AND `status` = 'pending'",
+    )
+    .bind(charge_order_id as i64)
+    .execute(&mut *c)
+    .await?;
     tx.commit().await?;
     Ok(true)
+}
+
+/// 转人工：同事务写入人工核实工单（旧版 EnqueueManualFeeReview）并推进任务。
+/// 工单按 uk_order（charge_order_id）幂等——重复入队不新增行；
+/// reason 供人工定价参考，source_json 保存来源计量快照。
+pub async fn defer_to_manual_review(
+    pool: &MySqlPool,
+    charge_order_id: u64,
+    reason: &str,
+    energy_wh: u64,
+    source_json: Option<&str>,
+) -> anyhow::Result<()> {
+    let order_no: Option<String> =
+        sqlx::query_scalar("SELECT `order_no` FROM `charge_order` WHERE `id` = ?")
+            .bind(charge_order_id as i64)
+            .fetch_optional(pool)
+            .await?;
+    let Some(order_no) = order_no else {
+        // 订单行缺失（异常清理）：无工单可挂，仅推进任务避免空转。
+        return defer_job(pool, charge_order_id, JobStatus::MANUAL_REVIEW, reason).await;
+    };
+    // 工单月份列是 varchar(7) 'YYYY-MM'（旧版 Format("2006-01")），取当前 UTC 年月。
+    let month = chrono::Utc::now().format("%Y-%m").to_string();
+    // 项目事务惯例：先 SET 隔离级别再 begin（事务中 SET 会报错）。
+    let mut conn = pool.acquire().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        .execute(&mut *conn)
+        .await?;
+    let mut tx = conn.begin().await?;
+    sqlx::query(
+        "INSERT INTO `manual_fee_review` \
+         (`charge_order_id`, `order_no`, `reason`, `energy_wh`, `created_month`, `source_json`) \
+         VALUES (?, ?, ?, ?, ?, CAST(? AS JSON)) \
+         ON DUPLICATE KEY UPDATE `charge_order_id` = `charge_order_id`",
+    )
+    .bind(charge_order_id as i64)
+    .bind(&order_no)
+    .bind(reason)
+    .bind(energy_wh as i64)
+    .bind(month.to_string())
+    .bind(source_json)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE `charge_billing_job` SET `status` = ?, `last_error` = ? \
+         WHERE `charge_order_id` = ? AND `status` = ?",
+    )
+    .bind(JobStatus::MANUAL_REVIEW)
+    .bind(reason)
+    .bind(charge_order_id as i64)
+    .bind(JobStatus::PENDING)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// 任务状态推进（manual_review 或退避重试；旧版 Defer 的代际核对在新版简化为

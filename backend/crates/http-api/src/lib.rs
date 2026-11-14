@@ -8,7 +8,10 @@ pub mod admin_finance;
 pub mod admin_guard;
 pub mod admin_management;
 pub mod admin_marketing;
+pub mod admin_misc;
+pub mod admin_orders;
 pub mod admin_pricing_device;
+pub mod admin_users_cards;
 pub mod deps;
 pub mod device_and_user;
 pub mod user_auth;
@@ -36,7 +39,10 @@ pub async fn build_router(
         .merge(admin_export::router())
         .merge(admin_marketing::router())
         .merge(admin_finance::router())
+        .merge(admin_misc::router())
+        .merge(admin_orders::router())
         .merge(admin_pricing_device::router())
+        .merge(admin_users_cards::router())
         .merge(device_and_user::router())
         .merge(user_marketing::router())
         .merge(user_ops::router())
@@ -114,7 +120,7 @@ impl tower::Service<axum::extract::Request> for SpaFallback {
     }
 
     fn call(&mut self, req: axum::extract::Request) -> Self::Future {
-        let mut inner = self.inner.clone();
+        let inner = self.inner.clone();
         let index = self.index.clone();
         Box::pin(async move {
             let resp = tower::util::ServiceExt::oneshot(inner, req).await?;

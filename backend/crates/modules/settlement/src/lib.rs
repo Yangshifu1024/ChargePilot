@@ -6,7 +6,20 @@
 
 pub mod bill;
 pub mod billing;
+pub mod invoice_admin;
 pub mod meter_review;
 pub mod recorder;
 pub mod refund_admin;
 pub mod refund_executor;
+
+/// 审计上下文视图：由 HTTP 层传入，写事务内审计时使用（旧版 ops.AuditContext）。
+/// 模块内函数以 `Option<&AuditView>` 接收；None 表示调用方不写审计（模块级测试）。
+#[derive(Debug, Clone, Copy)]
+pub struct AuditView<'a> {
+    /// 已实时授权的操作人资料（审计记录 actor_id / actor_name）。
+    pub actor: &'a chargepilot_mod_ops::Profile,
+    /// 客户端 IP。
+    pub client_ip: &'a str,
+    /// 请求编号；业务自带幂等号时由调用处覆盖。
+    pub request_id: &'a str,
+}

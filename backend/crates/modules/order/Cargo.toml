@@ -13,3 +13,4 @@ chrono.workspace = true
 tracing.workspace = true
 chargepilot-domain.workspace = true
 chargepilot-platform.workspace = true
+chargepilot-mod-ops.workspace = true

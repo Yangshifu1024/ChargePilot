@@ -19,6 +19,7 @@ anyhow.workspace = true
 tracing.workspace = true
 chargepilot-gateway-runtime.workspace = true
 chargepilot-platform.workspace = true
+chargepilot-mod-card.workspace = true
 chargepilot-mod-charging.workspace = true
 chargepilot-domain.workspace = true
 chargepilot-mod-identity.workspace = true
@@ -28,6 +29,7 @@ chargepilot-mod-device.workspace = true
 chargepilot-mod-export.workspace = true
 chargepilot-mod-marketing.workspace = true
 chargepilot-mod-ops.workspace = true
+chargepilot-mod-order.workspace = true
 chargepilot-mod-pricing.workspace = true
 chargepilot-mod-wallet.workspace = true
 

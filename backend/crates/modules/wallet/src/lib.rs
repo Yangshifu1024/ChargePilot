@@ -14,6 +14,7 @@ pub mod credit;
 pub mod ledger;
 pub mod query;
 pub mod recharge;
+pub mod recharge_history;
 pub mod refund;
 pub mod risk;
 

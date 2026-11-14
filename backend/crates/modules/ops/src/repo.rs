@@ -250,6 +250,17 @@ pub async fn write_auth_audit(
     action: &str,
     ip: &str,
 ) -> anyhow::Result<()> {
+    let mut conn = pool.acquire().await?;
+    write_auth_audit_tx(&mut conn, account, action, ip).await
+}
+
+/// 在调用方事务内写认证审计（旧版 WriteAuthAudit；MFA 设置等与状态写入同事务提交）。
+pub async fn write_auth_audit_tx(
+    tx: &mut sqlx::MySqlConnection,
+    account: &AdminAccount,
+    action: &str,
+    ip: &str,
+) -> anyhow::Result<()> {
     let now = chrono::Utc::now();
     let month = now.date_naive().with_day(1).expect("月首日必然存在");
     sqlx::query(
@@ -262,7 +273,7 @@ pub async fn write_auth_audit(
     .bind(account.id.to_string())
     .bind(ip)
     .bind(month)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
     Ok(())
 }

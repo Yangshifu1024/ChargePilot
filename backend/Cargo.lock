@@ -457,6 +457,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chargepilot-domain",
+ "chargepilot-mod-ops",
  "chargepilot-mod-order",
  "chargepilot-mod-payment",
  "chargepilot-mod-pricing",
@@ -527,6 +528,7 @@ name = "chargepilot-mod-identity"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chargepilot-mod-ops",
  "chargepilot-mod-wallet",
  "chargepilot-platform",
  "chrono",
@@ -578,6 +580,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chargepilot-domain",
+ "chargepilot-mod-ops",
  "chargepilot-platform",
  "chrono",
  "serde",
@@ -635,6 +638,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chargepilot-domain",
+ "chargepilot-mod-ops",
  "chargepilot-mod-order",
  "chargepilot-mod-payment",
  "chargepilot-mod-wallet",

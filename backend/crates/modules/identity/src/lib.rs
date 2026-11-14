@@ -3,6 +3,7 @@
 //! 语义对齐旧版：登录即建户（与零余额钱包同事务）、development 换购器（`dev:` 前缀
 //! 命名空间）、会话 7 天绝对寿命 + Lua 轮换保留 32 旧摘要、访问令牌 JWT（user kind）。
 
+pub mod admin_query;
 pub mod repo;
 pub mod service;
 pub mod session;

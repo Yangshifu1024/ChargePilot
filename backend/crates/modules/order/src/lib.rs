@@ -2,6 +2,9 @@
 //! charge_event_log 归 order；编号规则纯函数在 domain::payment_intent）。
 //! 支付成功事务由 payment 模块编排，本模块只提供订单侧的表访问。
 
+pub mod admin_query;
+pub mod feedback;
+
 use chargepilot_domain::money::PaymentStatus;
 use chargepilot_platform::ids::SegmentAllocator;
 use chrono::Datelike;
