@@ -75,7 +75,7 @@ async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAlloc
         })),
     });
     Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None),
+        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
         Arc::new(db),
         allocator,
     ))

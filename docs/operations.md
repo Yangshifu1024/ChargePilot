@@ -24,8 +24,10 @@ docker compose -f compose.prod.yaml --env-file .env up -d --build
 | 微信凭据组 | `WECHAT_APPID` `WECHAT_SECRET` `WECHAT_MCH_ID` `WECHAT_MCH_SERIAL` `WECHAT_PRIVATE_KEY_PEM` `WECHAT_PLATFORM_CERTS` `WECHAT_NOTIFY_URL` |
 | 运行模式与日志 | `PAYMENT_MODE` `LOGIN_MODE` `RUST_LOG` |
 
-`PAYMENT_MODE=development` 时支付走模拟通道（无需微信凭据）；`LOGIN_MODE=development`
-启用 development 登录。生产置 `production` 并填齐微信凭据组。
+- `PAYMENT_MODE`：`simulation`（默认，模拟渠道，无需微信凭据）/
+  `wechat_direct`（生产，需填齐微信凭据组）/ `disabled`（只读兜底）。
+- `LOGIN_MODE`：`development`（默认，`dev:<openid>` 登录）或 `wechat`（生产）。
+  生产两者都置生产取值并填齐微信凭据组。
 
 ## 数据卷与备份
 

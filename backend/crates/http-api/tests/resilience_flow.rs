@@ -287,6 +287,19 @@ async fn event_dispatch_failure_replays() {
         .unwrap();
     }
 
+    // 场景隔离：claim 按全库 pending/failed 且退避到期领取（LIMIT 100）。
+    // 多次全量跑会积累短退避到期的遗留 failed 事件并挤占批次——把非本场景
+    // 的到期事件统一推迟 1 小时，使本场景两个批次的领取结果可断言。
+    sqlx::query(
+        "UPDATE `domain_event` SET `scheduled_at` = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 1 HOUR) \
+         WHERE `status` IN ('pending','failed') AND `scheduled_at` <= UTC_TIMESTAMP(3) \
+         AND `event_id` <> ?",
+    )
+    .bind(&event_id)
+    .execute(&db)
+    .await
+    .unwrap();
+
     // 首轮：投递器故障（claim 后直接 mark_failed，退避 1 秒）。
     let batch = chargepilot_events::repo::claim_batch(&db, 100)
         .await

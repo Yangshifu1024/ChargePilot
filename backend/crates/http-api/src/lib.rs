@@ -24,7 +24,7 @@ use chargepilot_platform::error::{ApiError, Code};
 
 /// 业务路由 + 健康检查 + 指标 + /admin 静态资源（SPA fallback）。
 /// `admin_static_dir` 为 None 时（开发未构建前端）静态路由不挂载。
-pub fn build_router(
+pub async fn build_router(
     deps: std::sync::Arc<deps::ApiDeps>,
     prometheus: metrics_exporter_prometheus::PrometheusHandle,
     admin_static_dir: Option<&str>,
@@ -56,11 +56,26 @@ pub fn build_router(
         .fallback(not_found)
         .with_state(deps);
     if let Some(dir) = admin_static_dir {
-        // SPA：资源存在则直出，其余 /admin/* 回落 index.html（history 路由）
-        let serve = tower_http::services::ServeDir::new(dir).not_found_service(
-            tower_http::services::ServeFile::new(format!("{dir}/index.html")),
-        );
-        app = app.nest_service("/admin", serve);
+        // SPA：资源存在则直出，其余 /admin/* 回落 index.html（history 路由）。
+        // ServeDir 的 not_found_service 会把 fallback 输出强制为 404（tower-http
+        // 语义），刷新深链拿 404 不符合「刷新不 404」——外包一层：404 时改答
+        // index（启动读入内存，产物与镜像同生命周期）。
+        match tokio::fs::read(format!("{dir}/index.html")).await {
+            Ok(bytes) => {
+                app = app.nest_service(
+                    "/admin",
+                    SpaFallback {
+                        inner: tower_http::services::ServeDir::new(dir),
+                        index: std::sync::Arc::new(bytes),
+                    },
+                );
+            }
+            Err(_) => {
+                // index 缺失属部署错误：只挂资源直出，深链 404 可见即可诊断。
+                tracing::warn!(dir, "admin index.html 缺失，SPA 深链回落未启用");
+                app = app.nest_service("/admin", tower_http::services::ServeDir::new(dir));
+            }
+        }
     }
     // H5 静态产物：hash 路由，资源直出即可（/h5/ 入口由 index.html 承载）。
     if let Ok(h5_dir) = std::env::var("H5_STATIC_DIR") {
@@ -69,6 +84,52 @@ pub fn build_router(
         }
     }
     app
+}
+
+/// SPA 服务：内层 ServeDir 直出静态资源；未命中（404）时改答 index.html（200）。
+/// index 在启动时读入内存（产物与镜像同生命周期，无需每次读盘）。
+#[derive(Clone)]
+struct SpaFallback {
+    inner: tower_http::services::ServeDir,
+    index: std::sync::Arc<Vec<u8>>,
+}
+
+type SpaFuture = std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = Result<axum::response::Response, std::convert::Infallible>>
+            + Send,
+    >,
+>;
+
+impl tower::Service<axum::extract::Request> for SpaFallback {
+    type Response = axum::response::Response;
+    type Error = std::convert::Infallible;
+    type Future = SpaFuture;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        tower::Service::<axum::extract::Request>::poll_ready(&mut self.inner, cx)
+    }
+
+    fn call(&mut self, req: axum::extract::Request) -> Self::Future {
+        let mut inner = self.inner.clone();
+        let index = self.index.clone();
+        Box::pin(async move {
+            let resp = tower::util::ServiceExt::oneshot(inner, req).await?;
+            if resp.status() == axum::http::StatusCode::NOT_FOUND {
+                Ok((
+                    [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                    (*index).clone(),
+                )
+                    .into_response())
+            } else {
+                // ServeDir 响应体（tower-http 专用 body）归一为 axum body。
+                Ok(resp.map(axum::body::Body::new))
+            }
+        })
+    }
 }
 
 async fn readiness(State(state): State<std::sync::Arc<deps::ApiDeps>>) -> &'static str {

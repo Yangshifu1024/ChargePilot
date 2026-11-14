@@ -54,7 +54,7 @@ async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAlloc
         charging_stop: None,
     });
     Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None),
+        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
         Arc::new(db),
         allocator,
     ))
@@ -181,7 +181,7 @@ async fn import_devices_and_fault_flow() {
     .unwrap();
     assert_eq!(meta, 2, "device_meta 应有 2 台");
     let gw_ports: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM `device_port` p JOIN `device` d ON d.`id` = p.`device_id` WHERE d.`station_id` = ?",
+        "SELECT COUNT(*) FROM `device_port` p JOIN `device` d ON d.`device_id` = p.`device_id` WHERE d.`station_id` = ?",
     ).bind(station_id).fetch_one(db.as_ref()).await.unwrap();
     assert_eq!(gw_ports, 6, "gateway 端口应为 2+4=6");
 

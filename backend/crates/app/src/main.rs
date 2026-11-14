@@ -244,7 +244,8 @@ async fn serve() -> anyhow::Result<()> {
         deps,
         prometheus,
         std::env::var("ADMIN_STATIC_DIR").ok().as_deref(),
-    );
+    )
+    .await;
     let listener = tokio::net::TcpListener::bind(&cfg.http_addr).await?;
     tracing::info!(addr = %cfg.http_addr, "HTTP 服务启动");
 

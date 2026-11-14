@@ -48,7 +48,7 @@ async fn build_app() -> Option<(axum::Router, String, Arc<SegmentAllocator>)> {
         simulation_payment: false,
         charging_stop: None,
     });
-    let router = chargepilot_http_api::build_router(deps, prometheus_handle(), None);
+    let router = chargepilot_http_api::build_router(deps, prometheus_handle(), None).await;
     let account = format!("it-{}", rand_suffix());
     Some((router, account, allocator))
 }

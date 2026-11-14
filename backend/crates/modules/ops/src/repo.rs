@@ -304,12 +304,16 @@ pub async fn ensure_bootstrap(
     }
     let hash = chargepilot_platform::password::hash(password)?;
     let id = allocator.next_id().await?;
-    sqlx::query("INSERT INTO `admin_user` (`id`, `username`, `password_hash`) VALUES (?, ?, ?)")
-        .bind(id)
-        .bind(username)
-        .bind(hash)
-        .execute(pool)
-        .await?;
+    // 引导账号挂超管角色（role_id=1，迁移已种入全量权限）：
+    // 它是首次部署的唯一管理入口，落库无角色则登录后处处 403。
+    sqlx::query(
+        "INSERT INTO `admin_user` (`id`, `username`, `password_hash`, `role_id`) VALUES (?, ?, ?, 1)",
+    )
+    .bind(id)
+    .bind(username)
+    .bind(hash)
+    .execute(pool)
+    .await?;
     let account = find_by_username(pool, username).await?.expect("刚创建");
     write_auth_audit(pool, &account, "bootstrap", "").await?;
     tracing::info!(username, "后台引导账号已创建");

@@ -53,11 +53,7 @@ async fn build_app() -> Option<axum::Router> {
         charging_stop: None,
     });
     let _ = db;
-    Some(chargepilot_http_api::build_router(
-        deps,
-        prometheus_handle(),
-        None,
-    ))
+    Some(chargepilot_http_api::build_router(deps, prometheus_handle(), None).await)
 }
 
 fn rand_suffix() -> String {

@@ -38,7 +38,7 @@ RUN apt-get update \
  && useradd --system --create-home --uid 10001 chargepilot
 COPY --from=backend-build /build/target/release/chargepilot /usr/local/bin/chargepilot
 COPY --from=frontend /fe/admin-web/dist /opt/chargepilot/admin
-COPY --from=frontend /fe/miniprogram/dist /opt/chargepilot/h5
+COPY --from=frontend /fe/miniprogram/dist/h5 /opt/chargepilot/h5
 USER chargepilot
 WORKDIR /home/chargepilot
 ENV HTTP_ADDR=0.0.0.0:8080 \

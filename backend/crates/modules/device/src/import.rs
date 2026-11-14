@@ -235,7 +235,9 @@ pub async fn import_devices(
                     sqlx::query(
                         "INSERT INTO `device_port` (`device_id`, `port_no`, `port_code`, `status`) VALUES (?, ?, ?, 'idle')",
                     )
-                    .bind(dev_pk)
+                    // device_port.device_id 是 varchar 设备全局编号（schema 注释
+                    // 真相源），与扫描/遥测/占用各读写点一致，不是 device.id 数字键。
+                    .bind(&d.device_id)
                     .bind(port)
                     .bind(format!("{}-{}", d.device_id, port))
                     .execute(&mut *tx)

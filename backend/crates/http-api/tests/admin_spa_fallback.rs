@@ -1,0 +1,61 @@
+//! /admin SPA 深链回归：深链回落 index.html 且状态 200（spec 用户故事 4）。
+//! 业务路由不触发（请求只打 /admin/*），连接池用 lazy 占位即可。
+
+use chargepilot_http_api::deps::ApiDeps;
+use std::sync::Arc;
+use tower::util::ServiceExt as _;
+
+fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
+    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
+        std::sync::OnceLock::new();
+    HANDLE
+        .get_or_init(|| {
+            metrics_exporter_prometheus::PrometheusBuilder::new()
+                .install_recorder()
+                .expect("prometheus recorder")
+        })
+        .clone()
+}
+
+#[tokio::test]
+async fn deep_links_fall_back_to_index_with_200() {
+    let dir = std::env::temp_dir().join(format!("spa-fallback-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("index.html"), "<html>spa-ok</html>").unwrap();
+    let path = dir.to_str().unwrap().to_string();
+
+    let pool = sqlx::MySqlPool::connect_lazy("mysql://invalid:0/none").unwrap();
+    let deps = Arc::new(ApiDeps {
+        db: pool.clone(),
+        redis_url: Arc::new("redis://127.0.0.1:1".into()),
+        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
+        allocator: Arc::new(chargepilot_platform::ids::SegmentAllocator::new(pool, 1)),
+        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
+        wallet: None,
+        wallet_recharge: None,
+        checkout: None,
+        simulation_payment: false,
+        charging_stop: None,
+    });
+    let app = chargepilot_http_api::build_router(deps, prometheus_handle(), Some(&path)).await;
+
+    for uri in ["/admin/", "/admin/login", "/admin/devices"] {
+        let resp = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(uri)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        assert_eq!(status, 200, "{uri} 深链应回落 index.html 且状态 200");
+        assert!(
+            std::str::from_utf8(&body).unwrap().contains("spa-ok"),
+            "{uri} 应返回 index.html 内容"
+        );
+    }
+}

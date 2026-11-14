@@ -99,7 +99,7 @@ async fn build() -> Option<RouterEnv> {
         })),
     });
     Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None),
+        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
         Arc::new(db),
         allocator,
     ))
