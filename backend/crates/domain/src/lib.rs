@@ -19,4 +19,5 @@ pub mod operations;
 pub mod order;
 pub mod page;
 pub mod payment_intent;
+pub mod settlement;
 mod wordlist;

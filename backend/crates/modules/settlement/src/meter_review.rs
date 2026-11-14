@@ -6,6 +6,7 @@
 
 use chargepilot_domain::charging_actual::price_actual;
 use chargepilot_domain::charging_actual::{ActualMeter, EndMeter, Rule};
+use chargepilot_domain::settlement::{BillingJobStatus, MeterReviewStatus};
 use chargepilot_mod_payment::checkout::PricingSnapshot;
 use serde::Serialize;
 use sqlx::{Acquire, MySqlPool};
@@ -23,8 +24,8 @@ pub struct MeterReviewRow {
     /// 只替换分段后的价格与计量 JSON。
     pub corrected: serde_json::Value,
     pub reason: String,
-    /// awaiting_second / approved / rejected。
-    pub status: String,
+    /// awaiting_second / approved / rejected（charge_meter_review.status 词表）。
+    pub status: MeterReviewStatus,
     pub first_reviewer_id: u64,
     pub second_reviewer_id: Option<u64>,
     pub reject_reason: Option<String>,
@@ -67,7 +68,7 @@ struct MeterReviewRawRow {
     original_json: String,
     corrected_json: String,
     reason: String,
-    status: String,
+    status: MeterReviewStatus,
     first_reviewer_id: u64,
     second_reviewer_id: Option<u64>,
     reject_reason: Option<String>,
@@ -334,7 +335,7 @@ pub async fn propose_meter_review(
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
     // 锁定计费任务（顺序化人工出口）。
-    let job: Option<String> = sqlx::query_scalar(
+    let job: Option<BillingJobStatus> = sqlx::query_scalar(
         "SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ? FOR UPDATE",
     )
     .bind(charge_order_id as i64)
@@ -361,15 +362,17 @@ pub async fn propose_meter_review(
         tx.commit().await?;
         return Ok(review_id);
     }
-    if job_status != crate::billing::JobStatus::MANUAL_REVIEW {
+    if job_status != BillingJobStatus::ManualReview {
         return Err(ReviewError::Conflict);
     }
     // 活跃提案（awaiting_second/approved）存在时拒绝。
     let active: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM `charge_meter_review` \
-         WHERE `charge_order_id` = ? AND `status` IN ('awaiting_second', 'approved')",
+         WHERE `charge_order_id` = ? AND `status` IN (?, ?)",
     )
     .bind(charge_order_id as i64)
+    .bind(MeterReviewStatus::AwaitingSecond)
+    .bind(MeterReviewStatus::Approved)
     .fetch_one(&mut *c)
     .await?;
     if active != 0 {
@@ -408,13 +411,14 @@ pub async fn propose_meter_review(
     sqlx::query(
         "INSERT INTO `charge_meter_review` (`request_id`, `charge_order_id`, `original_json`, \
          `corrected_json`, `reason`, `status`, `first_reviewer_id`) \
-         VALUES (?, ?, CAST(? AS JSON), CAST(? AS JSON), ?, 'awaiting_second', ?)",
+         VALUES (?, ?, CAST(? AS JSON), CAST(? AS JSON), ?, ?, ?)",
     )
     .bind(request_id)
     .bind(charge_order_id as i64)
     .bind(original_json.to_string())
     .bind(corrected_json.to_string())
     .bind(reason)
+    .bind(MeterReviewStatus::AwaitingSecond)
     .bind(actor_id as i64)
     .execute(&mut *c)
     .await?;
@@ -484,7 +488,7 @@ pub async fn review_meter(
         .await?;
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
-    let job: Option<String> = sqlx::query_scalar(
+    let job: Option<BillingJobStatus> = sqlx::query_scalar(
         "SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ? FOR UPDATE",
     )
     .bind(charge_order_id as i64)
@@ -507,14 +511,18 @@ pub async fn review_meter(
         return Err(ReviewError::NotFound);
     };
     let corrected_json = before_raw.corrected_json.clone();
-    let review_status = before_raw.status.clone();
+    let review_status = before_raw.status;
     let first_reviewer = before_raw.first_reviewer_id;
     let second_reviewer = before_raw.second_reviewer_id;
     // 审计 before 取审前完整行（original/corrected 解析为对象，对齐旧版 MeterReview JSON）。
     let before_json =
         serde_json::to_value(before_raw.clone().into_row()).unwrap_or(serde_json::Value::Null);
     // 相同决定重试（旧版幂等分支）。
-    let target = if approve { "approved" } else { "rejected" };
+    let target = if approve {
+        MeterReviewStatus::Approved
+    } else {
+        MeterReviewStatus::Rejected
+    };
     if review_status == target && second_reviewer == Some(actor_id) {
         if !approve && reason.trim().is_empty() {
             return Err(ReviewError::Conflict);
@@ -522,8 +530,8 @@ pub async fn review_meter(
         tx.commit().await?;
         return Ok(());
     }
-    if job_status != crate::billing::JobStatus::MANUAL_REVIEW
-        || review_status != "awaiting_second"
+    if job_status != BillingJobStatus::ManualReview
+        || review_status != MeterReviewStatus::AwaitingSecond
         || first_reviewer == actor_id
     {
         return Err(ReviewError::Conflict);
@@ -571,9 +579,10 @@ pub async fn review_meter(
     }
     if approve {
         sqlx::query(
-            "UPDATE `charge_meter_review` SET `status` = 'approved', `second_reviewer_id` = ?, \
+            "UPDATE `charge_meter_review` SET `status` = ?, `second_reviewer_id` = ?, \
              `reviewed_at` = UTC_TIMESTAMP(3) WHERE `id` = ?",
         )
+        .bind(MeterReviewStatus::Approved)
         .bind(actor_id as i64)
         .bind(review_id as i64)
         .execute(&mut *c)
@@ -583,7 +592,7 @@ pub async fn review_meter(
             "UPDATE `charge_billing_job` SET `status` = ?, `generation` = `generation` + 1, \
              `next_attempt_at` = UTC_TIMESTAMP(3), `last_error` = NULL WHERE `charge_order_id` = ?",
         )
-        .bind(crate::billing::JobStatus::PENDING)
+        .bind(BillingJobStatus::Pending)
         .bind(charge_order_id as i64)
         .execute(&mut *c)
         .await?;
@@ -592,9 +601,10 @@ pub async fn review_meter(
             return Err(ReviewError::Conflict);
         }
         sqlx::query(
-            "UPDATE `charge_meter_review` SET `status` = 'rejected', `second_reviewer_id` = ?, \
+            "UPDATE `charge_meter_review` SET `status` = ?, `second_reviewer_id` = ?, \
              `reviewed_at` = UTC_TIMESTAMP(3), `reject_reason` = ? WHERE `id` = ?",
         )
+        .bind(MeterReviewStatus::Rejected)
         .bind(actor_id as i64)
         .bind(reason)
         .bind(review_id as i64)
@@ -657,7 +667,7 @@ pub async fn resolve_manual_amount(
         .await?;
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
-    let job: Option<String> = sqlx::query_scalar(
+    let job: Option<BillingJobStatus> = sqlx::query_scalar(
         "SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ? FOR UPDATE",
     )
     .bind(charge_order_id as i64)
@@ -688,7 +698,7 @@ pub async fn resolve_manual_amount(
         tx.commit().await?;
         return Ok(());
     }
-    if job_status != crate::billing::JobStatus::MANUAL_REVIEW {
+    if job_status != BillingJobStatus::ManualReview {
         return Err(ReviewError::Conflict);
     }
     // 合计不超过套餐价格（快照 offer）。
@@ -734,7 +744,7 @@ pub async fn resolve_manual_amount(
         "UPDATE `charge_billing_job` SET `status` = ?, `generation` = `generation` + 1, \
          `last_error` = NULL, `next_attempt_at` = UTC_TIMESTAMP(3) WHERE `charge_order_id` = ?",
     )
-    .bind(crate::billing::JobStatus::PENDING)
+    .bind(BillingJobStatus::Pending)
     .bind(charge_order_id as i64)
     .execute(&mut *c)
     .await?;

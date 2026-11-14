@@ -32,11 +32,12 @@ async fn queue_depths(db: &sqlx::MySqlPool) -> Value {
         "SELECT COUNT(*) FROM `domain_event` WHERE `status` = 'failed'",
     )
     .await;
-    let billing_jobs_pending = one(
-        db,
-        "SELECT COUNT(*) FROM `charge_billing_job` WHERE `status` = 'pending'",
-    )
-    .await;
+    let billing_jobs_pending: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM `charge_billing_job` WHERE `status` = ?")
+            .bind(chargepilot_domain::settlement::BillingJobStatus::Pending)
+            .fetch_one(db)
+            .await
+            .unwrap_or(0);
     let commands_sent = one(
         db,
         "SELECT COUNT(*) FROM `charge_command` WHERE `status` = 'sent'",

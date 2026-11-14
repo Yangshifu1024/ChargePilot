@@ -9,13 +9,9 @@ use chargepilot_domain::charging_spec::BillingError;
 use chargepilot_domain::money::{BizType, ExecutionPolicy, PaymentOrderStatus, RefundStatus};
 use sqlx::{Acquire, MySqlPool};
 
-/// 计费任务状态词表（charge_billing_job.status）。
-pub struct JobStatus;
-impl JobStatus {
-    pub const PENDING: &'static str = "pending";
-    pub const MANUAL_REVIEW: &'static str = "manual_review";
-    pub const DONE: &'static str = "done";
-}
+use chargepilot_domain::settlement::{
+    BillingJobStatus as JobStatus, ManualFeeReviewStatus, MeterReviewStatus,
+};
 
 /// 领取到期的 pending 计费任务（SKIP LOCKED 批次，旧版 Due）。
 pub async fn due_jobs(pool: &MySqlPool, limit: u32) -> anyhow::Result<Vec<u64>> {
@@ -24,7 +20,7 @@ pub async fn due_jobs(pool: &MySqlPool, limit: u32) -> anyhow::Result<Vec<u64>> 
          WHERE `status` = ? AND `next_attempt_at` <= UTC_TIMESTAMP(3) \
          ORDER BY `charge_order_id` LIMIT ? FOR UPDATE SKIP LOCKED",
     )
-    .bind(JobStatus::PENDING)
+    .bind(JobStatus::Pending)
     .bind(limit as i64)
     .fetch_all(pool)
     .await?;
@@ -80,9 +76,10 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     let approved: Option<(String, String)> = sqlx::query_as(
         "SELECT CAST(`original_json` AS CHAR), CAST(`corrected_json` AS CHAR) \
          FROM `charge_meter_review` \
-         WHERE `charge_order_id` = ? AND `status` = 'approved' ORDER BY `id` DESC LIMIT 1",
+         WHERE `charge_order_id` = ? AND `status` = ? ORDER BY `id` DESC LIMIT 1",
     )
     .bind(charge_order_id as i64)
+    .bind(MeterReviewStatus::Approved)
     .fetch_optional(pool)
     .await?;
     if let Some((original_json, corrected_json)) = approved {
@@ -154,7 +151,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
                 defer_job(
                     pool,
                     charge_order_id,
-                    JobStatus::PENDING,
+                    JobStatus::Pending,
                     &format!("计费暂不可用: {e}"),
                 )
                 .await?;
@@ -207,16 +204,18 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     .await?;
     if existing.is_some() {
         sqlx::query("UPDATE `charge_billing_job` SET `status` = ?, `last_error` = NULL WHERE `charge_order_id` = ?")
-            .bind(JobStatus::DONE)
+            .bind(JobStatus::Done)
             .bind(charge_order_id as i64)
             .execute(&mut *c)
             .await?;
         // 回执已存在的重放同样关闭待核实工单（幂等重入路径）。
         sqlx::query(
-            "UPDATE `manual_fee_review` SET `status` = 'resolved', `resolved_at` = UTC_TIMESTAMP(3) \
-             WHERE `charge_order_id` = ? AND `status` = 'pending'",
+            "UPDATE `manual_fee_review` SET `status` = ?, `resolved_at` = UTC_TIMESTAMP(3) \
+             WHERE `charge_order_id` = ? AND `status` = ?",
         )
+        .bind(ManualFeeReviewStatus::Resolved)
         .bind(charge_order_id as i64)
+        .bind(ManualFeeReviewStatus::Pending)
         .execute(&mut *c)
         .await?;
         // 账单签发接线：重放路径同事务幂等补签（uk_order 复用，已有账单零写入）。
@@ -336,17 +335,19 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     .await
     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     sqlx::query("UPDATE `charge_billing_job` SET `status` = ?, `last_error` = NULL WHERE `charge_order_id` = ?")
-        .bind(JobStatus::DONE)
+        .bind(JobStatus::Done)
         .bind(charge_order_id as i64)
         .execute(&mut *c)
         .await?;
     // 人工核实后的订单成功入账：关闭待核实工单（旧版 fee_calculation_repo
     // 的 pending→resolved 同事务推进）。
     sqlx::query(
-        "UPDATE `manual_fee_review` SET `status` = 'resolved', `resolved_at` = UTC_TIMESTAMP(3) \
-         WHERE `charge_order_id` = ? AND `status` = 'pending'",
+        "UPDATE `manual_fee_review` SET `status` = ?, `resolved_at` = UTC_TIMESTAMP(3) \
+         WHERE `charge_order_id` = ? AND `status` = ?",
     )
+    .bind(ManualFeeReviewStatus::Resolved)
     .bind(charge_order_id as i64)
+    .bind(ManualFeeReviewStatus::Pending)
     .execute(&mut *c)
     .await?;
     // 账单签发接线：费用入账与账单同一事务落地（旧版生产链路的账单缺口由
@@ -373,7 +374,7 @@ pub async fn defer_to_manual_review(
             .await?;
     let Some(order_no) = order_no else {
         // 订单行缺失（异常清理）：无工单可挂，仅推进任务避免空转。
-        return defer_job(pool, charge_order_id, JobStatus::MANUAL_REVIEW, reason).await;
+        return defer_job(pool, charge_order_id, JobStatus::ManualReview, reason).await;
     };
     // 工单月份列是 varchar(7) 'YYYY-MM'（旧版 Format("2006-01")），取当前 UTC 年月。
     let month = chrono::Utc::now().format("%Y-%m").to_string();
@@ -401,10 +402,10 @@ pub async fn defer_to_manual_review(
         "UPDATE `charge_billing_job` SET `status` = ?, `last_error` = ? \
          WHERE `charge_order_id` = ? AND `status` = ?",
     )
-    .bind(JobStatus::MANUAL_REVIEW)
+    .bind(JobStatus::ManualReview)
     .bind(reason)
     .bind(charge_order_id as i64)
-    .bind(JobStatus::PENDING)
+    .bind(JobStatus::Pending)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -416,10 +417,10 @@ pub async fn defer_to_manual_review(
 pub async fn defer_job(
     pool: &MySqlPool,
     charge_order_id: u64,
-    status: &str,
+    status: JobStatus,
     error: &str,
 ) -> anyhow::Result<()> {
-    if status == JobStatus::PENDING {
+    if status == JobStatus::Pending {
         // 退避：attempts+1，下次尝试按次数指数延迟（1<<n 分钟，上限 60）。
         sqlx::query(
             "UPDATE `charge_billing_job` SET `attempts` = `attempts` + 1, \
@@ -428,7 +429,7 @@ pub async fn defer_job(
         )
         .bind(error)
         .bind(charge_order_id as i64)
-        .bind(JobStatus::PENDING)
+        .bind(JobStatus::Pending)
         .execute(pool)
         .await?;
     } else {
@@ -436,7 +437,7 @@ pub async fn defer_job(
             .bind(status)
             .bind(error)
             .bind(charge_order_id as i64)
-            .bind(JobStatus::PENDING)
+            .bind(JobStatus::Pending)
             .execute(pool)
             .await?;
     }

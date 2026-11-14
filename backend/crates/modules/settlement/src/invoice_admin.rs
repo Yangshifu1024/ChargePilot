@@ -3,6 +3,7 @@
 //! 双审：通过须两名不同且仍有 invoice.review 权限的 customer_finance，两次提交的发票链接一致；
 //! 驳回单人即可。审核表、申请单状态与审计同事务提交；同人复核与状态不符一律冲突。
 
+use chargepilot_domain::settlement::{InvoiceAdminReviewStatus, InvoiceRequestReviewStatus};
 use chargepilot_mod_ops::Profile;
 use serde::Serialize;
 use sqlx::{Acquire, MySqlPool};
@@ -125,8 +126,8 @@ pub async fn review_invoice(
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
     // 申请单本体：只取审核状态与已有发票链接（审计 before 快照同源）。
-    let invoice: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT CAST(`review_status` AS CHAR) AS `review_status`, `invoice_url` \
+    let invoice: Option<(InvoiceRequestReviewStatus, Option<String>)> = sqlx::query_as(
+        "SELECT `review_status`, `invoice_url` \
          FROM `invoice_request` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
     )
     .bind(id as i64)
@@ -139,15 +140,19 @@ pub async fn review_invoice(
         "review_status": request_status,
         "invoice_url": request_url,
     });
-    if request_status != "pending" {
+    if request_status != InvoiceRequestReviewStatus::Pending {
         return Err(InvoiceAdminError::Conflict);
     }
     // 双审进度表：awaiting_second 表示已首审待复核；无记录表示尚未有任何审核。
     // 投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
-    type InvoiceReviewRow = (String, Option<u64>, Option<u64>, Option<String>);
+    type InvoiceReviewRow = (
+        InvoiceAdminReviewStatus,
+        Option<u64>,
+        Option<u64>,
+        Option<String>,
+    );
     let review: Option<InvoiceReviewRow> = sqlx::query_as(
-        "SELECT CAST(`review_status` AS CHAR) AS `review_status`, \
-                `first_reviewer_id`, `second_reviewer_id`, `invoice_url` \
+        "SELECT `review_status`, `first_reviewer_id`, `second_reviewer_id`, `invoice_url` \
          FROM `invoice_admin_review` WHERE `invoice_request_id` = ?",
     )
     .bind(id as i64)
@@ -160,24 +165,26 @@ pub async fn review_invoice(
     if !approve {
         // 尚无审核记录或已首审待复核时允许单人驳回。
         if let Some((review_status, _, _, _)) = &review
-            && review_status != "awaiting_second"
+            && *review_status != InvoiceAdminReviewStatus::AwaitingSecond
         {
             return Err(InvoiceAdminError::Conflict);
         }
         sqlx::query(
             "INSERT INTO `invoice_admin_review` \
-             (`invoice_request_id`, `review_status`, `reject_reason`) VALUES (?, 'rejected', ?) \
-             ON DUPLICATE KEY UPDATE `review_status` = 'rejected', \
+             (`invoice_request_id`, `review_status`, `reject_reason`) VALUES (?, ?, ?) \
+             ON DUPLICATE KEY UPDATE `review_status` = VALUES(`review_status`), \
              `reject_reason` = VALUES(`reject_reason`), `invoice_url` = NULL",
         )
         .bind(id as i64)
+        .bind(InvoiceAdminReviewStatus::Rejected)
         .bind(reason)
         .execute(&mut *c)
         .await?;
         sqlx::query(
-            "UPDATE `invoice_request` SET `review_status` = 'rejected', `reviewed_by` = ?, \
+            "UPDATE `invoice_request` SET `review_status` = ?, `reviewed_by` = ?, \
              `reviewed_at` = UTC_TIMESTAMP(3), `reject_reason` = ? WHERE `id` = ?",
         )
+        .bind(InvoiceRequestReviewStatus::Rejected)
         .bind(actor.id as i64)
         .bind(reason)
         .bind(id as i64)
@@ -196,9 +203,10 @@ pub async fn review_invoice(
             sqlx::query(
                 "INSERT INTO `invoice_admin_review` \
                  (`invoice_request_id`, `review_status`, `first_reviewer_id`, `invoice_url`) \
-                 VALUES (?, 'awaiting_second', ?, ?)",
+                 VALUES (?, ?, ?, ?)",
             )
             .bind(id as i64)
+            .bind(InvoiceAdminReviewStatus::AwaitingSecond)
             .bind(actor.id as i64)
             .bind(invoice_url)
             .execute(&mut *c)
@@ -211,7 +219,7 @@ pub async fn review_invoice(
                 return Err(InvoiceAdminError::Conflict);
             };
             if *first == actor.id
-                || review_status != "awaiting_second"
+                || *review_status != InvoiceAdminReviewStatus::AwaitingSecond
                 || review_url.is_none()
                 || review_url.as_deref() != Some(invoice_url)
             {
@@ -231,17 +239,19 @@ pub async fn review_invoice(
                 return Err(InvoiceAdminError::Conflict);
             }
             sqlx::query(
-                "UPDATE `invoice_admin_review` SET `review_status` = 'approved', \
+                "UPDATE `invoice_admin_review` SET `review_status` = ?, \
                  `second_reviewer_id` = ? WHERE `invoice_request_id` = ?",
             )
+            .bind(InvoiceAdminReviewStatus::Approved)
             .bind(actor.id as i64)
             .bind(id as i64)
             .execute(&mut *c)
             .await?;
             sqlx::query(
-                "UPDATE `invoice_request` SET `review_status` = 'issued', `invoice_url` = ?, \
+                "UPDATE `invoice_request` SET `review_status` = ?, `invoice_url` = ?, \
                  `reviewed_by` = ?, `reviewed_at` = UTC_TIMESTAMP(3) WHERE `id` = ?",
             )
+            .bind(InvoiceRequestReviewStatus::Issued)
             .bind(invoice_url)
             .bind(actor.id as i64)
             .bind(id as i64)

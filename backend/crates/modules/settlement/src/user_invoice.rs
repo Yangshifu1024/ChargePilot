@@ -4,6 +4,7 @@
 //! 可开票状态与计费任务共用同一判定：completed / refunding / refunded。
 
 use chargepilot_domain::money::BizType;
+use chargepilot_domain::settlement::{InvoiceRequestReviewStatus, InvoiceType};
 use serde_json::json;
 use sqlx::{Acquire, MySqlPool};
 
@@ -88,10 +89,13 @@ pub async fn apply_invoice(
     input: &InvoiceInput,
 ) -> Result<InvoiceApplication, UserInvoiceError> {
     let title = input.title.trim();
+    // 入参词表值一次 parse 存档（校验保证合法）；重放比对与 INSERT 复用。
+    let invoice_type_value = InvoiceType::parse(input.invoice_type.as_str())
+        .map_err(|_| UserInvoiceError::InvalidInput)?;
     if user_id == 0
         || !is_uuid(&input.request_id)
         || input.order_no.trim().is_empty()
-        || !matches!(input.invoice_type.as_str(), "normal" | "vat_special")
+        || InvoiceType::parse(input.invoice_type.as_str()).is_err()
         || title.is_empty()
         || title.chars().count() > 128
         || input.tax_no.trim().chars().count() > 32
@@ -166,7 +170,7 @@ pub async fn apply_invoice(
         BizType,
         String,
         i64,
-        String,
+        InvoiceType,
         String,
         String,
         String,
@@ -198,7 +202,7 @@ pub async fn apply_invoice(
                 && biz_type == BizType::Charge
                 && biz_id == order_id.to_string()
                 && existing_total == total
-                && invoice_type == input.invoice_type
+                && invoice_type == invoice_type_value
                 && existing_title == title
                 && tax_no == input.tax_no.trim()
                 && email == input.email.trim();
@@ -211,8 +215,9 @@ pub async fn apply_invoice(
             // 一单一申请：已有未删除申请即冲突（旧版 Count 分支）。
             let duplicate: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM `invoice_request` \
-                 WHERE `biz_type` = 'charge' AND `biz_id` = ? AND `deleted_at` IS NULL",
+                 WHERE `biz_type` = ? AND `biz_id` = ? AND `deleted_at` IS NULL",
             )
+            .bind(BizType::Charge)
             .bind(order_id as i64)
             .fetch_one(&mut *c)
             .await
@@ -224,16 +229,18 @@ pub async fn apply_invoice(
                 "INSERT INTO `invoice_request` \
                  (`invoice_no`, `user_id`, `biz_type`, `biz_id`, `total_cents`, \
                   `invoice_type`, `title`, `tax_no`, `email`, `review_status`) \
-                 VALUES (?, ?, 'charge', ?, ?, ?, ?, ?, ?, 'pending')",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&invoice_no)
             .bind(user_id as i64)
+            .bind(BizType::Charge)
             .bind(order_id as i64)
             .bind(total)
-            .bind(&input.invoice_type)
+            .bind(invoice_type_value)
             .bind(title)
             .bind(input.tax_no.trim())
             .bind(input.email.trim())
+            .bind(InvoiceRequestReviewStatus::Pending)
             .execute(&mut *c)
             .await;
             // 并发撞 uk_invoice_active（biz_type, biz_id）与计数兜底同义。
