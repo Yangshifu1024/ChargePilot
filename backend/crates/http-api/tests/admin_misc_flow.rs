@@ -11,139 +11,14 @@
 //! 契约基准：旧仓库 casework.go / audit_log.go / admin_mfa_settings.go /
 //! account_management.go(MFA) / charging_schemes.go(preview、executionCapabilities)。
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::ApiDeps;
+mod support;
+
+use axum::http::StatusCode;
 use chargepilot_platform::ids::SegmentAllocator;
-use http_body_util::BodyExt;
 use serde_json::{Value, json};
-use std::sync::Arc;
-use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .unwrap()
-        })
-        .clone()
-}
-
-async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAllocator>)> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("warn")
-        .try_init();
-    let db_url = env_or_skip("TEST_MYSQL_URL")?;
-    let redis_url = env_or_skip("TEST_REDIS_URL")?;
-    let db = chargepilot_storage::open_pool(&db_url, 8).await.ok()?;
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 50));
-    allocator.warm_up().await.ok()?;
-    let deps = Arc::new(ApiDeps {
-        db: db.clone(),
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: allocator.clone(),
-        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        // 本 flow 不触达钱包与支付域。
-        wallet: None,
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: false,
-        snapshots: None,
-        charging_stop: None,
-    });
-    Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
-        Arc::new(db),
-        allocator,
-    ))
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
-fn rand_ip() -> String {
-    format!("10.{}.1.{}", rand_suffix(), rand_suffix())
-}
-
-/// 跨测试文件互斥：共享开发库，用固定端口 TCP 监听串行各 flow 文件。
-fn global_flow_lock() -> std::net::TcpListener {
-    loop {
-        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:39701") {
-            return l;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-}
+use support::{TestApp, flow_lock, login_admin_opt, rand_suffix, req_str};
 
 /// 本文件内多个断言共享种子，进程级互斥防止 tokio 并行测试互相干扰。
-static MISC_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-async fn req(
-    router: axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<&str>,
-    token: Option<&str>,
-    ip: &str,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(path)
-        .header("x-real-ip", ip);
-    if let Some(t) = token {
-        builder = builder.header("authorization", format!("Bearer {t}"));
-    }
-    let req = match body {
-        Some(b) => builder
-            .header("content-type", "application/json")
-            .body(Body::from(b.to_string()))
-            .unwrap(),
-        None => builder.body(Body::empty()).unwrap(),
-    };
-    let resp = router.oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
-}
-
-async fn login(router: &axum::Router, username: &str, password: &str) -> Option<String> {
-    let (status, body) = req(
-        router.clone(),
-        "POST",
-        "/api/v1/admin/auth/login",
-        Some(&format!(
-            r#"{{"username":"{username}","password":"{password}"}}"#
-        )),
-        None,
-        &rand_ip(),
-    )
-    .await;
-    if status != StatusCode::OK {
-        eprintln!("登录失败: {body}");
-        return None;
-    }
-    body["data"]["access_token"].as_str().map(str::to_string)
-}
-
 /// SQL 直建受限管理员（角色权限 = 指定权限码），返回 (用户名, 账号 ID)。
 async fn seed_limited_admin(
     db: &sqlx::MySqlPool,
@@ -321,11 +196,11 @@ async fn cleanup(
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn misc_endpoints_flow() {
-    let _flow_lock = global_flow_lock();
-    let _guard = MISC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let _flow_lock = flow_lock();
+    let app = TestApp::builder().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let suf = rand_suffix();
     let pass = "misc-pass-12345";
 
@@ -372,11 +247,15 @@ async fn misc_endpoints_flow() {
         .await
         .unwrap();
 
-    let super_token = login(&router, &super_name, "super-pass-123")
+    let super_token = login_admin_opt(&router, &super_name, "super-pass-123")
         .await
         .expect("超管登录");
-    let a_token = login(&router, &a_name, pass).await.expect("受限A登录");
-    let b_token = login(&router, &b_name, pass).await.expect("受限B登录");
+    let a_token = login_admin_opt(&router, &a_name, pass)
+        .await
+        .expect("受限A登录");
+    let b_token = login_admin_opt(&router, &b_name, pass)
+        .await
+        .expect("受限B登录");
 
     // 反馈与审计种子。
     let (fb_pending_1, fb_user_1) = seed_feedback(db.as_ref(), &alloc, "pending").await;
@@ -386,13 +265,12 @@ async fn misc_endpoints_flow() {
     seed_audit(db.as_ref(), &alloc, "station", "update").await;
 
     // 1. 反馈列表：形状（id 字符串、images 数组）+ 状态筛选 + 越权。
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/feedback?page=1&page_size=10",
         None,
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "反馈列表应成功: {body}");
@@ -408,13 +286,12 @@ async fn misc_endpoints_flow() {
     // ORDER BY id DESC：最后种的 fb_closed 应排第一。
     assert_eq!(first["status"].as_str().unwrap(), "closed");
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/feedback?status=pending",
         None,
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -424,36 +301,33 @@ async fn misc_endpoints_flow() {
         assert_eq!(item["status"], "pending", "筛选后只能有 pending: {item}");
     }
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/feedback?status=bogus",
         None,
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "非法状态应 400: {body}");
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/feedback",
         None,
         Some(&b_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "b 有 feedback.read 应可读: {body}");
 
     // 2. 反馈回复：pending→processed + 审计留痕；重复回复 409；关闭与重复关闭。
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/feedback/{fb_pending_1}/reply"),
         Some(r#"{"action":"reply","reply_content":"已安排更换屏幕"}"#),
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "回复应成功: {body}");
@@ -481,13 +355,12 @@ async fn misc_endpoints_flow() {
         ("feedback", "reply")
     );
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/feedback/{fb_pending_1}/reply"),
         Some(r#"{"action":"reply","reply_content":"再次回复"}"#),
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(
@@ -496,34 +369,31 @@ async fn misc_endpoints_flow() {
         "processed 再回复应 409: {body}"
     );
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/feedback/{fb_pending_1}/reply"),
         Some(r#"{"action":"reply","reply_content":""}"#),
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "空回复应 400: {body}");
 
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/feedback/{fb_pending_2}/reply"),
         Some(r#"{"action":"close"}"#),
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "关闭应成功");
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/feedback/{fb_pending_2}/reply"),
         Some(r#"{"action":"close"}"#),
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "重复关闭应静默成功");
@@ -536,13 +406,12 @@ async fn misc_endpoints_flow() {
     assert_eq!(closed_status, "closed");
 
     // 3. 审计日志：分页、模块筛选、操作人筛选、时间边界、坏时间。
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/audit-logs?page=1&page_size=2",
         None,
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "审计列表应成功: {body}");
@@ -560,13 +429,12 @@ async fn misc_endpoints_flow() {
     assert!(row["actor_id"].is_u64(), "actor_id 应为数字: {row}");
     assert!(row["before_json"].is_null() || row["before_json"].is_string());
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/audit-logs?module=feedback",
         None,
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -581,13 +449,12 @@ async fn misc_endpoints_flow() {
         );
     }
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         &format!("/api/v1/admin/audit-logs?actor={a_name}"),
         None,
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -597,73 +464,67 @@ async fn misc_endpoints_flow() {
         assert_eq!(item["actor_name"], a_name);
     }
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/audit-logs?from=bad-time",
         None,
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "坏时间格式应 400: {body}");
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/audit-logs?from=2030-01-01T00:00:00Z",
         None,
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["total"], 0, "未来起点应无记录");
 
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/audit-logs",
         None,
         Some(&b_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "无 audit.read 应 403");
 
     // 4. 本人 MFA 设置：GET 状态 → enrol（错密码/成功）→ confirm（坏码/对码）→
     // 会话失效 → 重新登录（MFA 挑战链）→ disable。
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/auth/mfa-settings",
         None,
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "MFA 状态应可读: {body}");
     assert_eq!(body["data"]["mfa_enabled"], false);
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         "/api/v1/admin/auth/mfa-settings",
         Some(r#"{"action":"enrol","password":"wrong-password"}"#),
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "错密码应 400: {body}");
     assert_eq!(body["code"], 1002, "密码错误属校验失败: {body}");
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         "/api/v1/admin/auth/mfa-settings",
         Some(&format!(r#"{{"action":"enrol","password":"{pass}"}}"#)),
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "enrol 应成功: {body}");
@@ -680,15 +541,14 @@ async fn misc_endpoints_flow() {
     assert_eq!(body["data"]["mfa_enabled"], false);
 
     let bad_code = "000000".to_string();
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         "/api/v1/admin/auth/mfa-settings",
         Some(
             &json!({"action":"confirm","enrollment_id":enrollment_id,"code":bad_code}).to_string(),
         ),
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "坏码应 400: {body}");
@@ -696,8 +556,8 @@ async fn misc_endpoints_flow() {
     let now = chrono::Utc::now().timestamp();
     let confirm_code =
         chargepilot_platform::totp::generate(&secret, (now / 30) * 30).expect("TOTP 生成");
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         "/api/v1/admin/auth/mfa-settings",
         Some(
@@ -705,7 +565,6 @@ async fn misc_endpoints_flow() {
                 .to_string(),
         ),
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "confirm 应成功: {body}");
@@ -717,13 +576,12 @@ async fn misc_endpoints_flow() {
         .await
         .unwrap();
     assert!(mfa_on, "confirm 后应启用 MFA");
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/auth/me",
         None,
         Some(&a_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "启用后旧会话应失效");
@@ -733,13 +591,12 @@ async fn misc_endpoints_flow() {
     let next_window = ((now / 30) + 1) * 30;
     let wait = (next_window - chrono::Utc::now().timestamp() + 1).max(1) as u64;
     tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         "/api/v1/admin/auth/login",
         Some(&format!(r#"{{"username":"{a_name}","password":"{pass}"}}"#)),
         None,
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "MFA 账号登录应返回挑战: {body}");
@@ -748,13 +605,12 @@ async fn misc_endpoints_flow() {
         .expect("挑战码")
         .to_string();
     let login_code = chargepilot_platform::totp::generate(&secret, next_window).expect("TOTP 生成");
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         "/api/v1/admin/auth/mfa",
         Some(&json!({"mfa_challenge":challenge,"code":login_code}).to_string()),
         None,
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "MFA 验证应通过: {body}");
@@ -763,13 +619,12 @@ async fn misc_endpoints_flow() {
         .expect("新令牌")
         .to_string();
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/auth/mfa-settings",
         None,
         Some(&a_token2),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -781,13 +636,12 @@ async fn misc_endpoints_flow() {
     // disable：需密码 + 未消费步验证码（confirm 消费了 now 步，用下一步）。
     let disable_code =
         chargepilot_platform::totp::generate(&secret, ((now / 30) + 2) * 30).expect("TOTP 生成");
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         "/api/v1/admin/auth/mfa-settings",
         Some(&json!({"action":"disable","password":pass,"code":disable_code}).to_string()),
         Some(&a_token2),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "disable 应成功: {body}");
@@ -798,47 +652,43 @@ async fn misc_endpoints_flow() {
         .await
         .unwrap();
     assert!(!mfa_off, "disable 后应关闭 MFA");
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/auth/mfa-settings",
         None,
         Some(&a_token2),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "disable 后旧会话应失效");
 
     // 5. 管理端 MFA：本人操作 409；对他人 enrol → confirm → disable。
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/admin-users/{a_id}/mfa"),
         Some(r#"{"action":"disable"}"#),
         Some(&super_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "重置未启用账号应静默成功: {body}");
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/admin-users/{super_id}/mfa"),
         Some(r#"{"action":"enrol"}"#),
         Some(&super_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "本人操作应 409: {body}");
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/admin-users/{b_id}/mfa"),
         Some(r#"{"action":"enrol"}"#),
         Some(&super_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "管理端 enrol 应成功: {body}");
@@ -850,44 +700,40 @@ async fn misc_endpoints_flow() {
     assert_eq!(body["data"]["enabled"], false);
     let m_code = chargepilot_platform::totp::generate(&m_secret, chrono::Utc::now().timestamp())
         .expect("TOTP 生成");
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/admin-users/{b_id}/mfa"),
         Some(&json!({"action":"confirm","secret":m_secret,"code":m_code}).to_string()),
         Some(&super_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "管理端 confirm 应成功: {body}");
     assert_eq!(body["data"]["mfa_enabled"], true);
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/admin-users/{b_id}/mfa"),
         Some(r#"{"action":"disable"}"#),
         Some(&super_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "管理端 disable 应成功: {body}");
     assert_eq!(body["data"]["mfa_enabled"], false);
 
     // 管理端 confirm/disable 递增认证版本撤销目标账号旧会话（旧版 bumpAuthVersion 语义）。
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/auth/mfa-settings",
         None,
         Some(&b_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "被管理后目标旧会话应失效");
 
     // 6. 方案预览：普通结算、启动失败场景、坏方案。
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(&router,
         "POST",
         "/api/v1/admin/settings/charging-schemes/preview",
         Some(
@@ -895,7 +741,6 @@ async fn misc_endpoints_flow() {
                 .to_string(),
         ),
         Some(&super_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "预览应成功: {body}");
@@ -908,8 +753,7 @@ async fn misc_endpoints_flow() {
     assert_eq!(body["data"]["refund_cents"], 84, "余款 84 分");
     assert_eq!(body["data"]["package"]["id"], 1);
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(&router,
         "POST",
         "/api/v1/admin/settings/charging-schemes/preview",
         Some(
@@ -917,7 +761,6 @@ async fn misc_endpoints_flow() {
                 .to_string(),
         ),
         Some(&super_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -926,8 +769,8 @@ async fn misc_endpoints_flow() {
 
     let mut broken = preview_scheme();
     broken["name"] = json!("");
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         "/api/v1/admin/settings/charging-schemes/preview",
         Some(
@@ -935,7 +778,6 @@ async fn misc_endpoints_flow() {
                 .to_string(),
         ),
         Some(&super_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "坏方案应 400: {body}");
@@ -963,13 +805,11 @@ async fn misc_endpoints_flow() {
     .await
     .unwrap();
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(&router,
         "GET",
         &format!("/api/v1/admin/settings/device-capabilities?station_id={station_id}&device_id={device_id}"),
         None,
         Some(&super_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "能力查询应成功: {body}");
@@ -988,37 +828,33 @@ async fn misc_endpoints_flow() {
     }
     assert_eq!(body["data"]["reports_energy"], true);
 
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/settings/device-capabilities?device_id=abcdefgh",
         None,
         Some(&super_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "缺 station_id 应 400");
 
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "GET",
         &format!(
             "/api/v1/admin/settings/device-capabilities?station_id={station_id}&device_id=short"
         ),
         None,
         Some(&super_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "设备号过短应 400");
 
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(&router,
         "GET",
         &format!("/api/v1/admin/settings/device-capabilities?station_id={station_id}&device_id=nonexist01"),
         None,
         Some(&super_token),
-        &rand_ip(),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "未知设备应 404");

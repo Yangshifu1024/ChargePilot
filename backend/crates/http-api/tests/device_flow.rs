@@ -8,103 +8,12 @@
 
 //! 阶段 03 批 2 主缝集成测试：设备导入→台账、故障工单全流转、告警认领、C 端站点。
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::ApiDeps;
+mod support;
+
+use axum::http::StatusCode;
 use chargepilot_platform::ids::SegmentAllocator;
-use http_body_util::BodyExt;
-use serde_json::{Value, json};
-use std::sync::Arc;
-use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .unwrap()
-        })
-        .clone()
-}
-
-static FLOW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAllocator>)> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("warn")
-        .try_init();
-    let db_url = env_or_skip("TEST_MYSQL_URL")?;
-    let redis_url = env_or_skip("TEST_REDIS_URL")?;
-    let db = chargepilot_storage::open_pool(&db_url, 8).await.ok()?;
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 50));
-    allocator.warm_up().await.ok()?;
-    let deps = Arc::new(ApiDeps {
-        db: db.clone(),
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: allocator.clone(),
-        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        // 这些 flow 不触达钱包与支付域。
-        wallet: None,
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: false,
-        snapshots: None,
-        charging_stop: None,
-    });
-    Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
-        Arc::new(db),
-        allocator,
-    ))
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
-async fn req(
-    router: axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-    token: Option<&str>,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder().method(method).uri(path).header(
-        "x-real-ip",
-        format!("10.{}.1.{}", rand_suffix(), rand_suffix()),
-    );
-    if let Some(t) = token {
-        builder = builder.header("authorization", format!("Bearer {t}"));
-    }
-    let req = match body {
-        Some(v) => builder
-            .header("content-type", "application/json")
-            .body(Body::from(v.to_string()))
-            .unwrap(),
-        None => builder.body(Body::empty()).unwrap(),
-    };
-    let resp = router.oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
-}
+use serde_json::json;
+use support::{TestApp, flow_lock, rand_suffix, req};
 
 async fn login_super(
     router: &axum::Router,
@@ -117,7 +26,7 @@ async fn login_super(
     sqlx::query("INSERT INTO `admin_user` (`id`, `username`, `password_hash`, `role_id`) VALUES (?, ?, ?, 1)")
         .bind(id).bind(&username).bind(hash).execute(db).await.unwrap();
     let (status, body) = req(
-        router.clone(),
+        router,
         "POST",
         "/api/v1/admin/auth/login",
         Some(json!({"username": username, "password": "super-pass-123"})),
@@ -133,35 +42,24 @@ async fn login_super(
         .map(|s| (s.to_string(), id))
 }
 
-/// 跨测试文件互斥锁：这些 flow 共享开发库，部分断言依赖全局计数
-/// （如"最后一个客户管理员"），用固定端口的 TCP 监听作锁串行各文件。
-fn global_flow_lock() -> std::net::TcpListener {
-    loop {
-        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:39701") {
-            return l;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-}
-
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn import_devices_and_fault_flow() {
-    let _flow_lock = global_flow_lock();
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let _flow_lock = flow_lock();
+    let app = TestApp::builder().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let (token, _super_id) = login_super(&router, &db, &alloc).await.expect("超管登录");
 
     // 站点 + 厂商
-    let (status, body) = req(router.clone(), "POST", "/api/v1/admin/stations", Some(json!({
+    let (status, body) = req(&router, "POST", "/api/v1/admin/stations", Some(json!({
         "name": format!("导入站点{}", rand_suffix()), "longitude": 120.0, "latitude": 30.0, "status": "active"
     })), Some(&token)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let station_id = body["data"]["id"].as_u64().unwrap();
     let vendor_code = format!("v{}", rand_suffix());
-    let (status, body) = req(router.clone(), "POST", "/api/v1/admin/vendors", Some(json!({
+    let (status, body) = req(&router, "POST", "/api/v1/admin/vendors", Some(json!({
         "vendor_code": vendor_code, "vendor_name": "导入厂商", "adapter_class": "dc589", "protocol": "tcp", "status": "enabled"
     })), Some(&token)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -171,7 +69,7 @@ async fn import_devices_and_fault_flow() {
     let import_id = format!("imp-{}", rand_suffix());
     let d1 = format!("DC{}", rand_suffix());
     let d2 = format!("DC{}", rand_suffix());
-    let (status, body) = req(router.clone(), "POST", "/api/v1/admin/device-imports", Some(json!({
+    let (status, body) = req(&router, "POST", "/api/v1/admin/device-imports", Some(json!({
         "import_id": import_id,
         "devices": [
             {"device_id": d1, "vendor_id": vendor_id, "station_id": station_id, "port_count": 2},
@@ -196,7 +94,7 @@ async fn import_devices_and_fault_flow() {
     assert_eq!(gw_ports, 6, "gateway 端口应为 2+4=6");
 
     // 重放：已完成任务静默
-    let (status, body) = req(router.clone(), "POST", "/api/v1/admin/device-imports", Some(json!({
+    let (status, body) = req(&router, "POST", "/api/v1/admin/device-imports", Some(json!({
         "import_id": import_id,
         "devices": [
             {"device_id": d1, "vendor_id": vendor_id, "station_id": station_id, "port_count": 2},
@@ -208,7 +106,7 @@ async fn import_devices_and_fault_flow() {
 
     // 前端「全部状态」以空串发送（axios 照发 status=）：空串须视同未传，返回全部。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/devices?status=&keyword=&page=1&page_size=50",
         None,
@@ -232,7 +130,7 @@ async fn import_devices_and_fault_flow() {
         .await
         .unwrap();
     let (status, _) = req(
-        router.clone(),
+        &router,
         "PUT",
         &format!("/api/v1/admin/devices/{meta_id}/status"),
         Some(json!({"status": "disabled"})),
@@ -243,7 +141,7 @@ async fn import_devices_and_fault_flow() {
 
     // 用户报修（登录 C 端）
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/auth/login",
         Some(json!({"code": "dev:fixer"})),
@@ -253,7 +151,7 @@ async fn import_devices_and_fault_flow() {
     assert_eq!(status, StatusCode::OK);
     let user_token = body["data"]["jwt"].as_str().unwrap().to_string();
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/device/report-fault",
         Some(json!({
@@ -268,7 +166,7 @@ async fn import_devices_and_fault_flow() {
 
     // 后台派单 → 超管自己处理（有 fault.resolve 权限）
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/device-fault-reports/{report_id_u64}/dispatch"),
         Some(json!({
@@ -280,7 +178,7 @@ async fn import_devices_and_fault_flow() {
     assert_eq!(status, StatusCode::OK, "派单应成功: {body}");
     // fixed 无 note → 400
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/device-fault-reports/{report_id_u64}/resolve"),
         Some(json!({"status": "fixed"})),
@@ -290,7 +188,7 @@ async fn import_devices_and_fault_flow() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "fixed 须带处理说明");
     // fixed → closed
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/device-fault-reports/{report_id_u64}/resolve"),
         Some(json!({"status": "fixed", "note": "已拧紧"})),
@@ -299,7 +197,7 @@ async fn import_devices_and_fault_flow() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let (status, _body) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/device-fault-reports/{report_id_u64}/resolve"),
         Some(json!({"status": "closed", "note": "回访确认"})),
@@ -309,7 +207,7 @@ async fn import_devices_and_fault_flow() {
     assert_eq!(status, StatusCode::OK);
     // 回退 closed → fixed 拒绝
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/device-fault-reports/{report_id_u64}/resolve"),
         Some(json!({"status": "fixed", "note": "回退"})),
@@ -333,7 +231,7 @@ async fn import_devices_and_fault_flow() {
     .await
     .unwrap();
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/alerts/{alert_id}/ack"),
         None,
@@ -342,7 +240,7 @@ async fn import_devices_and_fault_flow() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/alerts/{alert_id}/ack"),
         None,
@@ -353,7 +251,7 @@ async fn import_devices_and_fault_flow() {
 
     // C 端站点：nearby 与 detail
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/station/nearby?longitude=120.0&latitude=30.0&radius_km=50",
         None,
@@ -369,7 +267,7 @@ async fn import_devices_and_fault_flow() {
         .any(|s| s["id"].as_u64() == Some(station_id));
     assert!(found, "附近站点应包含新站点");
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/user/station/{station_id}"),
         None,

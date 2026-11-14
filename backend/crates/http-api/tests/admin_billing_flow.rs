@@ -7,142 +7,12 @@
 //! 后台财务端点主缝集成测试：发票列表与双审、计量核实 propose→decide 全流程
 //! 与权限分支、人工退款列表/申请/双审/重试（路径、响应形状与权限码对齐旧版契约）。
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::ApiDeps;
+mod support;
+
+use axum::http::StatusCode;
 use chargepilot_platform::ids::SegmentAllocator;
-use http_body_util::BodyExt;
 use serde_json::{Value, json};
-use std::sync::Arc;
-use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .unwrap()
-        })
-        .clone()
-}
-
-async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAllocator>)> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("warn")
-        .try_init();
-    let db_url = env_or_skip("TEST_MYSQL_URL")?;
-    let redis_url = env_or_skip("TEST_REDIS_URL")?;
-    let db = chargepilot_storage::open_pool(&db_url, 8).await.ok()?;
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 50));
-    allocator.warm_up().await.ok()?;
-    let deps = Arc::new(ApiDeps {
-        db: db.clone(),
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: allocator.clone(),
-        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        // 财务端点直接走 deps.db（settlement 自由函数），不触达钱包/支付域服务。
-        wallet: None,
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: false,
-        snapshots: None,
-        charging_stop: None,
-    });
-    Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
-        Arc::new(db),
-        allocator,
-    ))
-}
-
-fn rand_suffix_int() -> u16 {
-    use rand::RngCore;
-    rand::rng().next_u32() as u16
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
-async fn req(
-    router: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<&str>,
-    token: Option<&str>,
-) -> (StatusCode, Value) {
-    // 登录频次限制按来源 IP 计数：每请求随机 x-real-ip，避免测试间互相限流。
-    let ip = format!(
-        "10.{}.{}.{}",
-        rand_suffix_int(),
-        rand_suffix_int(),
-        rand_suffix_int()
-    );
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(path)
-        .header("x-real-ip", ip);
-    if let Some(t) = token {
-        builder = builder.header("authorization", format!("Bearer {t}"));
-    }
-    let req = match body {
-        Some(b) => builder
-            .header("content-type", "application/json")
-            .body(Body::from(b.to_string()))
-            .unwrap(),
-        None => builder.body(Body::empty()).unwrap(),
-    };
-    let resp = router.clone().oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
-}
-
-async fn login(router: &axum::Router, username: &str, password: &str) -> String {
-    let (status, body) = req(
-        router,
-        "POST",
-        "/api/v1/admin/auth/login",
-        Some(&format!(
-            r#"{{"username":"{username}","password":"{password}"}}"#
-        )),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "登录失败: {body}");
-    body["data"]["access_token"]
-        .as_str()
-        .expect("登录应返回 access_token")
-        .to_string()
-}
-
-/// 跨测试文件互斥锁：财务端点写共享开发库（发票/退款/计量记录），用固定端口
-/// TCP 监听作锁与其他 flow 文件串行（与 admin_management_flow 等同一把锁）。
-fn global_flow_lock() -> std::net::TcpListener {
-    loop {
-        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:39701") {
-            return l;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-}
+use support::{TestApp, flow_lock, login_admin, rand_suffix, req_str};
 
 /// 测试方案：套餐 100 分，电价 50+30 分/kWh（种子与快照共用同一份定义）。
 fn test_scheme() -> Value {
@@ -452,10 +322,11 @@ async fn seed_invoice(db: &sqlx::MySqlPool, alloc: &SegmentAllocator) -> (u64, u
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn invoice_list_and_review_flow() {
-    let _flow_lock = global_flow_lock();
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let _flow_lock = flow_lock();
+    let app = TestApp::builder().with_wallet().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let suf = rand_suffix();
     let fin1 = seed_finance_admin(&db, &alloc, &format!("1{suf}")).await;
     let fin2 = seed_finance_admin(&db, &alloc, &format!("2{suf}")).await;
@@ -463,14 +334,15 @@ async fn invoice_list_and_review_flow() {
     let (invoice_a, user_a) = seed_invoice(&db, &alloc).await;
     let (invoice_b, user_b) = seed_invoice(&db, &alloc).await;
 
-    let t1 = login(&router, &fin1.username, "finance-pass-123").await;
-    let t2 = login(&router, &fin2.username, "finance-pass-123").await;
-    let tr = login(&router, &reader.username, "finance-pass-123").await;
+    let t1 = login_admin(&router, &fin1.username, "finance-pass-123").await;
+    let t2 = login_admin(&router, &fin2.username, "finance-pass-123").await;
+    let tr = login_admin(&router, &reader.username, "finance-pass-123").await;
 
     // 1. 未登录 401；无 invoice.review 权限 403（列表 finance.read 可读）。
-    let (status, body) = req(&router, "GET", "/api/v1/admin/billing/invoices", None, None).await;
+    let (status, body) =
+        req_str(&router, "GET", "/api/v1/admin/billing/invoices", None, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "未登录应 401: {body}");
-    let (status, body) = req(
+    let (status, body) = req_str(
         &router,
         "GET",
         "/api/v1/admin/billing/invoices",
@@ -479,7 +351,7 @@ async fn invoice_list_and_review_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "只读账号应能读发票列表: {body}");
-    let (status, body) = req(
+    let (status, body) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/invoices/{invoice_a}/approve"),
@@ -490,7 +362,7 @@ async fn invoice_list_and_review_flow() {
     assert_eq!(status, StatusCode::FORBIDDEN, "无审核权限应 403: {body}");
     assert_eq!(body["code"], 1003);
     // 角色不是 customer_finance 时服务层拒绝（读者角色审核 → 403）。
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/invoices/{invoice_a}/reject"),
@@ -501,7 +373,7 @@ async fn invoice_list_and_review_flow() {
     assert_eq!(status, StatusCode::FORBIDDEN, "非财务角色应 403");
 
     // 2. 列表形状：invoice_request_id 数字、user_id 与审核人 ID 为字符串、queue 回退。
-    let (_, body) = req(
+    let (_, body) = req_str(
         &router,
         "GET",
         "/api/v1/admin/billing/invoices",
@@ -526,7 +398,7 @@ async fn invoice_list_and_review_flow() {
     assert!(row["created_at"].as_str().is_some());
 
     // 3. 审核校验：approve 缺 HTTPS 链接 400；reject 空原因 400；未知字段 400。
-    let (status, body) = req(
+    let (status, body) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/invoices/{invoice_a}/approve"),
@@ -535,7 +407,7 @@ async fn invoice_list_and_review_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "HTTP 链接应 400: {body}");
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/invoices/{invoice_a}/reject"),
@@ -544,7 +416,7 @@ async fn invoice_list_and_review_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "空白原因应 400");
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/invoices/{invoice_a}/approve"),
@@ -553,7 +425,7 @@ async fn invoice_list_and_review_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "未知字段应 400");
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         "/api/v1/admin/billing/invoices/0/approve",
@@ -564,7 +436,7 @@ async fn invoice_list_and_review_flow() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "ID=0 应 400");
 
     // 4. 双审：首审 awaiting_second → 同人复核 409 → 链接不一致 409 → 一致 approved。
-    let (status, body) = req(
+    let (status, body) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/invoices/{invoice_a}/approve"),
@@ -574,7 +446,7 @@ async fn invoice_list_and_review_flow() {
     .await;
     assert_eq!(status, StatusCode::OK, "首审应成功: {body}");
     assert_eq!(body["data"]["review_status"], "awaiting_second");
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/invoices/{invoice_a}/approve"),
@@ -583,7 +455,7 @@ async fn invoice_list_and_review_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "同人复核应 409");
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/invoices/{invoice_a}/approve"),
@@ -592,7 +464,7 @@ async fn invoice_list_and_review_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "链接不一致应 409");
-    let (status, body) = req(
+    let (status, body) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/invoices/{invoice_a}/approve"),
@@ -611,7 +483,7 @@ async fn invoice_list_and_review_flow() {
     .unwrap();
     assert_eq!(issued, "issued", "双审通过后申请单应 issued");
     // 列表回填 queue_review_status=approved 与审核人字符串 ID。
-    let (_, body) = req(
+    let (_, body) = req_str(
         &router,
         "GET",
         "/api/v1/admin/billing/invoices",
@@ -634,7 +506,7 @@ async fn invoice_list_and_review_flow() {
     assert_eq!(row["invoice_url"], "https://example.test/a.pdf");
 
     // 5. 驳回：单人即可，申请单变 rejected。
-    let (status, body) = req(
+    let (status, body) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/invoices/{invoice_b}/reject"),
@@ -645,7 +517,7 @@ async fn invoice_list_and_review_flow() {
     assert_eq!(status, StatusCode::OK, "驳回应成功: {body}");
     assert_eq!(body["data"]["review_status"], "rejected");
     // 已终态再操作 409。
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/invoices/{invoice_b}/approve"),
@@ -655,7 +527,7 @@ async fn invoice_list_and_review_flow() {
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "已驳回再审批应 409");
     // 不存在的发票 404。
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         "/api/v1/admin/billing/invoices/999999999/approve",
@@ -697,17 +569,18 @@ async fn invoice_list_and_review_flow() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn meter_review_list_propose_decide_flow() {
-    let _flow_lock = global_flow_lock();
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let _flow_lock = flow_lock();
+    let app = TestApp::builder().with_wallet().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let suf = rand_suffix();
     let fin1 = seed_finance_admin(&db, &alloc, &format!("m1{suf}")).await;
     let fin2 = seed_finance_admin(&db, &alloc, &format!("m2{suf}")).await;
     let reader = seed_admin(&db, &alloc, &format!("mr{suf}"), &["finance.read"]).await;
-    let t1 = login(&router, &fin1.username, "finance-pass-123").await;
-    let t2 = login(&router, &fin2.username, "finance-pass-123").await;
-    let tr = login(&router, &reader.username, "finance-pass-123").await;
+    let t1 = login_admin(&router, &fin1.username, "finance-pass-123").await;
+    let t2 = login_admin(&router, &fin2.username, "finance-pass-123").await;
+    let tr = login_admin(&router, &reader.username, "finance-pass-123").await;
 
     // 种子：异常计量（分段合计 250Wh ≠ 总量 200Wh）→ 转人工。
     let (order_id, payment_id, user_id, rule_id, station_id, device_id) =
@@ -755,7 +628,7 @@ async fn meter_review_list_propose_decide_flow() {
             .unwrap();
     // 工单行由计费转人工自动写入（见上方断言），不再手工种行。
 
-    let (status, body) = req(
+    let (status, body) = req_str(
         &router,
         "GET",
         &format!(
@@ -798,7 +671,7 @@ async fn meter_review_list_propose_decide_flow() {
         "初始无核实记录"
     );
     // 非法状态白名单 400；无权限写操作 403。
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "GET",
         "/api/v1/admin/billing/meter-reviews?status=resolved",
@@ -807,7 +680,7 @@ async fn meter_review_list_propose_decide_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "resolved 白名单应可用");
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "GET",
         "/api/v1/admin/billing/meter-reviews?status=bogus",
@@ -816,7 +689,7 @@ async fn meter_review_list_propose_decide_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "非法状态应 400");
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/meter-reviews/{order_id}/propose"),
@@ -842,7 +715,7 @@ async fn meter_review_list_propose_decide_flow() {
     let propose_body = |req_id: &str, reason: &str| {
         json!({"request_id": req_id, "reason": reason, "segments": segments_json}).to_string()
     };
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/meter-reviews/{order_id}/propose"),
@@ -851,7 +724,7 @@ async fn meter_review_list_propose_decide_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "非 UUID 应 400");
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/meter-reviews/{order_id}/propose"),
@@ -863,9 +736,12 @@ async fn meter_review_list_propose_decide_flow() {
 
     // 3. propose 成功：返回完整核实行（status=awaiting_second、corrected 内嵌对象）。
     // request_id 每次运行随机（同号残留会触发旧版重放核对冲突）。
-    let request_id = format!("11111111-1111-4111-8111-{:012}", rand_suffix_int() as u64);
+    let request_id = format!(
+        "11111111-1111-4111-8111-{:012}",
+        u32::from_str_radix(&rand_suffix(), 16).unwrap() as u64
+    );
     let request_id = request_id.as_str();
-    let (status, body) = req(
+    let (status, body) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/meter-reviews/{order_id}/propose"),
@@ -889,7 +765,7 @@ async fn meter_review_list_propose_decide_flow() {
             .is_some()
     );
     // 同请求重放复用首次记录（幂等静默）。
-    let (status, replay) = req(
+    let (status, replay) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/meter-reviews/{order_id}/propose"),
@@ -904,7 +780,7 @@ async fn meter_review_list_propose_decide_flow() {
     assert_eq!(replay["data"]["id"], review_id, "同请求重放应复用首次记录");
 
     // 4. decide 校验：缺 approve 400；驳回缺依据 400。
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/meter-reviews/{order_id}/decide"),
@@ -913,7 +789,7 @@ async fn meter_review_list_propose_decide_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "缺 approve 应 400");
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/meter-reviews/{order_id}/decide"),
@@ -923,7 +799,7 @@ async fn meter_review_list_propose_decide_flow() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "驳回缺依据应 400");
     // 首审人自行复核冲突。
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/meter-reviews/{order_id}/decide"),
@@ -934,7 +810,7 @@ async fn meter_review_list_propose_decide_flow() {
     assert_eq!(status, StatusCode::CONFLICT, "首审人自行复核应 409");
 
     // 5. 第二人批准 → 200 {"approved":true}；任务重排队后重算入账。
-    let (status, body) = req(
+    let (status, body) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/meter-reviews/{order_id}/decide"),
@@ -974,7 +850,7 @@ async fn meter_review_list_propose_decide_flow() {
     assert_eq!(ticket.0, "resolved", "入账后工单应 resolved");
     assert!(ticket.1.is_some(), "resolved_at 应有值");
     // 重复同一决定重放静默成功（旧版幂等分支）。
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/meter-reviews/{order_id}/decide"),
@@ -986,7 +862,7 @@ async fn meter_review_list_propose_decide_flow() {
 
     // 6. 列表回填 reviews；审计断言。工单由计费转人工自动入队、入账事务关闭
     // （pending→resolved），此处按 resolved 列表验证回填。
-    let (_, body) = req(
+    let (_, body) = req_str(
         &router,
         "GET",
         &format!("/api/v1/admin/billing/meter-reviews?status=resolved&keyword={order_no}"),
@@ -1031,10 +907,11 @@ async fn meter_review_list_propose_decide_flow() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn refund_list_create_review_retry_flow() {
-    let _flow_lock = global_flow_lock();
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let _flow_lock = flow_lock();
+    let app = TestApp::builder().with_wallet().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let suf = rand_suffix();
     let fin1 = seed_finance_admin(&db, &alloc, &format!("f1{suf}")).await;
     let fin2 = seed_finance_admin(&db, &alloc, &format!("f2{suf}")).await;
@@ -1045,9 +922,9 @@ async fn refund_list_create_review_retry_flow() {
         &["finance.read", "finance.refund.read"],
     )
     .await;
-    let t1 = login(&router, &fin1.username, "finance-pass-123").await;
-    let t2 = login(&router, &fin2.username, "finance-pass-123").await;
-    let tr = login(&router, &reader.username, "finance-pass-123").await;
+    let t1 = login_admin(&router, &fin1.username, "finance-pass-123").await;
+    let t2 = login_admin(&router, &fin2.username, "finance-pass-123").await;
+    let tr = login_admin(&router, &reader.username, "finance-pass-123").await;
 
     // 种子：完成计费的订单。实耗 2000Wh 理论 160 分超出预付 100 分 → 封顶 100 分且
     // 无余款退款，订单保持 completed（人工退款要求订单未处于退款中）。
@@ -1070,7 +947,7 @@ async fn refund_list_create_review_retry_flow() {
     );
 
     // 1. 列表权限与参数校验。
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "GET",
         "/api/v1/admin/billing/refunds",
@@ -1079,7 +956,7 @@ async fn refund_list_create_review_retry_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "列表应成功");
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "GET",
         "/api/v1/admin/billing/refunds?status=bogus",
@@ -1089,7 +966,7 @@ async fn refund_list_create_review_retry_flow() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "非法状态应 400");
     let long_no = "R".repeat(65);
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "GET",
         &format!("/api/v1/admin/billing/refunds?refund_no={long_no}"),
@@ -1100,9 +977,12 @@ async fn refund_list_create_review_retry_flow() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "退款单号过长应 400");
 
     // 2. 申请校验与幂等：非法 UUID / 非正金额 400；无 order.refund.create 403。
-    let request_id = format!("22222222-2222-4222-8222-{:012}", rand_suffix_int() as u64);
+    let request_id = format!(
+        "22222222-2222-4222-8222-{:012}",
+        u32::from_str_radix(&rand_suffix(), 16).unwrap() as u64
+    );
     let request_id = request_id.as_str();
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/orders/{order_id}/refunds"),
@@ -1111,7 +991,7 @@ async fn refund_list_create_review_retry_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "非法 UUID 应 400");
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/orders/{order_id}/refunds"),
@@ -1122,7 +1002,7 @@ async fn refund_list_create_review_retry_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "零金额应 400");
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/orders/{order_id}/refunds"),
@@ -1136,7 +1016,7 @@ async fn refund_list_create_review_retry_flow() {
     assert_eq!(status, StatusCode::FORBIDDEN, "无申请权限应 403");
 
     // 3. 申请成功 → created=true + MR 单号；重放 created=false 同单号。
-    let (status, body) = req(
+    let (status, body) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/orders/{order_id}/refunds"),
@@ -1155,7 +1035,7 @@ async fn refund_list_create_review_retry_flow() {
         .expect("应返回退款单号")
         .to_string();
     assert!(refund_no.starts_with("MR"));
-    let (status, replay) = req(
+    let (status, replay) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/orders/{order_id}/refunds"),
@@ -1171,7 +1051,7 @@ async fn refund_list_create_review_retry_flow() {
     assert_eq!(replay["data"]["refund_no"], refund_no);
 
     // 4. 列表形状：refund_no 精确过滤命中；扁平字段与旧版 GORM 投影一致。
-    let (status, body) = req(
+    let (status, body) = req_str(
         &router,
         "GET",
         &format!("/api/v1/admin/billing/refunds?page=1&page_size=20&refund_no={refund_no}"),
@@ -1198,7 +1078,7 @@ async fn refund_list_create_review_retry_flow() {
 
     // 5. 双审：approve_comment/reason 校验；首审 awaiting_second → 列表回填 first_signer →
     //    二审 approved → execution_policy=automatic。
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/refunds/{refund_no}/approve"),
@@ -1207,7 +1087,7 @@ async fn refund_list_create_review_retry_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "空白意见应 400");
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/refunds/{refund_no}/reject"),
@@ -1218,9 +1098,12 @@ async fn refund_list_create_review_retry_flow() {
     // 驳回单人即可：第一单验证驳回路径，第二单走双审通过主流程。
     assert_eq!(status, StatusCode::OK, "驳回应成功");
     // 上面已把该单驳回，重新用新 request_id 申请第二单做双审主流程。
-    let request_id2 = format!("33333333-3333-4333-8333-{:012}", rand_suffix_int() as u64);
+    let request_id2 = format!(
+        "33333333-3333-4333-8333-{:012}",
+        u32::from_str_radix(&rand_suffix(), 16).unwrap() as u64
+    );
     let request_id2 = request_id2.as_str();
-    let (status, body2) = req(
+    let (status, body2) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/orders/{order_id}/refunds"),
@@ -1243,7 +1126,7 @@ async fn refund_list_create_review_retry_flow() {
     .unwrap();
     assert_eq!(rejected_status, "rejected", "首单应已驳回");
     // 列表按状态筛选 rejected 命中首单。
-    let (status, body) = req(
+    let (status, body) = req_str(
         &router,
         "GET",
         "/api/v1/admin/billing/refunds?status=rejected",
@@ -1259,7 +1142,7 @@ async fn refund_list_create_review_retry_flow() {
         .any(|r| r["refund_no"] == refund_no);
     assert!(hit, "rejected 筛选应命中首单");
     // 首单已终态后再审 → 409。
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/refunds/{refund_no}/approve"),
@@ -1270,7 +1153,7 @@ async fn refund_list_create_review_retry_flow() {
     assert_eq!(status, StatusCode::CONFLICT, "已驳回单再审应 409");
 
     // 第二单双审通过主流程。
-    let (status, body) = req(
+    let (status, body) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/refunds/{refund_no2}/approve"),
@@ -1281,7 +1164,7 @@ async fn refund_list_create_review_retry_flow() {
     assert_eq!(status, StatusCode::OK, "首审应成功: {body}");
     assert_eq!(body["data"]["review_status"], "awaiting_second");
     // 同人二审冲突。
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/refunds/{refund_no2}/approve"),
@@ -1291,7 +1174,7 @@ async fn refund_list_create_review_retry_flow() {
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "同人二审应 409");
     // 列表回填 first_signer。
-    let (_, body) = req(
+    let (_, body) = req_str(
         &router,
         "GET",
         &format!("/api/v1/admin/billing/refunds?refund_no={refund_no2}"),
@@ -1307,7 +1190,7 @@ async fn refund_list_create_review_retry_flow() {
         "首审快照应为 JSON 文本"
     );
     // 不同人二审通过。
-    let (status, body) = req(
+    let (status, body) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/refunds/{refund_no2}/approve"),
@@ -1331,7 +1214,7 @@ async fn refund_list_create_review_retry_flow() {
     );
 
     // 6. retry：automatic+pending 可重试 → {"scheduled":true}；无权限 403；重试后仍 automatic。
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/refunds/{refund_no2}/retry"),
@@ -1340,7 +1223,7 @@ async fn refund_list_create_review_retry_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "无 retry 权限应 403");
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/refunds/{refund_no2}/retry"),
@@ -1349,7 +1232,7 @@ async fn refund_list_create_review_retry_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "空白重试原因应 400");
-    let (status, body) = req(
+    let (status, body) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/refunds/{refund_no2}/retry"),
@@ -1360,7 +1243,7 @@ async fn refund_list_create_review_retry_flow() {
     assert_eq!(status, StatusCode::OK, "重试应成功: {body}");
     assert_eq!(body["data"]["scheduled"], true);
     // 驳回终态单 retry → 409。
-    let (status, _) = req(
+    let (status, _) = req_str(
         &router,
         "POST",
         &format!("/api/v1/admin/billing/refunds/{refund_no}/retry"),

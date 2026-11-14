@@ -18,6 +18,8 @@
 //! 响应载荷以 json! 内联构造（无集中 DTO 结构体），域级字段基线由各集成流测试
 //! 逐字段断言承担；本缝钉住的是信封外壳、错误码表与路由全集三样「红线契约」。
 
+mod support;
+
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -192,18 +194,6 @@ fn other_methods(method: &str) -> Vec<&'static str> {
         .collect()
 }
 
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .expect("指标记录器")
-        })
-        .clone()
-}
-
 async fn build() -> Router {
     // 惰性连接池：探活不允许命中处理器，池永不真正建连（端口 1 立即拒连兜底）；
     // 号段分配器仅构造不预热（预热需真库，探活路径不会用到它）。
@@ -227,7 +217,7 @@ async fn build() -> Router {
         charging_stop: None,
         snapshots: None,
     });
-    let prometheus = prometheus_handle();
+    let prometheus = support::prometheus_handle();
     chargepilot_http_api::build_router(deps, prometheus, None).await
 }
 

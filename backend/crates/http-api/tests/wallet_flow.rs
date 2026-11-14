@@ -10,86 +10,14 @@
 //! 数据准备用 SQL 直插 + 服务级入账函数（credit_recharge_in_tx，真库事务）；
 //! 断言 HTTP 响应与库中资金行（spec 测试决策）。
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::{ApiDeps, WalletServices};
+mod support;
+
+use support::{TestApp, flow_lock, rand_suffix, req};
+
+use axum::http::StatusCode;
 use chargepilot_platform::ids::SegmentAllocator;
 use chrono::Datelike as _;
-use http_body_util::BodyExt;
-use serde_json::{Value, json};
-use std::sync::Arc;
-use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .unwrap()
-        })
-        .clone()
-}
-
-/// 钱包测试串行锁：资金窗口断言受频次窗口影响，避免并行互扰。
-static FLOW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAllocator>)> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("warn")
-        .try_init();
-    let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
-    };
-    let Some(redis_url) = env_or_skip("TEST_REDIS_URL") else {
-        panic!("集成测试需要 TEST_REDIS_URL（node tasks.mjs test-integration）");
-    };
-    let db = match chargepilot_storage::open_pool(&db_url, 8).await {
-        Ok(d) => d,
-        Err(e) => {
-            panic!("数据库连接失败：{e}");
-        }
-    };
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 60));
-    if let Err(e) = allocator.warm_up().await {
-        panic!("号段预热失败：{e}");
-    }
-    let deps = Arc::new(ApiDeps {
-        db: db.clone(),
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: allocator.clone(),
-        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        wallet: Some(Arc::new(WalletServices::build(db.clone()))),
-        // 这些 flow 不触达支付域；字段存在即可（None 时尚未装配）。
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: false,
-        snapshots: None,
-        charging_stop: None,
-    });
-    Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
-        Arc::new(db),
-        allocator,
-    ))
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
+use serde_json::json;
 
 /// 合法 UUID v4（钱包幂等请求号须通过服务端 uuid 校验）。
 fn rand_uuid() -> String {
@@ -109,39 +37,9 @@ fn rand_uuid() -> String {
     )
 }
 
-async fn req(
-    router: axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-    token: Option<&str>,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder().method(method).uri(path).header(
-        "x-real-ip",
-        format!("10.{}.1.{}", rand_suffix(), rand_suffix()),
-    );
-    if let Some(t) = token {
-        builder = builder.header("authorization", format!("Bearer {t}"));
-    }
-    let req = match body {
-        Some(v) => builder
-            .header("content-type", "application/json")
-            .body(Body::from(v.to_string()))
-            .unwrap(),
-        None => builder.body(Body::empty()).unwrap(),
-    };
-    let resp = router.oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
-}
-
 async fn login_user(router: &axum::Router, tag: &str) -> (String, u64) {
     let (status, body) = req(
-        router.clone(),
+        router,
         "POST",
         "/api/v1/user/auth/login",
         Some(json!({"code": format!("dev:{tag}")})),
@@ -210,7 +108,7 @@ async fn login_finance_as(
     .await
     .unwrap();
     let (status, body) = req(
-        router.clone(),
+        router,
         "POST",
         "/api/v1/admin/auth/login",
         Some(json!({"username": username, "password": "wf-pass-123"})),
@@ -279,29 +177,20 @@ async fn seed_paid_recharge(
 
 /// 跨测试文件互斥锁：这些 flow 共享开发库，部分断言依赖全局计数
 /// （如"最后一个客户管理员"），用固定端口的 TCP 监听作锁串行各文件。
-fn global_flow_lock() -> std::net::TcpListener {
-    loop {
-        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:39701") {
-            return l;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-}
-
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn wallet_refund_flow() {
-    let _flow_lock = global_flow_lock();
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let _flow_lock = flow_lock();
+    let app = TestApp::builder().with_wallet().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let (user_token, uid) = login_user(&router, &format!("wf-{}", rand_suffix())).await;
 
     // 1. 初始余额：500（充值到账后）
     seed_paid_recharge(&db, &alloc, uid, 500).await;
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/wallet/balance",
         None,
@@ -315,7 +204,7 @@ async fn wallet_refund_flow() {
     // 2. 退款申请 300：accepted + 预占拆单
     let request_id = rand_uuid();
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/wallet/refund",
         Some(json!({"request_id": request_id, "amount_cents": 300, "reason": "测试退款"})),
@@ -354,7 +243,7 @@ async fn wallet_refund_flow() {
 
     // 3. 重放同请求：同回执、不重复预占
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/wallet/refund",
         Some(json!({"request_id": request_id, "amount_cents": 300, "reason": "测试退款"})),
@@ -373,7 +262,7 @@ async fn wallet_refund_flow() {
 
     // 4. 金额不同的重放 → 409
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/wallet/refund",
         Some(json!({"request_id": request_id, "amount_cents": 100, "reason": "测试退款"})),
@@ -384,7 +273,7 @@ async fn wallet_refund_flow() {
 
     // 5. 超额申请 → 409（可用余额 500-300=200）
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/wallet/refund",
         Some(json!({"request_id": rand_uuid(), "amount_cents": 300, "reason": ""})),
@@ -408,7 +297,7 @@ async fn wallet_refund_flow() {
     }
     let freeze_request = rand_uuid();
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/wallet/refund",
         Some(json!({"request_id": freeze_request, "amount_cents": 100, "reason": "第三次"})),
@@ -430,7 +319,7 @@ async fn wallet_refund_flow() {
 
     // 7. 冻结期间新申请 → 409（Frozen）
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/wallet/refund",
         Some(json!({"request_id": rand_uuid(), "amount_cents": 50, "reason": ""})),
@@ -441,7 +330,7 @@ async fn wallet_refund_flow() {
 
     // 8. C 端退款进度视图：manual_review（无审核）
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/wallet/refunds",
         None,
@@ -466,7 +355,7 @@ async fn wallet_refund_flow() {
     )
     .await;
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/billing/wallet-risks",
         None,
@@ -488,7 +377,7 @@ async fn wallet_refund_flow() {
     )
     .await;
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/billing/wallet-risks/{freeze_request}/release"),
         Some(json!({"comment": "客服尝试解冻"})),
@@ -499,7 +388,7 @@ async fn wallet_refund_flow() {
 
     // 10. 审核：批准 → 预占拆单 + 审核回执
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/billing/wallet-risks/{freeze_request}/review"),
         Some(json!({"approved": true, "comment": "核实通过"})),
@@ -525,7 +414,7 @@ async fn wallet_refund_flow() {
 
     // 11. 审核重放：同人同结论同依据 → 同回执
     let (status, body2) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/billing/wallet-risks/{freeze_request}/review"),
         Some(json!({"approved": true, "comment": "核实通过"})),
@@ -537,7 +426,7 @@ async fn wallet_refund_flow() {
 
     // 12. 解冻：财务解冻 → freeze unfrozen + 钱包恢复 active
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/billing/wallet-risks/{freeze_request}/release"),
         Some(json!({"comment": "风险解除"})),
@@ -565,7 +454,7 @@ async fn wallet_refund_flow() {
 
     // 13. C 端视图更新：已审核（approved）后不再是 manual_review
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/wallet/refunds",
         None,
@@ -588,7 +477,7 @@ async fn wallet_refund_flow() {
 
     // 14. 余额查询：frozen 400、available 100
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/wallet/balance",
         None,
@@ -608,11 +497,11 @@ async fn wallet_refund_flow() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn wallet_review_rejection_path() {
-    let _flow_lock = global_flow_lock();
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let _flow_lock = flow_lock();
+    let app = TestApp::builder().with_wallet().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let (user_token, uid) = login_user(&router, &format!("wf-{}", rand_suffix())).await;
     seed_paid_recharge(&db, &alloc, uid, 100).await;
 
@@ -631,7 +520,7 @@ async fn wallet_review_rejection_path() {
     }
     let request_id = rand_uuid();
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/wallet/refund",
         Some(json!({"request_id": request_id, "amount_cents": 50, "reason": "驳回路径"})),
@@ -650,7 +539,7 @@ async fn wallet_review_rejection_path() {
     .await;
     // 驳回：不预占，展示 rejected
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/billing/wallet-risks/{request_id}/review"),
         Some(json!({"approved": false, "comment": "证据不足驳回"})),
@@ -667,7 +556,7 @@ async fn wallet_review_rejection_path() {
     assert_eq!(frozen, 0, "驳回不预占");
     // C 端视图：rejected
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/wallet/refunds",
         None,

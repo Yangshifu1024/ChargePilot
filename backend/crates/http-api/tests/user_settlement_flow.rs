@@ -11,85 +11,14 @@
 //! 数据准备用 SQL 直插 + settlement 的 process_job 真实入账（断言账单由
 //! 计费事务自动签发，而非测试手动补签）。
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::ApiDeps;
+mod support;
+
+use axum::http::StatusCode;
 use chargepilot_platform::ids::SegmentAllocator;
-use http_body_util::BodyExt;
 use serde_json::{Value, json};
-use std::sync::Arc;
-use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .unwrap()
-        })
-        .clone()
-}
+use support::{TestApp, rand_suffix, req};
 
 /// 资金批次互斥锁（共享 dev 库的 flow 测试串行）。
-static FLOW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAllocator>)> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("warn")
-        .try_init();
-    let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
-    };
-    let Some(redis_url) = env_or_skip("TEST_REDIS_URL") else {
-        panic!("集成测试需要 TEST_REDIS_URL（node tasks.mjs test-integration）");
-    };
-    let db = match chargepilot_storage::open_pool(&db_url, 8).await {
-        Ok(d) => d,
-        Err(e) => {
-            panic!("数据库连接失败：{e}");
-        }
-    };
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 60));
-    if let Err(e) = allocator.warm_up().await {
-        panic!("号段预热失败：{e}");
-    }
-    let deps = Arc::new(ApiDeps {
-        db: db.clone(),
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: allocator.clone(),
-        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        wallet: None,
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: false,
-        charging_stop: None,
-        snapshots: None,
-    });
-    Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
-        Arc::new(db),
-        allocator,
-    ))
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
 /// 合法 UUID v4（发票申请的幂等请求号须通过服务端 uuid 校验）。
 fn rand_uuid() -> String {
     use rand::RngCore;
@@ -108,39 +37,9 @@ fn rand_uuid() -> String {
     )
 }
 
-async fn req(
-    router: axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-    token: Option<&str>,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder().method(method).uri(path).header(
-        "x-real-ip",
-        format!("10.{}.1.{}", rand_suffix(), rand_suffix()),
-    );
-    if let Some(t) = token {
-        builder = builder.header("authorization", format!("Bearer {t}"));
-    }
-    let req = match body {
-        Some(v) => builder
-            .header("content-type", "application/json")
-            .body(Body::from(v.to_string()))
-            .unwrap(),
-        None => builder.body(Body::empty()).unwrap(),
-    };
-    let resp = router.oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
-}
-
 async fn login_user(router: &axum::Router, tag: &str) -> (String, u64) {
     let (status, body) = req(
-        router.clone(),
+        router,
         "POST",
         "/api/v1/user/auth/login",
         Some(json!({"code": format!("dev:{tag}")})),
@@ -345,10 +244,10 @@ async fn cleanup_invoices(db: &sqlx::MySqlPool, uid: u64) {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn bill_lifecycle_read_idempotent_and_forbidden() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let app = TestApp::builder().with_wallet().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let (token_a, uid_a) = login_user(&router, &format!("us-a-{}", rand_suffix())).await;
     let (token_b, _) = login_user(&router, &format!("us-b-{}", rand_suffix())).await;
     let station_id = alloc.next_id().await.unwrap();
@@ -388,7 +287,7 @@ async fn bill_lifecycle_read_idempotent_and_forbidden() {
 
     // 列表：一条记录，字段齐（id/user_id 字符串、时间 +00:00、read 未读）。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/bills?page=1&page_size=20",
         None,
@@ -426,7 +325,7 @@ async fn bill_lifecycle_read_idempotent_and_forbidden() {
 
     // 详情：字段与列表一致；他人账单编号不存在（越权与缺失一致 404）。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/user/bills/{bill_id}"),
         None,
@@ -438,7 +337,7 @@ async fn bill_lifecycle_read_idempotent_and_forbidden() {
     assert_eq!(body["data"]["total_cents"], 16);
 
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/user/bills/{bill_id}"),
         None,
@@ -450,7 +349,7 @@ async fn bill_lifecycle_read_idempotent_and_forbidden() {
 
     // 已读幂等：两次 POST /read 均成功，read_at 不变。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/user/bills/{bill_id}/read"),
         None,
@@ -470,7 +369,7 @@ async fn bill_lifecycle_read_idempotent_and_forbidden() {
     .await
     .expect("已读记录应存在");
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/user/bills/{bill_id}/read"),
         None,
@@ -492,14 +391,7 @@ async fn bill_lifecycle_read_idempotent_and_forbidden() {
     assert_eq!(read_at_second, 1, "重复已读 read_at 不变");
 
     // 列表已读状态翻转；越权 read 同 404。
-    let (status, body) = req(
-        router.clone(),
-        "GET",
-        "/api/v1/user/bills",
-        None,
-        Some(&token_a),
-    )
-    .await;
+    let (status, body) = req(&router, "GET", "/api/v1/user/bills", None, Some(&token_a)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         body["data"]["items"][0]["read"], true,
@@ -507,7 +399,7 @@ async fn bill_lifecycle_read_idempotent_and_forbidden() {
     );
 
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/user/bills/{bill_id}/read"),
         None,
@@ -518,7 +410,7 @@ async fn bill_lifecycle_read_idempotent_and_forbidden() {
     assert_eq!(body["code"], 1004);
 
     // 无凭据 401（鉴权先行）。
-    let (status, _) = req(router.clone(), "GET", "/api/v1/user/bills", None, None).await;
+    let (status, _) = req(&router, "GET", "/api/v1/user/bills", None, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     cleanup(db.as_ref(), &[seed]).await;
@@ -536,10 +428,10 @@ async fn bill_lifecycle_read_idempotent_and_forbidden() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn invoice_apply_idempotent_conflict_and_my_list() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let app = TestApp::builder().with_wallet().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let (token_a, uid_a) = login_user(&router, &format!("inv-a-{}", rand_suffix())).await;
     let (token_b, _uid_b) = login_user(&router, &format!("inv-b-{}", rand_suffix())).await;
     let station_id = alloc.next_id().await.unwrap();
@@ -578,7 +470,7 @@ async fn invoice_apply_idempotent_conflict_and_my_list() {
     };
     let request_id = rand_uuid();
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/invoice/apply",
         Some(apply_body(&request_id, &order_no)),
@@ -599,7 +491,7 @@ async fn invoice_apply_idempotent_conflict_and_my_list() {
 
     // 同请求号同内容重放：幂等复用同一申请。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/invoice/apply",
         Some(apply_body(&request_id, &order_no)),
@@ -618,7 +510,7 @@ async fn invoice_apply_idempotent_conflict_and_my_list() {
 
     // 换请求号同订单：一单一份，409 冲突。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/invoice/apply",
         Some(apply_body(&rand_uuid(), &order_no)),
@@ -632,7 +524,7 @@ async fn invoice_apply_idempotent_conflict_and_my_list() {
     let mut mismatched = apply_body(&request_id, &order_no);
     mismatched["title"] = json!("另一个抬头");
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/invoice/apply",
         Some(mismatched),
@@ -643,7 +535,7 @@ async fn invoice_apply_idempotent_conflict_and_my_list() {
 
     // 他人订单：归属不符 404。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/invoice/apply",
         Some(apply_body(&rand_uuid(), &order_no)),
@@ -655,7 +547,7 @@ async fn invoice_apply_idempotent_conflict_and_my_list() {
 
     // my 列表：一条 pending 申请，字段齐。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/invoice/my?page=1&page_size=20",
         None,
@@ -677,7 +569,7 @@ async fn invoice_apply_idempotent_conflict_and_my_list() {
     );
     // B 的列表为空（数据归属隔离）。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/invoice/my",
         None,

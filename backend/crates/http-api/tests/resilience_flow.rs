@@ -12,29 +12,16 @@
 //! 3. 进程重启：结束回执同内容重放幂等 → 状态收敛、计费任务不翻倍。
 //! 4. 遥测缓冲满：明细丢弃计数增长、落库明细与聚合完好（分级语义固化）。
 
+mod support;
+
 use chargepilot_events::EventDispatcher as _;
 use chargepilot_gateway_runtime::TelemetryBuffer;
 use chargepilot_platform::ids::SegmentAllocator;
 use std::sync::Arc;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-static FLOW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+use support::{flow_lock, mysql_url, rand_suffix};
 
 /// 测试统一用户 ID（订单与意图同一用户）。
 const USER_ID: u64 = 9001;
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
 
 /// 支付订单号分配辅助（intent 必填 payment_order_id，退款登记 JOIN 此表）。
 async fn alloc_next_payment_id(alloc: &SegmentAllocator) -> u64 {
@@ -101,10 +88,8 @@ async fn cleanup_order(
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn slow_receipt_sweeper_fails_order_with_refund() {
-    let _guard = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
-    };
+    let _flow_lock = flow_lock();
+    let db_url = mysql_url();
     let db = chargepilot_storage::open_pool(&db_url, 4).await.unwrap();
     let alloc = SegmentAllocator::new(db.clone(), 60);
     alloc.warm_up().await.unwrap();
@@ -230,10 +215,8 @@ async fn slow_receipt_sweeper_fails_order_with_refund() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn event_dispatch_failure_replays() {
-    let _guard = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
-    };
+    let _flow_lock = flow_lock();
+    let db_url = mysql_url();
     let db = chargepilot_storage::open_pool(&db_url, 4).await.unwrap();
     let alloc = SegmentAllocator::new(db.clone(), 60);
     alloc.warm_up().await.unwrap();
@@ -387,10 +370,8 @@ async fn event_dispatch_failure_replays() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn restart_replays_end_receipt_idempotently() {
-    let _guard = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
-    };
+    let _flow_lock = flow_lock();
+    let db_url = mysql_url();
     let db = chargepilot_storage::open_pool(&db_url, 4).await.unwrap();
     let alloc = SegmentAllocator::new(db.clone(), 60);
     alloc.warm_up().await.unwrap();
@@ -498,10 +479,8 @@ async fn restart_replays_end_receipt_idempotently() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn telemetry_buffer_overflow_drops_oldest() {
-    let _guard = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
-    };
+    let _flow_lock = flow_lock();
+    let db_url = mysql_url();
     let db = chargepilot_storage::open_pool(&db_url, 4).await.unwrap();
     let device_id = format!("resil-buf-{}", rand_suffix());
     let buffer = TelemetryBuffer::new();

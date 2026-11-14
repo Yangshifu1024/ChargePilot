@@ -12,87 +12,19 @@
 //! → 定时清理回收文件。管理端走 HTTP，到期清理直调模块函数（旧版定时循环
 //! 调用缝）。EXPORT_DIR 是进程级环境变量，全部场景必须在同一测试内串行完成。
 
+mod support;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::ApiDeps;
 use chargepilot_mod_export::cleanup_expired;
 use chargepilot_platform::ids::SegmentAllocator;
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
-use std::sync::Arc;
+use support::{TestApp, flow_lock, rand_suffix, req};
 use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .unwrap()
-        })
-        .clone()
-}
 
 /// 导出域测试串行锁（共享 dev 库的 flow 测试互斥；EXPORT_DIR 环境变量同样
 /// 是进程级状态，必须在锁内改读）。
-static FLOW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAllocator>)> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("warn")
-        .try_init();
-    let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
-    };
-    let Some(redis_url) = env_or_skip("TEST_REDIS_URL") else {
-        panic!("集成测试需要 TEST_REDIS_URL（node tasks.mjs test-integration）");
-    };
-    let db = match chargepilot_storage::open_pool(&db_url, 8).await {
-        Ok(d) => d,
-        Err(e) => {
-            panic!("数据库连接失败：{e}");
-        }
-    };
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 60));
-    if let Err(e) = allocator.warm_up().await {
-        panic!("号段预热失败：{e}");
-    }
-    let deps = Arc::new(ApiDeps {
-        db: db.clone(),
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: allocator.clone(),
-        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        wallet: None,
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: false,
-        snapshots: None,
-        charging_stop: None,
-    });
-    Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
-        Arc::new(db),
-        allocator,
-    ))
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
 /// 生成 UUID 形态的请求号（8-4-4-4-12 十六进制），前缀固定便于清理。
 fn flow_uuid() -> String {
     let (s1, s2, s3) = (rand_suffix(), rand_suffix(), rand_suffix());
@@ -140,14 +72,10 @@ async fn req_raw(
     (status, headers, bytes)
 }
 
-fn body_json(bytes: &[u8]) -> Value {
-    serde_json::from_slice(bytes).unwrap_or(Value::Null)
-}
-
 /// 重查任务详情，返回 row_count（下载行数核对用）。
 async fn body_json_lookup(router: &axum::Router, token: &str, task_id: u64) -> i64 {
     let (_, body) = req(
-        router.clone(),
+        router,
         "GET",
         &format!("/api/v1/admin/exports/{task_id}"),
         None,
@@ -155,17 +83,6 @@ async fn body_json_lookup(router: &axum::Router, token: &str, task_id: u64) -> i
     )
     .await;
     body["data"]["row_count"].as_i64().unwrap()
-}
-
-async fn req(
-    router: axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-    token: Option<&str>,
-) -> (StatusCode, Value) {
-    let (status, _, bytes) = req_raw(router, method, path, body, token).await;
-    (status, body_json(&bytes))
 }
 
 /// 建独立角色 + 权限的管理员并登录，返回 (token, admin_id, role_id)。
@@ -211,7 +128,7 @@ async fn login_export_admin(
     .await
     .unwrap();
     let (status, body) = req(
-        router.clone(),
+        router,
         "POST",
         "/api/v1/admin/auth/login",
         Some(json!({"username": username, "password": "ex-pass-123"})),
@@ -297,10 +214,11 @@ async fn cleanup(
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
-    let _guard = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let _flow_lock = flow_lock();
+    let app = TestApp::builder().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let export_dir = std::env::temp_dir()
         .join(format!("chargepilot-export-test-{}", rand_suffix()))
         .to_string_lossy()
@@ -325,7 +243,7 @@ async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
 
     // 资源清单：登记资源与格式、行上限。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/exports/resources",
         None,
@@ -346,7 +264,7 @@ async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
     let mut task_nos: Vec<String> = Vec::new();
     let request_id = flow_uuid();
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/exports",
         Some(json!({"request_id": request_id, "resource": "orders", "format": "csv"})),
@@ -387,7 +305,7 @@ async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
 
     // 详情与列表。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/exports/{task_id}"),
         None,
@@ -397,7 +315,7 @@ async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
     assert_eq!(status, StatusCode::OK, "详情失败: {body}");
     assert_eq!(body["data"]["status"], "completed");
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/exports?status=completed&page=1&page_size=20",
         None,
@@ -450,7 +368,7 @@ async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
     }
     let audits_before = audits_of(&db, admin_a).await;
     let (status, replay) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/exports",
         Some(json!({"request_id": request_id, "resource": "orders", "format": "csv"})),
@@ -467,7 +385,7 @@ async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
 
     // 同请求号换参数（同资源换格式）：重放比对失败 409 冲突。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/exports",
         Some(json!({"request_id": request_id, "resource": "orders", "format": "xlsx"})),
@@ -478,7 +396,7 @@ async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
 
     // XLSX 导出：PK(Zip) 魔数 + 专用 MIME；行列数不逐字节比对。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/exports",
         Some(json!({"request_id": flow_uuid(), "resource": "orders", "format": "xlsx"})),
@@ -511,7 +429,7 @@ async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
 
     // 无效格式与未登记资源：400。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/exports",
         Some(json!({"request_id": flow_uuid(), "resource": "orders", "format": "pdf"})),
@@ -520,7 +438,7 @@ async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/exports",
         Some(json!({"request_id": flow_uuid(), "resource": "secret", "format": "csv"})),
@@ -608,7 +526,7 @@ async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
     .await
     .unwrap();
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/exports",
         Some(json!({"request_id": flow_uuid(), "resource": "bills",
@@ -619,7 +537,7 @@ async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "受限账单导出应 403: {body}");
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/exports",
         Some(json!({"request_id": flow_uuid(), "resource": "orders", "format": "csv"})),
@@ -631,7 +549,7 @@ async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
     assert_eq!(body["data"]["row_count"], 0, "受限范围应为 0 行: {body}");
     task_nos.push(body["data"]["task_no"].as_str().unwrap().to_string());
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/exports/resources",
         None,

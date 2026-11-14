@@ -8,91 +8,12 @@
 //! 事件时间线、过程采样游标、订单关联退款与支付单列表（对齐旧版契约的响应形状）。
 //! 依赖真实 MySQL（TEST_MYSQL_URL）与 Redis（TEST_REDIS_URL），种子尾部自清理。
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::ApiDeps;
+mod support;
+
+use axum::http::StatusCode;
 use chargepilot_platform::ids::SegmentAllocator;
-use http_body_util::BodyExt;
 use serde_json::{Value, json};
-use std::sync::Arc;
-use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAllocator>)> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("warn")
-        .try_init();
-    let db_url = env_or_skip("TEST_MYSQL_URL")?;
-    let redis_url = env_or_skip("TEST_REDIS_URL")?;
-    let db = chargepilot_storage::open_pool(&db_url, 8).await.ok()?;
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 50));
-    allocator.warm_up().await.ok()?;
-    let deps = Arc::new(ApiDeps {
-        db: db.clone(),
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: allocator.clone(),
-        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        // 本批次只触达订单与支付单只读查询。
-        wallet: None,
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: false,
-        snapshots: None,
-        charging_stop: None,
-    });
-    // admin_orders 路由尚未挂进 build_router（主代理统一接线），这里直联合并：
-    // 后台登录 + 本批订单端点，覆盖同一鉴权与响应信封链路。
-    let router = axum::Router::new()
-        .merge(chargepilot_http_api::admin_orders::router())
-        .merge(chargepilot_http_api::admin_auth::router())
-        .with_state(deps);
-    Some((router, Arc::new(db), allocator))
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
-async fn req(
-    router: axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-    token: Option<&str>,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder().method(method).uri(path).header(
-        "x-real-ip",
-        format!("10.{}.{}.{}", rand_suffix(), rand_suffix(), rand_suffix()),
-    );
-    if let Some(t) = token {
-        builder = builder.header("authorization", format!("Bearer {t}"));
-    }
-    let req = match body {
-        Some(v) => builder
-            .header("content-type", "application/json")
-            .body(Body::from(v.to_string()))
-            .unwrap(),
-        None => builder.body(Body::empty()).unwrap(),
-    };
-    let resp = router.oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
-}
+use support::{TestApp, flow_lock, rand_suffix, req};
 
 /// 超管登录（role_id=1 拥有 order.read 与 order.refund.create），返回令牌与管理员 ID。
 async fn login_super(
@@ -112,7 +33,7 @@ async fn login_super(
         .await
         .unwrap();
     let (status, body) = req(
-        router.clone(),
+        router,
         "POST",
         "/api/v1/admin/auth/login",
         Some(json!({"username": username, "password": "order-pass-123"})),
@@ -125,16 +46,6 @@ async fn login_super(
         .expect("登录应返回令牌")
         .to_string();
     (token, id)
-}
-
-/// 跨测试文件互斥锁：共享开发库的 flow 测试以固定端口 TCP 监听串行。
-fn global_flow_lock() -> std::net::TcpListener {
-    loop {
-        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:39701") {
-            return l;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
 }
 
 /// 测试方案：amount 套餐 1000 分（与详情快照断言共用同一份定义）。
@@ -619,10 +530,11 @@ fn find_item(body: &Value, order_id: u64) -> &Value {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn admin_orders_flow() {
-    let _flow_lock = global_flow_lock();
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let _flow_lock = flow_lock();
+    let app = TestApp::builder().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let (token, admin_id) = login_super(&router, &db, &alloc).await;
     let seed = seed_all(db.as_ref(), alloc.as_ref())
         .await
@@ -633,7 +545,7 @@ async fn admin_orders_flow() {
         "/api/v1/admin/orders?station_id={}&page=1&page_size=100",
         seed.station_id
     );
-    let (status, body) = req(router.clone(), "GET", &path, None, Some(&token)).await;
+    let (status, body) = req(&router, "GET", &path, None, Some(&token)).await;
     assert_eq!(status, StatusCode::OK, "列表应成功: {body}");
     assert_eq!(body["code"], 0);
     // 站点过滤命中带站点意图的种子单（order_1/order_2）；order_3 刻意无
@@ -654,7 +566,7 @@ async fn admin_orders_flow() {
 
     // ---- 列表：order_no 精确筛选与整行字段契约 ----
     let path = format!("/api/v1/admin/orders?order_no={}", seed.order_1.order_no);
-    let (status, body) = req(router.clone(), "GET", &path, None, Some(&token)).await;
+    let (status, body) = req(&router, "GET", &path, None, Some(&token)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["data"]["total"], 1);
     let row = &body["data"]["items"][0];
@@ -711,13 +623,13 @@ async fn admin_orders_flow() {
     // ---- 列表：各筛选维度 ----
     // 设备号。
     let path = format!("/api/v1/admin/orders?device_id={}", seed.order_2.device_id);
-    let (status, body) = req(router.clone(), "GET", &path, None, Some(&token)).await;
+    let (status, body) = req(&router, "GET", &path, None, Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["total"], 1);
     assert_eq!(body["data"]["items"][0]["order_id"], seed.order_2.id);
     // 业务状态 + live_unavailable（充电中单）。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/orders?business_status=charging&page_size=100",
         None,
@@ -737,7 +649,7 @@ async fn admin_orders_flow() {
     assert!(row["meter_kwh"].is_null(), "充电中单尚无终读数");
     // 支付状态（未支付单）。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/orders?payment_status=pending&page_size=100",
         None,
@@ -755,7 +667,7 @@ async fn admin_orders_flow() {
     assert_eq!(row["duration_seconds"], Value::Null);
     // 启动来源。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/orders?start_source=card&page_size=100",
         None,
@@ -769,7 +681,7 @@ async fn admin_orders_flow() {
     );
     // 站点。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!(
             "/api/v1/admin/orders?station_id={}&page_size=100",
@@ -790,7 +702,7 @@ async fn admin_orders_flow() {
     assert!(!ids.contains(&seed.order_3.id), "无意图单不落入站点过滤");
     // 内部状态。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/orders?status=charging&page_size=100",
         None,
@@ -808,7 +720,7 @@ async fn admin_orders_flow() {
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let to = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/orders?started_from={from}&started_to={to}&page_size=100"),
         None,
@@ -834,7 +746,7 @@ async fn admin_orders_flow() {
 
     // ---- 列表：分页 ----
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!(
             "/api/v1/admin/orders?device_id={}&page=1&page_size=1",
@@ -867,7 +779,7 @@ async fn admin_orders_flow() {
         ("status=bogus", "关键词过长或状态无效"),
     ] {
         let (status, body) = req(
-            router.clone(),
+            &router,
             "GET",
             &format!("/api/v1/admin/orders?{query}"),
             None,
@@ -883,7 +795,7 @@ async fn admin_orders_flow() {
     let bad_to = (chrono::Utc::now() - chrono::Duration::hours(1))
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/orders?started_from={bad_from}&started_to={bad_to}"),
         None,
@@ -894,7 +806,7 @@ async fn admin_orders_flow() {
     assert_eq!(body["message"], "开始时间不能晚于结束时间");
     // 分页越界。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/orders?page_size=101",
         None,
@@ -905,12 +817,12 @@ async fn admin_orders_flow() {
     assert_eq!(body["message"], "分页参数无效：page_size 为 1–100");
 
     // ---- 无令牌：401 ----
-    let (status, body) = req(router.clone(), "GET", "/api/v1/admin/orders", None, None).await;
+    let (status, body) = req(&router, "GET", "/api/v1/admin/orders", None, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
 
     // ---- 详情：完整契约 ----
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/orders/{}", seed.order_1.id),
         None,
@@ -956,7 +868,7 @@ async fn admin_orders_flow() {
 
     // 充电中详情：live_unavailable；card 累计挂到 selected_package.card。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/orders/{}", seed.order_2.id),
         None,
@@ -981,7 +893,7 @@ async fn admin_orders_flow() {
     // 缺失与非法 ID。
     let missing = alloc.next_id().await.unwrap();
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/orders/{missing}"),
         None,
@@ -991,20 +903,13 @@ async fn admin_orders_flow() {
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(body["code"], 1004);
     assert_eq!(body["message"], "记录不存在或已删除");
-    let (status, body) = req(
-        router.clone(),
-        "GET",
-        "/api/v1/admin/orders/0",
-        None,
-        Some(&token),
-    )
-    .await;
+    let (status, body) = req(&router, "GET", "/api/v1/admin/orders/0", None, Some(&token)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["message"], "ID 必须为正整数");
 
     // ---- 时间线 ----
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/orders/{}/timeline", seed.order_1.id),
         None,
@@ -1023,7 +928,7 @@ async fn admin_orders_flow() {
     assert_eq!(events[1]["event"], "charging_started", "按发生时间排序");
     // 空时间线（订单存在但无事件）。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/orders/{}/timeline", seed.order_3.id),
         None,
@@ -1039,7 +944,7 @@ async fn admin_orders_flow() {
     );
     // 缺失订单不是空时间线。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/orders/{missing}/timeline"),
         None,
@@ -1052,7 +957,7 @@ async fn admin_orders_flow() {
     // ---- 过程采样：游标分页 ----
     let ids = &seed.order_1.process_ids;
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/orders/{}/process", seed.order_1.id),
         None,
@@ -1076,7 +981,7 @@ async fn admin_orders_flow() {
     assert!(points[0]["ts"].as_str().is_some());
     // 游标 + limit=1：第二行，游标指向该行 ID。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!(
             "/api/v1/admin/orders/{}/process?after_id={}&limit=1",
@@ -1096,7 +1001,7 @@ async fn admin_orders_flow() {
     );
     // limit=2：两行 + 游标。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/orders/{}/process?limit=2", seed.order_1.id),
         None,
@@ -1108,7 +1013,7 @@ async fn admin_orders_flow() {
     assert_eq!(body["data"]["next_after_id"], ids[1]);
     // 游标越过末行：空数组。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!(
             "/api/v1/admin/orders/{}/process?after_id={}",
@@ -1123,7 +1028,7 @@ async fn admin_orders_flow() {
     assert_eq!(body["data"]["next_after_id"], Value::Null);
     // 无过程数据的订单：空数组。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/orders/{}/process", seed.order_3.id),
         None,
@@ -1134,7 +1039,7 @@ async fn admin_orders_flow() {
     assert_eq!(body["data"]["items"].as_array().unwrap().len(), 0);
     // 缺失订单。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/orders/{missing}/process"),
         None,
@@ -1151,7 +1056,7 @@ async fn admin_orders_flow() {
         "after_id=",
     ] {
         let (status, body) = req(
-            router.clone(),
+            &router,
             "GET",
             &format!("/api/v1/admin/orders/{}/process?{query}", seed.order_1.id),
             None,
@@ -1163,7 +1068,7 @@ async fn admin_orders_flow() {
     }
     // 上边界 limit=2000 合法。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!(
             "/api/v1/admin/orders/{}/process?limit=2000",
@@ -1177,7 +1082,7 @@ async fn admin_orders_flow() {
 
     // ---- 订单关联退款单 ----
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/orders/{}/refunds", seed.order_1.id),
         None,
@@ -1200,7 +1105,7 @@ async fn admin_orders_flow() {
     assert!(refund["created_at"].as_str().is_some());
     // 无退款订单：空数组。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/orders/{}/refunds", seed.order_3.id),
         None,
@@ -1212,7 +1117,7 @@ async fn admin_orders_flow() {
     assert_eq!(body["data"]["items"].as_array().unwrap().len(), 0);
     // 缺失订单。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/orders/{missing}/refunds"),
         None,
@@ -1223,7 +1128,7 @@ async fn admin_orders_flow() {
 
     // ---- 支付单列表 ----
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/payment-orders?page=1&page_size=100",
         None,
@@ -1274,7 +1179,7 @@ async fn admin_orders_flow() {
 
     // 筛选。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/payment-orders?order_no=P{}", seed.pay_3),
         None,
@@ -1285,7 +1190,7 @@ async fn admin_orders_flow() {
     assert_eq!(body["data"]["total"], 1);
     assert_eq!(body["data"]["items"][0]["payment_order_id"], seed.pay_3);
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/payment-orders?biz_type=wallet_recharge&page_size=100",
         None,
@@ -1302,7 +1207,7 @@ async fn admin_orders_flow() {
     assert!(ids.contains(&seed.pay_3));
     assert!(!ids.contains(&seed.order_1.payment_id));
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/payment-orders?payment_status=pending&pay_method=wechat&page_size=100",
         None,
@@ -1321,7 +1226,7 @@ async fn admin_orders_flow() {
     let from = (chrono::Utc::now() - chrono::Duration::hours(1))
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/payment-orders?created_from={from}&page_size=100"),
         None,
@@ -1359,7 +1264,7 @@ async fn admin_orders_flow() {
         ),
     ] {
         let (status, body) = req(
-            router.clone(),
+            &router,
             "GET",
             &format!("/api/v1/admin/payment-orders?{query}"),
             None,
@@ -1369,14 +1274,7 @@ async fn admin_orders_flow() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{query}: {body}");
         assert_eq!(body["message"], message, "{query}: {body}");
     }
-    let (status, _) = req(
-        router.clone(),
-        "GET",
-        "/api/v1/admin/payment-orders",
-        None,
-        None,
-    )
-    .await;
+    let (status, _) = req(&router, "GET", "/api/v1/admin/payment-orders", None, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     cleanup(db.as_ref(), &seed).await;

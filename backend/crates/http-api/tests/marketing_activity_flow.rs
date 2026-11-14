@@ -10,120 +10,19 @@
 //! 单人/总量上限 → 邀请奖励（established 检查、双人发放、自邀拒绝）→
 //! 管理列表/更新/审计。管理端走 HTTP，发放编排直调模块函数（旧版调用缝）。
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::ApiDeps;
+mod support;
+
+use axum::http::StatusCode;
 use chargepilot_mod_marketing::activity::ActivityEvent;
 use chargepilot_platform::ids::SegmentAllocator;
 use chrono::Datelike as _;
-use http_body_util::BodyExt;
-use serde_json::{Value, json};
-use std::sync::Arc;
-use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .unwrap()
-        })
-        .clone()
-}
+use serde_json::json;
+use support::{TestApp, rand_suffix, req};
 
 /// 券域测试串行锁（共享 dev 库的 flow 测试互斥）。
-static FLOW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAllocator>)> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("warn")
-        .try_init();
-    let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
-    };
-    let Some(redis_url) = env_or_skip("TEST_REDIS_URL") else {
-        panic!("集成测试需要 TEST_REDIS_URL（node tasks.mjs test-integration）");
-    };
-    let db = match chargepilot_storage::open_pool(&db_url, 8).await {
-        Ok(d) => d,
-        Err(e) => {
-            panic!("数据库连接失败：{e}");
-        }
-    };
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 60));
-    if let Err(e) = allocator.warm_up().await {
-        panic!("号段预热失败：{e}");
-    }
-    let deps = Arc::new(ApiDeps {
-        db: db.clone(),
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: allocator.clone(),
-        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        wallet: None,
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: false,
-        snapshots: None,
-        charging_stop: None,
-    });
-    Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
-        Arc::new(db),
-        allocator,
-    ))
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
-async fn req(
-    router: axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-    token: Option<&str>,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder().method(method).uri(path).header(
-        "x-real-ip",
-        format!("10.{}.1.{}", rand_suffix(), rand_suffix()),
-    );
-    if let Some(t) = token {
-        builder = builder.header("authorization", format!("Bearer {t}"));
-    }
-    let req = match body {
-        Some(v) => builder
-            .header("content-type", "application/json")
-            .body(Body::from(v.to_string()))
-            .unwrap(),
-        None => builder.body(Body::empty()).unwrap(),
-    };
-    let resp = router.oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
-}
-
 async fn login_user(router: &axum::Router, tag: &str) -> (String, u64) {
     let (status, body) = req(
-        router.clone(),
+        router,
         "POST",
         "/api/v1/user/auth/login",
         Some(json!({"code": format!("dev:{tag}")})),
@@ -183,7 +82,7 @@ async fn login_coupon_admin(
     .await
     .unwrap();
     let (status, body) = req(
-        router.clone(),
+        router,
         "POST",
         "/api/v1/admin/auth/login",
         Some(json!({"username": username, "password": "ma-pass-123"})),
@@ -274,10 +173,10 @@ fn of_rule(
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn activity_rule_and_grant_idempotency() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let app = TestApp::builder().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let tag = rand_suffix();
     let (admin_token, admin_id, admin_role) = login_coupon_admin(
         &router,
@@ -313,7 +212,7 @@ async fn activity_rule_and_grant_idempotency() {
 
     // 1. 奖励券 + 门槛活动（max_grants=2, per_user_limit=1）。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/coupons",
         Some(json!({
@@ -329,7 +228,7 @@ async fn activity_rule_and_grant_idempotency() {
     let start = chrono::Utc::now() - chrono::Duration::hours(1);
     let end = chrono::Utc::now() + chrono::Duration::days(7);
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/coupon-activities",
         Some(json!({
@@ -354,8 +253,7 @@ async fn activity_rule_and_grant_idempotency() {
     .iter()
     .enumerate()
     {
-        let (status, body) = req(
-            router.clone(),
+        let (status, body) = req(&router,
             "POST",
             "/api/v1/admin/coupon-activities",
             Some(bad.clone()),
@@ -366,7 +264,7 @@ async fn activity_rule_and_grant_idempotency() {
     }
     // 奖励券停用 → 建活动 400。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "PUT",
         &format!("/api/v1/admin/coupons/{coupon_id}"),
         Some(json!({"name": "满50减5奖励券", "status": "disabled"})),
@@ -374,8 +272,7 @@ async fn activity_rule_and_grant_idempotency() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req(&router,
         "POST",
         "/api/v1/admin/coupon-activities",
         Some(json!({"name": "停用券活动", "trigger_type": "threshold_redeem", "coupon_id": coupon_id.to_string(), "threshold_cents": 1, "start_at": start.to_rfc3339(), "end_at": end.to_rfc3339()})),
@@ -384,7 +281,7 @@ async fn activity_rule_and_grant_idempotency() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "停用券不可配活动");
     let (status, _) = req(
-        router.clone(),
+        &router,
         "PUT",
         &format!("/api/v1/admin/coupons/{coupon_id}"),
         Some(json!({"name": "满50减5奖励券", "status": "active"})),
@@ -485,7 +382,7 @@ async fn activity_rule_and_grant_idempotency() {
 
     // 3. 管理列表：含活动行与 granted_count=2（activity 来源合计）。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/coupon-activities",
         None,
@@ -502,7 +399,7 @@ async fn activity_rule_and_grant_idempotency() {
     assert_eq!(row["coupon_name"], "满50减5奖励券");
     // 状态筛选。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/coupon-activities?status=active",
         None,
@@ -520,7 +417,7 @@ async fn activity_rule_and_grant_idempotency() {
 
     // 4. 更新：停用后不再命中；触发类型不可改；缺失 404。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "PUT",
         &format!("/api/v1/admin/coupon-activities/{rule_id}"),
         Some(json!({
@@ -545,7 +442,7 @@ async fn activity_rule_and_grant_idempotency() {
         .expect("停用后发放应成功");
     assert!(of_rule(&results, rule_id).is_none(), "停用活动不命中");
     let (status, _) = req(
-        router.clone(),
+        &router,
         "PUT",
         &format!("/api/v1/admin/coupon-activities/{rule_id}"),
         Some(json!({
@@ -556,8 +453,7 @@ async fn activity_rule_and_grant_idempotency() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "触发类型不可改");
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req(&router,
         "PUT",
         "/api/v1/admin/coupon-activities/99999999",
         Some(json!({"name": "不存在", "trigger_type": "holiday", "coupon_id": coupon_id.to_string(), "threshold_cents": 0, "start_at": start.to_rfc3339(), "end_at": end.to_rfc3339()})),
@@ -568,7 +464,7 @@ async fn activity_rule_and_grant_idempotency() {
 
     // 5. 邀请奖励：邀请人券 + 被邀请人券；B 已建立（充值入账），B 邀请 D。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/coupons",
         Some(json!({
@@ -582,7 +478,7 @@ async fn activity_rule_and_grant_idempotency() {
     assert_eq!(status, StatusCode::OK);
     let inviter_coupon_id = body["data"]["id"].as_u64().unwrap();
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/coupon-activities",
         Some(json!({

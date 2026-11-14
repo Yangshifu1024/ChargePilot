@@ -7,129 +7,12 @@
 //! 后台用户与在线卡主缝集成测试：用户列表/详情/充值页、卡列表/绑定/状态变更
 //! 与权限分支（旧版 admin/user 契约对齐）。种子自建自清理，全局流锁串行。
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::ApiDeps;
+mod support;
+
+use axum::http::StatusCode;
 use chargepilot_platform::ids::SegmentAllocator;
-use http_body_util::BodyExt;
-use serde_json::{Value, json};
-use std::sync::Arc;
-use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .unwrap()
-        })
-        .clone()
-}
-
-async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAllocator>)> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("warn")
-        .try_init();
-    let db_url = env_or_skip("TEST_MYSQL_URL")?;
-    let redis_url = env_or_skip("TEST_REDIS_URL")?;
-    let db = chargepilot_storage::open_pool(&db_url, 8).await.ok()?;
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 50));
-    allocator.warm_up().await.ok()?;
-    let deps = Arc::new(ApiDeps {
-        db: db.clone(),
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: allocator.clone(),
-        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        // 本 flow 不触达支付与充电域。
-        wallet: None,
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: false,
-        snapshots: None,
-        charging_stop: None,
-    });
-    Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
-        Arc::new(db),
-        allocator,
-    ))
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
-/// 跨测试文件互斥锁：共享开发库的 flow 串行。
-fn global_flow_lock() -> std::net::TcpListener {
-    loop {
-        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:39701") {
-            return l;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-}
-
-async fn req(
-    router: axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<&str>,
-    token: Option<&str>,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(path)
-        .header("x-real-ip", "10.0.0.1");
-    if let Some(t) = token {
-        builder = builder.header("authorization", format!("Bearer {t}"));
-    }
-    let req = match body {
-        Some(b) => builder
-            .header("content-type", "application/json")
-            .body(Body::from(b.to_string()))
-            .unwrap(),
-        None => builder.body(Body::empty()).unwrap(),
-    };
-    let resp = router.oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
-}
-
-async fn login(router: &axum::Router, username: &str, password: &str) -> Option<String> {
-    let (status, body) = req(
-        router.clone(),
-        "POST",
-        "/api/v1/admin/auth/login",
-        Some(&format!(
-            r#"{{"username":"{username}","password":"{password}"}}"#
-        )),
-        None,
-    )
-    .await;
-    if status != StatusCode::OK {
-        eprintln!("登录失败: {body}");
-        return None;
-    }
-    body["data"]["access_token"].as_str().map(str::to_string)
-}
+use serde_json::json;
+use support::{TestApp, flow_lock, login_admin_opt, rand_suffix, req_str};
 
 /// SQL 直建受限管理员（角色 permissions = 指定权限码）。
 async fn seed_limited_admin(
@@ -346,10 +229,11 @@ async fn cleanup(db: &sqlx::MySqlPool, s: &Seed) {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn admin_users_and_online_cards_flow() {
-    let _flow_lock = global_flow_lock();
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let _flow_lock = flow_lock();
+    let app = TestApp::builder().with_wallet().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let seed = seed(db.as_ref(), alloc.as_ref()).await;
     let super_name: String =
         sqlx::query_scalar("SELECT `username` FROM `admin_user` WHERE `id` = ?")
@@ -357,7 +241,7 @@ async fn admin_users_and_online_cards_flow() {
             .fetch_one(db.as_ref())
             .await
             .unwrap();
-    let super_token = login(&router, &super_name, "uc-super-pass")
+    let super_token = login_admin_opt(&router, &super_name, "uc-super-pass")
         .await
         .expect("超管登录");
     let lim_name: String = sqlx::query_scalar("SELECT `username` FROM `admin_user` WHERE `id` = ?")
@@ -365,13 +249,13 @@ async fn admin_users_and_online_cards_flow() {
         .fetch_one(db.as_ref())
         .await
         .unwrap();
-    let lim_token = login(&router, &lim_name, "uc-limited-pass")
+    let lim_token = login_admin_opt(&router, &lim_name, "uc-limited-pass")
         .await
         .expect("受限登录");
 
     // ---- 1. 权限分支：受限账号（user.read）可读用户与卡列表，不能写卡。 ----
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/users?page=1&page_size=5",
         None,
@@ -387,8 +271,8 @@ async fn admin_users_and_online_cards_flow() {
             .iter()
             .any(|p| p == "user.read")
     );
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/online-cards",
         None,
@@ -396,8 +280,8 @@ async fn admin_users_and_online_cards_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "卡列表仅要求 user.read");
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         "/api/v1/admin/online-cards/bind",
         Some(r#"{"card_no":"123","user_id":"1","reason":"无权限绑定"}"#),
@@ -406,8 +290,8 @@ async fn admin_users_and_online_cards_flow() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "绑定应被拒绝: {body}");
     assert_eq!(body["code"], 1003);
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/online-cards/{}/status", seed.card_active_id),
         Some(r#"{"status":"disabled","reason":"无权限停用"}"#),
@@ -417,8 +301,8 @@ async fn admin_users_and_online_cards_flow() {
     assert_eq!(status, StatusCode::FORBIDDEN, "状态变更应被拒绝");
 
     // ---- 2. 用户列表：形状、ID 字符串契约、手机号/关键词/状态筛选与参数校验。 ----
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         &format!("/api/v1/admin/users?keyword={}", seed.phone_a),
         None,
@@ -441,8 +325,8 @@ async fn admin_users_and_online_cards_flow() {
     assert!(row["inviter_id"].is_null());
     assert_eq!(row["gender"], "unknown");
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         &format!(
             "/api/v1/admin/users?keyword={}&page_size=100",
@@ -462,8 +346,8 @@ async fn admin_users_and_online_cards_flow() {
             .any(|u| u["id"].as_str() == Some(want_a.as_str())),
         "号码片段应命中 A"
     );
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         &format!("/api/v1/admin/users?keyword={}", seed.nickname_a),
         None,
@@ -473,8 +357,8 @@ async fn admin_users_and_online_cards_flow() {
     assert_eq!(status, StatusCode::OK, "昵称关键词应命中: {body}");
     assert_eq!(body["data"]["items"].as_array().unwrap().len(), 1);
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/users?status=frozen&page_size=100",
         None,
@@ -497,8 +381,8 @@ async fn admin_users_and_online_cards_flow() {
         "frozen 筛选不应含 A"
     );
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/users?status=bogus",
         None,
@@ -507,8 +391,8 @@ async fn admin_users_and_online_cards_flow() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "非法状态应 400: {body}");
     assert_eq!(body["code"], 1005);
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/users?page=0",
         None,
@@ -518,8 +402,8 @@ async fn admin_users_and_online_cards_flow() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "页码越界应 400");
 
     // ---- 3. 用户详情：钱包状态、统计计数与最近订单。 ----
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         &format!("/api/v1/admin/users/{}", seed.user_a),
         None,
@@ -544,8 +428,8 @@ async fn admin_users_and_online_cards_flow() {
     assert_eq!(orders[0]["total_cents"], 70);
     assert!(orders[1]["station_id"].is_null(), "无意图订单站点为 null");
 
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         &format!("/api/v1/admin/users/{}", seed.user_a + 5_000_000),
         None,
@@ -554,8 +438,8 @@ async fn admin_users_and_online_cards_flow() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "缺失用户应 404: {body}");
     assert_eq!(body["code"], 1004);
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/users/not-a-number",
         None,
@@ -565,8 +449,8 @@ async fn admin_users_and_online_cards_flow() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "非法 ID 应 400");
 
     // ---- 4. 充值记录：仅 wallet_recharge、字符串用户 ID 与参数校验。 ----
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         &format!("/api/v1/admin/users/{}/recharges", seed.user_a),
         None,
@@ -586,8 +470,8 @@ async fn admin_users_and_online_cards_flow() {
     assert!(recharges[0]["paid_at"].is_string());
     assert!(recharges[0]["charge_order_id"].is_null());
 
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "GET",
         &format!("/api/v1/admin/users/{}/recharges", seed.user_b),
         None,
@@ -595,8 +479,8 @@ async fn admin_users_and_online_cards_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         &format!("/api/v1/admin/users/{}/recharges?keyword=x", seed.user_a),
         None,
@@ -604,8 +488,8 @@ async fn admin_users_and_online_cards_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "额外参数应拒绝: {body}");
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "GET",
         &format!("/api/v1/admin/users/{}/recharges?page=abc", seed.user_a),
         None,
@@ -613,8 +497,8 @@ async fn admin_users_and_online_cards_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "GET",
         &format!("/api/v1/admin/users/{}/recharges?page=", seed.user_a),
         None,
@@ -622,8 +506,8 @@ async fn admin_users_and_online_cards_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "空值分页参数应拒绝");
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "GET",
         &format!("/api/v1/admin/users/{}/recharges", seed.user_a + 5_000_000),
         None,
@@ -633,8 +517,8 @@ async fn admin_users_and_online_cards_flow() {
     assert_eq!(status, StatusCode::NOT_FOUND, "缺失用户充值页应 404");
 
     // ---- 5. 卡列表：{items, permissions} 形状。 ----
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "GET",
         "/api/v1/admin/online-cards",
         None,
@@ -665,8 +549,8 @@ async fn admin_users_and_online_cards_flow() {
     let bind_no = format!("66{seed_user}", seed_user = seed.user_a % 1_000_000_000);
     let bind_body =
         json!({"card_no": bind_no, "user_id": seed.user_a.to_string(), "reason": "人工核验绑定"});
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         "/api/v1/admin/online-cards/bind",
         Some(&bind_body.to_string()),
@@ -693,8 +577,8 @@ async fn admin_users_and_online_cards_flow() {
     assert_eq!((bound_user, bound_status.as_str()), (seed.user_a, "active"));
 
     // 幂等重放：同用户已启用 → 200 同 ID 且不重复审计。
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         "/api/v1/admin/online-cards/bind",
         Some(&bind_body.to_string()),
@@ -713,8 +597,8 @@ async fn admin_users_and_online_cards_flow() {
     assert_eq!(audits, 1, "幂等重放不得重复审计");
 
     // 目标用户未启用：frozen 的 B 不能作为绑定目标 → 404（旧版先校验用户再锁卡）。
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "POST",
         "/api/v1/admin/online-cards/bind",
         Some(
@@ -732,8 +616,7 @@ async fn admin_users_and_online_cards_flow() {
         .execute(db.as_ref())
         .await
         .unwrap();
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(&router,
         "POST",
         "/api/v1/admin/online-cards/bind",
         Some(&json!({"card_no": seed.card_active_no, "user_id": seed.user_b.to_string(), "reason": "试图抢占"}).to_string()),
@@ -760,8 +643,8 @@ async fn admin_users_and_online_cards_flow() {
         json!({"card_no": "123456", "user_id": "abc", "reason": "非法用户"}),
         json!({"card_no": "123456", "user_id": seed.user_a.to_string(), "reason": ""}),
     ] {
-        let (status, _) = req(
-            router.clone(),
+        let (status, _) = req_str(
+            &router,
             "POST",
             "/api/v1/admin/online-cards/bind",
             Some(&bad.to_string()),
@@ -770,8 +653,7 @@ async fn admin_users_and_online_cards_flow() {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "非法输入应 400: {bad}");
     }
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(&router,
         "POST",
         "/api/v1/admin/online-cards/bind",
         Some(&json!({"card_no": "123456", "user_id": (seed.user_a + 5_000_000).to_string(), "reason": "缺失用户"}).to_string()),
@@ -781,8 +663,8 @@ async fn admin_users_and_online_cards_flow() {
     assert_eq!(status, StatusCode::NOT_FOUND, "绑到缺失用户应 404");
 
     // ---- 7. 状态变更事务：启停、解绑不可逆、输入与缺失校验。 ----
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/online-cards/{}/status", seed.card_active_id),
         Some(r#"{"status":"disabled","reason":"运营停用"}"#),
@@ -808,8 +690,8 @@ async fn admin_users_and_online_cards_flow() {
     assert_eq!(audits, 1, "状态变更应留审计");
 
     // 解绑后再启用 → 409。
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/online-cards/{}/status", seed.card_active_id),
         Some(r#"{"status":"unbound","reason":"用户解绑"}"#),
@@ -817,8 +699,8 @@ async fn admin_users_and_online_cards_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/online-cards/{}/status", seed.card_active_id),
         Some(r#"{"status":"active","reason":"试图恢复"}"#),
@@ -836,8 +718,8 @@ async fn admin_users_and_online_cards_flow() {
     assert_eq!(card_status, "unbound", "冲突后状态不变");
 
     // 同状态 unbound → unbound 允许（旧版约束只禁改回其他状态）。
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/online-cards/{}/status", seed.card_unbound_id),
         Some(r#"{"status":"unbound","reason":"保持解绑"}"#),
@@ -847,8 +729,8 @@ async fn admin_users_and_online_cards_flow() {
     assert_eq!(status, StatusCode::OK, "同状态应允许: ");
 
     // 输入与缺失：未知状态 400、空依据 400、缺失卡 404。
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/online-cards/{}/status", seed.card_unbound_id),
         Some(r#"{"status":"bogus","reason":"未知状态"}"#),
@@ -856,8 +738,8 @@ async fn admin_users_and_online_cards_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "POST",
         &format!("/api/v1/admin/online-cards/{}/status", seed.card_unbound_id),
         Some(r#"{"status":"active","reason":""}"#),
@@ -865,8 +747,8 @@ async fn admin_users_and_online_cards_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req_str(
+        &router,
         "POST",
         &format!(
             "/api/v1/admin/online-cards/{}/status",

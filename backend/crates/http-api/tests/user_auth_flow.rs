@@ -7,65 +7,14 @@
 //! 阶段 02 主缝集成测试：C 端登录全链路（真 MySQL + 真 Redis）。
 //! 断言只看 HTTP 响应（信封、码值、形状），不看内部实现。
 
+mod support;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::{ApiDeps, exchanger_from_env};
-use chargepilot_platform::ids::SegmentAllocator;
 use http_body_util::BodyExt;
 use serde_json::Value;
-use std::sync::Arc;
+use support::{TestApp, rand_suffix};
 use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .unwrap()
-        })
-        .clone()
-}
-
-async fn build_app() -> Option<(axum::Router, String, Arc<SegmentAllocator>)> {
-    let db_url = env_or_skip("TEST_MYSQL_URL")?;
-    let redis_url = env_or_skip("TEST_REDIS_URL")?;
-    let db = chargepilot_storage::open_pool(&db_url, 8).await.ok()?;
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 50));
-    allocator.warm_up().await.ok()?;
-    let deps = Arc::new(ApiDeps {
-        db,
-        redis_url: Arc::new(redis_url.clone()),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: allocator.clone(),
-        exchanger: Arc::new(exchanger_from_env().unwrap()),
-        // 这些 flow 不触达钱包与支付域。
-        wallet: None,
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: false,
-        snapshots: None,
-        charging_stop: None,
-    });
-    let router = chargepilot_http_api::build_router(deps, prometheus_handle(), None).await;
-    let account = format!("it-{}", rand_suffix());
-    Some((router, account, allocator))
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
 
 async fn post_json(
     router: axum::Router,
@@ -114,9 +63,8 @@ async fn dev_login_full_flow() {
         .with_test_writer()
         .with_env_filter("warn")
         .try_init();
-    let Some((router, account, _alloc)) = build_app().await else {
-        return;
-    };
+    let router = TestApp::builder().build().await.router;
+    let account = format!("it-{}", rand_suffix());
     let code = format!("dev:{account}");
 
     // 1. 首次登录：200，平铺 6 键，user_id 为字符串
@@ -203,9 +151,7 @@ async fn dev_login_full_flow() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn invalid_code_maps_to_wechat_failure() {
-    let Some((router, _, _)) = build_app().await else {
-        return;
-    };
+    let router = TestApp::builder().build().await.router;
     let (status, body) = post_json(
         router,
         "/api/v1/user/auth/login",
@@ -221,9 +167,9 @@ async fn invalid_code_maps_to_wechat_failure() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn forged_jwt_is_rejected() {
-    let Some((router, account, _)) = build_app().await else {
-        return;
-    };
+    let app = TestApp::builder().build().await;
+    let router = app.router;
+    let account = format!("it-{}", rand_suffix());
     // 用错误密钥伪造（正确形状、错误签名）
     let forged = chargepilot_platform::jwt::sign(
         "ffffffffffffffffffffffffffffffff",

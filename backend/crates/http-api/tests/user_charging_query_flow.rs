@@ -10,89 +10,16 @@
 //! 曲线窗口、扫码解析与端口查询、旧形状停止。对照小程序 formatOrder /
 //! scan.js / curve.js 消费字段与旧版响应形状断言。
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::{ApiDeps, WalletServices};
+mod support;
+
+use axum::http::StatusCode;
 use chargepilot_mod_charging::{SimulationSink, StartDispatcher};
 use chargepilot_platform::ids::SegmentAllocator;
-use http_body_util::BodyExt;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::sync::Arc;
-use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .unwrap()
-        })
-        .clone()
-}
+use support::{TestApp, rand_suffix, req};
 
 /// 状态机测试互斥锁：端口预占依赖库中唯一事实（与 charging_flow 同锁）。
-static FLOW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAllocator>)> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("warn")
-        .try_init();
-    let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
-    };
-    let Some(redis_url) = env_or_skip("TEST_REDIS_URL") else {
-        panic!("集成测试需要 TEST_REDIS_URL（node tasks.mjs test-integration）");
-    };
-    let db = match chargepilot_storage::open_pool(&db_url, 8).await {
-        Ok(d) => d,
-        Err(e) => {
-            panic!("数据库连接失败：{e}");
-        }
-    };
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 60));
-    if let Err(e) = allocator.warm_up().await {
-        panic!("号段预热失败：{e}");
-    }
-    let deps = Arc::new(ApiDeps {
-        db: db.clone(),
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: allocator.clone(),
-        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        wallet: Some(Arc::new(WalletServices::build(db.clone()))),
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: true,
-        charging_stop: Some(Arc::new(chargepilot_mod_charging::StopService {
-            pool: db.clone(),
-            sink: Arc::new(SimulationSink),
-        })),
-        snapshots: Some(Arc::new(chargepilot_gateway_runtime::SnapshotStore::new())),
-    });
-    Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
-        Arc::new(db),
-        allocator,
-    ))
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
 fn rand_uuid() -> String {
     use rand::RngCore;
     let mut b = [0u8; 16];
@@ -110,40 +37,10 @@ fn rand_uuid() -> String {
     )
 }
 
-async fn req(
-    router: axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-    token: Option<&str>,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder().method(method).uri(path).header(
-        "x-real-ip",
-        format!("10.{}.{}.{}", rand_suffix(), rand_suffix(), rand_suffix()),
-    );
-    if let Some(t) = token {
-        builder = builder.header("authorization", format!("Bearer {t}"));
-    }
-    let req = match body {
-        Some(b) => builder
-            .header("content-type", "application/json")
-            .body(Body::from(b.to_string()))
-            .unwrap(),
-        None => builder.body(Body::empty()).unwrap(),
-    };
-    let resp = router.oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
-}
-
 /// 开发登录并返回 (jwt, user_id)。
 async fn dev_login(router: &axum::Router, openid: &str) -> (String, u64) {
     let (status, body) = req(
-        router.clone(),
+        router,
         "POST",
         "/api/v1/user/auth/login",
         Some(json!({"code": format!("dev:{openid}")})),
@@ -397,10 +294,16 @@ async fn mark_completed_with_facts(db: &sqlx::MySqlPool, charge_order_id: u64, r
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn history_and_detail_fields() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let app = TestApp::builder()
+        .with_wallet()
+        .with_simulation_route()
+        .with_charging_stop()
+        .with_snapshots()
+        .build()
+        .await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let (_station, device_id, port_code, rule_id) = seed_station_device_rule(&db, &alloc).await;
     let openid = format!("uq-{}", rand_suffix());
     let (token, user_id) = dev_login(&router, &openid).await;
@@ -410,7 +313,7 @@ async fn history_and_detail_fields() {
 
     // 历史列表：费用与计量字段齐（formatOrder 读 charged_kwh/total_cents 等）。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/charge/history?page=1&page_size=20",
         None,
@@ -435,7 +338,7 @@ async fn history_and_detail_fields() {
 
     // 状态过滤：charging 视角看不到已完订单。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/charge/history?status=charging",
         None,
@@ -455,7 +358,7 @@ async fn history_and_detail_fields() {
     );
     // 非法状态 → 400。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/charge/history?status=bogus",
         None,
@@ -465,7 +368,7 @@ async fn history_and_detail_fields() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     // 非法分页 → 400。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/charge/history?page_size=999",
         None,
@@ -476,7 +379,7 @@ async fn history_and_detail_fields() {
 
     // 详情：冻结展示、计费状态、截止、支付摘要齐。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/user/charge/{order_no}"),
         None,
@@ -512,7 +415,7 @@ async fn history_and_detail_fields() {
     let other = format!("uq-other-{}", rand_suffix());
     let (other_token, _) = dev_login(&router, &other).await;
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/user/charge/{order_no}"),
         None,
@@ -523,7 +426,7 @@ async fn history_and_detail_fields() {
     assert_eq!(body["code"], 1004);
     // 未注册单号 → 404。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/charge/no-such-order",
         None,
@@ -538,10 +441,16 @@ async fn history_and_detail_fields() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn ongoing_and_snapshot_fallback() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let app = TestApp::builder()
+        .with_wallet()
+        .with_simulation_route()
+        .with_charging_stop()
+        .with_snapshots()
+        .build()
+        .await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let (_station, device_id, port_code, rule_id) = seed_station_device_rule(&db, &alloc).await;
     let openid = format!("uq-on-{}", rand_suffix());
     let (token, user_id) = dev_login(&router, &openid).await;
@@ -550,7 +459,7 @@ async fn ongoing_and_snapshot_fallback() {
 
     // paid 也算进行中：ongoing 可见。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/charge/ongoing",
         None,
@@ -566,7 +475,7 @@ async fn ongoing_and_snapshot_fallback() {
 
     // ongoing（order_id 与 order_no 参数皆可）。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/charge/ongoing",
         None,
@@ -577,7 +486,7 @@ async fn ongoing_and_snapshot_fallback() {
     assert_eq!(body["data"]["status"], "charging");
     assert_eq!(body["data"]["device_id"], device_id.as_str());
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/user/charge/ongoing?order_no={order_no}"),
         None,
@@ -589,7 +498,7 @@ async fn ongoing_and_snapshot_fallback() {
 
     // 快照：无遥测无在线会话 → 待上报语义（不 5xx）。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/user/charge/ongoing/snapshot?order_id={order_no}"),
         None,
@@ -609,7 +518,7 @@ async fn ongoing_and_snapshot_fallback() {
     let other = format!("uq-on-empty-{}", rand_suffix());
     let (empty_token, _) = dev_login(&router, &other).await;
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/charge/ongoing",
         None,
@@ -623,7 +532,7 @@ async fn ongoing_and_snapshot_fallback() {
     let other = format!("uq-on-other-{}", rand_suffix());
     let (other_token, _) = dev_login(&router, &other).await;
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/user/charge/ongoing/snapshot?order_id={order_no}"),
         None,
@@ -637,10 +546,16 @@ async fn ongoing_and_snapshot_fallback() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn curve_windows_and_validation() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let app = TestApp::builder()
+        .with_wallet()
+        .with_simulation_route()
+        .with_charging_stop()
+        .with_snapshots()
+        .build()
+        .await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let (_station, device_id, port_code, rule_id) = seed_station_device_rule(&db, &alloc).await;
     let openid = format!("uq-cv-{}", rand_suffix());
     let (token, user_id) = dev_login(&router, &openid).await;
@@ -656,7 +571,7 @@ async fn curve_windows_and_validation() {
             format!("&window={window}")
         };
         let (status, body) = req(
-            router.clone(),
+            &router,
             "GET",
             &format!("/api/v1/user/charge/ongoing/curve?order_id={order_no}{suffix}"),
             None,
@@ -677,7 +592,7 @@ async fn curve_windows_and_validation() {
     }
     // 非法窗口 → 400。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/user/charge/ongoing/curve?order_id={order_no}&window=bogus"),
         None,
@@ -688,7 +603,7 @@ async fn curve_windows_and_validation() {
 
     // 历史曲线：空数据 → 空数组 + 摘要含订单电量文本。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/user/charge/{order_no}/curve?granularity=15min"),
         None,
@@ -701,7 +616,7 @@ async fn curve_windows_and_validation() {
     assert_eq!(body["data"]["boundary_approximate"], true);
     // 非法粒度 → 400。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/user/charge/{order_no}/curve?granularity=bogus"),
         None,
@@ -715,7 +630,7 @@ async fn curve_windows_and_validation() {
     let (_order_id2, order_no2, _) =
         create_paid_order(&db, &alloc, user_id, &device_id, &port_code2, 2, rule_id).await;
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/user/charge/{order_no2}/curve"),
         None,
@@ -730,10 +645,16 @@ async fn curve_windows_and_validation() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn scan_resolve_and_port() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let app = TestApp::builder()
+        .with_wallet()
+        .with_simulation_route()
+        .with_charging_stop()
+        .with_snapshots()
+        .build()
+        .await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let (station_id, device_id, port_code, _rule_id) = seed_station_device_rule(&db, &alloc).await;
     // 心跳在线（2 分钟内）→ available 判定成立。
     sqlx::query("UPDATE `device` SET `last_seen_at` = UTC_TIMESTAMP(3) WHERE `device_id` = ?")
@@ -744,7 +665,7 @@ async fn scan_resolve_and_port() {
 
     // 设备码解析：kind=device + 端口集合 + 站点与运营态。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/scan/resolve",
         Some(json!({"code": device_id})),
@@ -767,7 +688,7 @@ async fn scan_resolve_and_port() {
 
     // 端口码解析：kind=port + 单端口对象。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/scan/resolve",
         Some(json!({"code": port_code})),
@@ -781,7 +702,7 @@ async fn scan_resolve_and_port() {
 
     // HTTPS 链接提取 code 参数。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/scan/resolve",
         Some(json!({"code": format!("https://qr.example.com/p?x=1&code={port_code}")})),
@@ -793,7 +714,7 @@ async fn scan_resolve_and_port() {
 
     // 非法码 → 400；未注册码 → 404 1004。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/scan/resolve",
         Some(json!({"code": "bad code with spaces"})),
@@ -802,7 +723,7 @@ async fn scan_resolve_and_port() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/scan/resolve",
         Some(json!({"code": format!("dev-none-{}", rand_suffix())})),
@@ -814,7 +735,7 @@ async fn scan_resolve_and_port() {
 
     // 端口查询：命中返回单端口；设备码按旧版输出 port not found。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/scan/port",
         Some(json!({"port_id": port_code})),
@@ -825,7 +746,7 @@ async fn scan_resolve_and_port() {
     assert_eq!(body["data"]["port_id"], port_code.as_str());
     assert_eq!(body["data"]["port_status"], "idle");
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/scan/port",
         Some(json!({"port_id": device_id})),
@@ -836,7 +757,7 @@ async fn scan_resolve_and_port() {
     assert_eq!(body["code"], 1004);
     // 非法端口编码 → 400。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/scan/port",
         Some(json!({"port_id": "!!"})),
@@ -850,10 +771,16 @@ async fn scan_resolve_and_port() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn stop_body_shape_and_forbidden() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let app = TestApp::builder()
+        .with_wallet()
+        .with_simulation_route()
+        .with_charging_stop()
+        .with_snapshots()
+        .build()
+        .await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let (_station, device_id, port_code, rule_id) = seed_station_device_rule(&db, &alloc).await;
     let openid = format!("uq-st-{}", rand_suffix());
     let (token, user_id) = dev_login(&router, &openid).await;
@@ -863,7 +790,7 @@ async fn stop_body_shape_and_forbidden() {
 
     // 旧形状 POST /charge/stop {order_no} → 200 受理。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/charge/stop",
         Some(json!({"order_no": order_no})),
@@ -893,7 +820,7 @@ async fn stop_body_shape_and_forbidden() {
 
     // 重放：幂等复用同一命令。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/charge/stop",
         Some(json!({"order_no": order_no})),
@@ -914,7 +841,7 @@ async fn stop_body_shape_and_forbidden() {
     let other = format!("uq-st-other-{}", rand_suffix());
     let (other_token, _) = dev_login(&router, &other).await;
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/charge/stop",
         Some(json!({"order_no": order_no})),
@@ -926,7 +853,7 @@ async fn stop_body_shape_and_forbidden() {
 
     // 缺体 → 400。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/charge/stop",
         Some(json!({})),
@@ -941,7 +868,7 @@ async fn stop_body_shape_and_forbidden() {
         create_paid_order(&db, &alloc, user_id, &device_id, &port_code3, 2, rule_id).await;
     mark_charging(&db, &alloc, order_id3, &order_no3).await;
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/user/charging/{order_no3}/stop"),
         None,

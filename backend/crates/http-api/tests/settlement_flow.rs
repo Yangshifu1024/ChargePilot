@@ -9,41 +9,26 @@
 //! 阶段 04 批 5 主缝集成测试：计费批次（费用回执幂等/金额封顶/余款退款登记）
 //! 与退款执行器（支付单推进/订单 refunded/充值退款回账）。
 
+mod support;
+
 use chargepilot_platform::ids::SegmentAllocator;
 use serde_json::{Value, json};
 use std::sync::Arc;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
+use support::rand_suffix;
 
 /// 资金批次互斥锁（共享 dev 库的 flow 测试串行）。
-static FLOW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 async fn open_db() -> Option<Arc<sqlx::MySqlPool>> {
     let _ = tracing_subscriber::fmt()
         .with_test_writer()
         .with_env_filter("warn")
         .try_init();
-    let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
-    };
+    let db_url = support::mysql_url();
     match chargepilot_storage::open_pool(&db_url, 8).await {
         Ok(d) => Some(Arc::new(d)),
         Err(e) => {
             panic!("数据库连接失败：{e}");
         }
     }
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 /// 计费批次种子的关联记录，供尾部自清理。
@@ -219,7 +204,6 @@ async fn cleanup(db: &sqlx::MySqlPool, seeds: &[SettledSeed]) {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn billing_batch_and_refund_executor() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db) = open_db().await else {
         return;
     };
@@ -458,7 +442,6 @@ async fn billing_batch_and_refund_executor() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn wallet_recharge_refund_returns_balance() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db) = open_db().await else {
         return;
     };

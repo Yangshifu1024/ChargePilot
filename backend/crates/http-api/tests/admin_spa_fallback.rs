@@ -7,21 +7,11 @@
 //! /admin SPA 深链回归：深链回落 index.html 且状态 200（spec 用户故事 4）。
 //! 业务路由不触发（请求只打 /admin/*），连接池用 lazy 占位即可。
 
+mod support;
+
 use chargepilot_http_api::deps::ApiDeps;
 use std::sync::Arc;
 use tower::util::ServiceExt as _;
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .expect("prometheus recorder")
-        })
-        .clone()
-}
 
 #[tokio::test]
 async fn deep_links_fall_back_to_index_with_200() {
@@ -44,7 +34,8 @@ async fn deep_links_fall_back_to_index_with_200() {
         snapshots: None,
         charging_stop: None,
     });
-    let app = chargepilot_http_api::build_router(deps, prometheus_handle(), Some(&path)).await;
+    let app =
+        chargepilot_http_api::build_router(deps, support::prometheus_handle(), Some(&path)).await;
 
     for uri in ["/admin/", "/admin/login", "/admin/devices"] {
         let resp = app

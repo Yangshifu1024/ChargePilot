@@ -9,87 +9,15 @@
 //! 阶段 05 批 2 主缝集成测试：优惠券建券 → 人工发放（幂等）→ 持券视图 →
 //! 过期/停用不参与 → 发放统计。发放条件与请求重放断言走 HTTP（spec 测试决策）。
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::ApiDeps;
+mod support;
+
+use axum::http::StatusCode;
 use chargepilot_platform::ids::SegmentAllocator;
 use chrono::Datelike as _;
-use http_body_util::BodyExt;
-use serde_json::{Value, json};
-use std::sync::Arc;
-use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .unwrap()
-        })
-        .clone()
-}
+use serde_json::json;
+use support::{TestApp, rand_suffix, req};
 
 /// 券域测试串行锁（共享 dev 库的 flow 测试互斥）。
-static FLOW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAllocator>)> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("warn")
-        .try_init();
-    let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
-    };
-    let Some(redis_url) = env_or_skip("TEST_REDIS_URL") else {
-        panic!("集成测试需要 TEST_REDIS_URL（node tasks.mjs test-integration）");
-    };
-    let db = match chargepilot_storage::open_pool(&db_url, 8).await {
-        Ok(d) => d,
-        Err(e) => {
-            panic!("数据库连接失败：{e}");
-        }
-    };
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 60));
-    if let Err(e) = allocator.warm_up().await {
-        panic!("号段预热失败：{e}");
-    }
-    let deps = Arc::new(ApiDeps {
-        db: db.clone(),
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: allocator.clone(),
-        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        // 券域无进程内服务组（服务函数直接吃连接池），其余域不装配。
-        wallet: None,
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: false,
-        snapshots: None,
-        charging_stop: None,
-    });
-    Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
-        Arc::new(db),
-        allocator,
-    ))
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
 /// 合法 UUID v4（发放请求号须通过服务端校验）。
 fn rand_uuid() -> String {
     use rand::RngCore;
@@ -108,39 +36,9 @@ fn rand_uuid() -> String {
     )
 }
 
-async fn req(
-    router: axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-    token: Option<&str>,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder().method(method).uri(path).header(
-        "x-real-ip",
-        format!("10.{}.1.{}", rand_suffix(), rand_suffix()),
-    );
-    if let Some(t) = token {
-        builder = builder.header("authorization", format!("Bearer {t}"));
-    }
-    let req = match body {
-        Some(v) => builder
-            .header("content-type", "application/json")
-            .body(Body::from(v.to_string()))
-            .unwrap(),
-        None => builder.body(Body::empty()).unwrap(),
-    };
-    let resp = router.oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
-}
-
 async fn login_user(router: &axum::Router, tag: &str) -> (String, u64) {
     let (status, body) = req(
-        router.clone(),
+        router,
         "POST",
         "/api/v1/user/auth/login",
         Some(json!({"code": format!("dev:{tag}")})),
@@ -201,7 +99,7 @@ async fn login_coupon_admin(
     .await
     .unwrap();
     let (status, body) = req(
-        router.clone(),
+        router,
         "POST",
         "/api/v1/admin/auth/login",
         Some(json!({"username": username, "password": "mk-pass-123"})),
@@ -272,10 +170,10 @@ async fn cleanup(
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn coupon_create_grant_query_stats() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let app = TestApp::builder().with_wallet().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let tag = rand_suffix();
     let (admin_token, admin_id, admin_role) = login_coupon_admin(
         &router,
@@ -295,7 +193,7 @@ async fn coupon_create_grant_query_stats() {
 
     // 1. 建券（amount 型）：返回自增 id 与强制 active。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/coupons",
         Some(json!({
@@ -321,8 +219,7 @@ async fn coupon_create_grant_query_stats() {
     .iter()
     .enumerate()
     {
-        let (status, body) = req(
-            router.clone(),
+        let (status, body) = req(&router,
             "POST",
             "/api/v1/admin/coupons",
             Some(bad.clone()),
@@ -336,7 +233,7 @@ async fn coupon_create_grant_query_stats() {
     // 2. 人工发放（幂等）：同 request_id 重放同 grant_id；不同用户冲突。
     let request_id = rand_uuid();
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/coupons/{coupon_id}/grants"),
         Some(json!({"request_id": request_id, "user_id": uid.to_string()})),
@@ -346,7 +243,7 @@ async fn coupon_create_grant_query_stats() {
     assert_eq!(status, StatusCode::OK, "发放应成功: {body}");
     let grant_id = body["data"]["coupon_grant_id"].as_u64().unwrap();
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/coupons/{coupon_id}/grants"),
         Some(json!({"request_id": request_id, "user_id": uid.to_string()})),
@@ -359,7 +256,7 @@ async fn coupon_create_grant_query_stats() {
         "重放复用首次发放"
     );
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/coupons/{coupon_id}/grants"),
         Some(json!({"request_id": request_id, "user_id": (uid + 1).to_string()})),
@@ -373,7 +270,7 @@ async fn coupon_create_grant_query_stats() {
     );
     // 非 UUID 请求号 400。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/coupons/{coupon_id}/grants"),
         Some(json!({"request_id": "not-a-uuid", "user_id": uid.to_string()})),
@@ -384,7 +281,7 @@ async fn coupon_create_grant_query_stats() {
 
     // 发放准入：per_user_quota=1 第二次发放冲突；模板停用后发放冲突。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/coupons/{coupon_id}/grants"),
         Some(json!({"request_id": rand_uuid(), "user_id": uid.to_string()})),
@@ -393,7 +290,7 @@ async fn coupon_create_grant_query_stats() {
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "单人上限应 409");
     let (status, _) = req(
-        router.clone(),
+        &router,
         "PUT",
         &format!("/api/v1/admin/coupons/{coupon_id}"),
         Some(json!({"name": "新客立减5元", "status": "disabled"})),
@@ -402,7 +299,7 @@ async fn coupon_create_grant_query_stats() {
     .await;
     assert_eq!(status, StatusCode::OK, "停用应成功");
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/coupons/{coupon_id}/grants"),
         Some(json!({"request_id": rand_uuid(), "user_id": (uid + 2).to_string()})),
@@ -427,7 +324,7 @@ async fn coupon_create_grant_query_stats() {
     .unwrap();
     // 恢复模板启用后再种一条已用券（人工模拟终态；核销事务属批 4）。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "PUT",
         &format!("/api/v1/admin/coupons/{coupon_id}"),
         Some(json!({"name": "新客立减5元改", "status": "active"})),
@@ -452,7 +349,7 @@ async fn coupon_create_grant_query_stats() {
     // coupon/my：排序按 status 字典序（expired < unused < used，与旧版一致），
     // 过期由内存派生，usable 标记正确。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/coupon/my",
         None,
@@ -478,7 +375,7 @@ async fn coupon_create_grant_query_stats() {
 
     // status 筛选与 only_usable。
     let (status, _bad) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/coupon/my?status=usable-not-legal",
         None,
@@ -487,7 +384,7 @@ async fn coupon_create_grant_query_stats() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "非法状态筛选应 400");
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/coupon/my?only_usable=true",
         None,
@@ -498,7 +395,7 @@ async fn coupon_create_grant_query_stats() {
     let usable_items = body["data"]["items"].as_array().unwrap();
     assert_eq!(usable_items.len(), 1, "仅一张可用: {usable_items:?}");
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/coupon/my?status=expired",
         None,
@@ -510,7 +407,7 @@ async fn coupon_create_grant_query_stats() {
 
     // 4. 支付前可用券：停用模板时不含（上面已恢复 active，此时含 1 张）。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/coupons",
         None,
@@ -524,7 +421,7 @@ async fn coupon_create_grant_query_stats() {
     assert_eq!(avail[0]["min_charge_cents"], 1000);
     // 停用模板 → Available 排除（JOIN status='active'）。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "PUT",
         &format!("/api/v1/admin/coupons/{coupon_id}"),
         Some(json!({"name": "新客立减5元改", "status": "disabled"})),
@@ -533,7 +430,7 @@ async fn coupon_create_grant_query_stats() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/coupons",
         None,
@@ -549,7 +446,7 @@ async fn coupon_create_grant_query_stats() {
 
     // 5. 发放统计：granted=3（1 unused + 1 used + 1 过期）、usage_rate=1/3。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/coupons/{coupon_id}/stats"),
         None,
@@ -566,8 +463,7 @@ async fn coupon_create_grant_query_stats() {
     assert!((rate - 1.0 / 3.0).abs() < 1e-9, "使用率 1/3: {rate}");
 
     // 6. 权限：只有 read 权限的管理员建券/发放 403。
-    let (status, _) = req(
-        router.clone(),
+    let (status, _) = req(&router,
         "POST",
         "/api/v1/admin/coupons",
         Some(json!({"name": "越权", "discount_type": "amount", "discount_value_cents": 100, "min_charge_cents": 0, "valid_hours": 24, "per_user_quota": 1})),
@@ -576,7 +472,7 @@ async fn coupon_create_grant_query_stats() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "无 create 权限应 403");
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/coupons/{coupon_id}/grants"),
         Some(json!({"request_id": rand_uuid(), "user_id": uid.to_string()})),
@@ -617,10 +513,10 @@ async fn coupon_create_grant_query_stats() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn coupon_quote_and_redeem() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let app = TestApp::builder().with_wallet().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let tag = rand_suffix();
     let (admin_token, admin_id, admin_role) = login_coupon_admin(
         &router,
@@ -640,7 +536,7 @@ async fn coupon_quote_and_redeem() {
     // 时长券：核销分支的可达场景（旧版固定零服务费率 → 冻结优惠恒 0，
     // 意图总额与应付额一致，能通过到账核对）。金额型券的报价路径另行断言。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/coupons",
         Some(json!({
@@ -654,7 +550,7 @@ async fn coupon_quote_and_redeem() {
     assert_eq!(status, StatusCode::OK, "建券: {body}");
     let coupon_id = body["data"]["id"].as_u64().unwrap();
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/coupons/{coupon_id}/grants"),
         Some(json!({"request_id": rand_uuid(), "user_id": uid.to_string()})),

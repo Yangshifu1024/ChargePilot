@@ -7,72 +7,20 @@
 //! 阶段 02 主缝集成测试：后台登录链路（真 MySQL + 真 Redis）。
 //! 覆盖：bootstrap、密码登录、MFA 挑战/校验/重放拒绝、会话轮换、实时鉴权、错误映射。
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::ApiDeps;
+mod support;
+
+use axum::http::StatusCode;
 use chargepilot_platform::ids::SegmentAllocator;
-use http_body_util::BodyExt;
 use serde_json::Value;
-use std::sync::Arc;
-use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .unwrap()
-        })
-        .clone()
-}
-
-async fn build_app() -> Option<axum::Router> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("warn")
-        .try_init();
-    let db_url = env_or_skip("TEST_MYSQL_URL")?;
-    let redis_url = env_or_skip("TEST_REDIS_URL")?;
-    let db = chargepilot_storage::open_pool(&db_url, 8).await.ok()?;
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 50));
-    allocator.warm_up().await.ok()?;
-    let deps = Arc::new(ApiDeps {
-        db: db.clone(),
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator,
-        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        // 这些 flow 不触达钱包与支付域。
-        wallet: None,
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: false,
-        snapshots: None,
-        charging_stop: None,
-    });
-    let _ = db;
-    Some(chargepilot_http_api::build_router(deps, prometheus_handle(), None).await)
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
 
 /// 每个测试用独立随机 IP，避免共享频次窗口。
 fn rand_ip() -> String {
-    format!("10.{}.{}.{}", rand_suffix(), "1", rand_suffix())
+    format!(
+        "10.{}.{}.{}",
+        support::rand_suffix(),
+        "1",
+        support::rand_suffix()
+    )
 }
 
 /// 直接建后台账号（绕过 HTTP，密码与 MFA 状态自定）。
@@ -107,20 +55,7 @@ async fn seed_admin(
 }
 
 async fn post(router: axum::Router, path: &str, body: &str, ip: &str) -> (StatusCode, Value) {
-    let req = Request::builder()
-        .method("POST")
-        .uri(path)
-        .header("content-type", "application/json")
-        .header("x-real-ip", ip)
-        .body(Body::from(body.to_string()))
-        .unwrap();
-    let resp = router.oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
+    support::req_with_ip(&router, "POST", path, Some(body), None, ip).await
 }
 
 async fn get_bearer(
@@ -129,46 +64,18 @@ async fn get_bearer(
     token: &str,
     ip: &str,
 ) -> (StatusCode, Value) {
-    let req = Request::builder()
-        .method("GET")
-        .uri(path)
-        .header("authorization", format!("Bearer {token}"))
-        .header("x-real-ip", ip)
-        .body(Body::empty())
-        .unwrap();
-    let resp = router.oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
-}
-
-/// 跨测试文件互斥锁：这些 flow 共享开发库，部分断言依赖全局计数
-/// （如"最后一个客户管理员"），用固定端口的 TCP 监听作锁串行各文件。
-fn global_flow_lock() -> std::net::TcpListener {
-    loop {
-        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:39701") {
-            return l;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
+    support::req_with_ip(&router, "GET", path, None, Some(token), ip).await
 }
 
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn plain_login_flow() {
-    let _flow_lock = global_flow_lock();
-    let Some(router) = build_app().await else {
-        return;
-    };
-    let db = chargepilot_storage::open_pool(&env_or_skip("TEST_MYSQL_URL").unwrap(), 4)
-        .await
-        .unwrap();
-    let alloc = Arc::new(SegmentAllocator::new(db.clone(), 20));
-    alloc.warm_up().await.unwrap();
-    let user = format!("adm-{}", rand_suffix());
+    let _flow_lock = support::flow_lock();
+    let app = support::TestApp::builder().build().await;
+    let router = app.router;
+    let db = (*app.db).clone();
+    let alloc = app.allocator;
+    let user = format!("adm-{}", support::rand_suffix());
     seed_admin(&db, &alloc, &user, "plain-pass-123", false).await;
     let ip = rand_ip();
 
@@ -230,35 +137,26 @@ async fn plain_login_flow() {
 }
 
 async fn refresh_with(router: axum::Router, token: &str, ip: &str) -> (StatusCode, Value) {
-    let req = Request::builder()
-        .method("POST")
-        .uri("/api/v1/admin/auth/refresh")
-        .header("authorization", format!("Bearer {token}"))
-        .header("x-real-ip", ip)
-        .body(Body::empty())
-        .unwrap();
-    let resp = router.oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    support::req_with_ip(
+        &router,
+        "POST",
+        "/api/v1/admin/auth/refresh",
+        None,
+        Some(token),
+        ip,
     )
+    .await
 }
 
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn mfa_login_flow_with_replay_rejection() {
-    let _flow_lock = global_flow_lock();
-    let Some(router) = build_app().await else {
-        return;
-    };
-    let db = chargepilot_storage::open_pool(&env_or_skip("TEST_MYSQL_URL").unwrap(), 4)
-        .await
-        .unwrap();
-    let alloc = Arc::new(SegmentAllocator::new(db.clone(), 20));
-    alloc.warm_up().await.unwrap();
-    let user = format!("mfa-{}", rand_suffix());
+    let _flow_lock = support::flow_lock();
+    let app = support::TestApp::builder().build().await;
+    let router = app.router;
+    let db = (*app.db).clone();
+    let alloc = app.allocator;
+    let user = format!("mfa-{}", support::rand_suffix());
     let (_u, secret) = seed_admin(&db, &alloc, &user, "mfa-pass-123456", true).await;
     let secret = secret.unwrap();
     let ip = rand_ip();
@@ -350,10 +248,9 @@ async fn mfa_login_flow_with_replay_rejection() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn login_rate_limit() {
-    let _flow_lock = global_flow_lock();
-    let Some(router) = build_app().await else {
-        return;
-    };
+    let _flow_lock = support::flow_lock();
+    let app = support::TestApp::builder().build().await;
+    let router = app.router;
     let ip = rand_ip();
     let body = r#"{"username":"ghost-user","password":"whatever-pass-1"}"#;
     let mut last = (StatusCode::OK, Value::Null);

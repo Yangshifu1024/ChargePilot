@@ -11,99 +11,27 @@
 //! 断言只看 HTTP 响应（信封、码值、形状与文案），不看内部实现；
 //! development 模式明文绑定与 wechat 模式准入语义对齐旧版 phone.go。
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::{ApiDeps, exchanger_from_env};
-use chargepilot_mod_identity::wechat::Exchanger;
+mod support;
+
+use axum::http::StatusCode;
 use chargepilot_platform::ids::SegmentAllocator;
-use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use std::sync::Arc;
-use tower::ServiceExt;
+use support::{TestApp, rand_suffix};
 
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-/// 共享 dev 库的 flow 测试串行（资金与唯一键边界互斥）。
-static FLOW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// 组装本批路由（login/profile + 手机号/在线卡/反馈），不依赖 build_router 挂载。
-async fn build_app(exchanger: Option<Exchanger>) -> Option<axum::Router> {
-    let db_url = env_or_skip("TEST_MYSQL_URL")?;
-    let redis_url = env_or_skip("TEST_REDIS_URL")?;
-    let db = chargepilot_storage::open_pool(&db_url, 8).await.ok()?;
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 70));
-    allocator.warm_up().await.ok()?;
-    let exchanger = exchanger.unwrap_or_else(|| exchanger_from_env().unwrap());
-    let deps = Arc::new(ApiDeps {
-        db,
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator,
-        exchanger: Arc::new(exchanger),
-        // 本批不触达钱包服务组与支付/充电域（登录建户的零余额钱包走模块函数）。
-        wallet: None,
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: false,
-        charging_stop: None,
-        snapshots: None,
-    });
-    let app: axum::Router<Arc<ApiDeps>> = chargepilot_http_api::user_auth::router()
-        .merge(chargepilot_http_api::user_identity_cards::router());
-    Some(app.with_state(deps))
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
+/// 共享 dev 库的 flow 测试串行（资金与唯一键边界互斥）：请求委托共享
+/// req_str（登录频次按每请求随机 IP 计数，与限流断言无交集）。
 async fn post_json(
     router: &axum::Router,
     path: &str,
     body: &str,
     bearer: Option<&str>,
 ) -> (StatusCode, Value) {
-    let mut builder = Request::builder().method("POST").uri(path);
-    if let Some(t) = bearer {
-        builder = builder.header("authorization", format!("Bearer {t}"));
-    }
-    let resp = router
-        .clone()
-        .oneshot(
-            builder
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    take(resp).await
+    support::req_str(router, "POST", path, Some(body), bearer).await
 }
 
 async fn get_with_bearer(router: &axum::Router, path: &str, token: &str) -> (StatusCode, Value) {
-    let req = Request::builder()
-        .method("GET")
-        .uri(path)
-        .header("authorization", format!("Bearer {token}"))
-        .body(Body::empty())
-        .unwrap();
-    let resp = router.clone().oneshot(req).await.unwrap();
-    take(resp).await
-}
-
-async fn take(resp: axum::response::Response) -> (StatusCode, Value) {
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let json: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-    (status, json)
+    support::req_str(router, "GET", path, None, Some(token)).await
 }
 
 /// development 登录辅助：返回 (jwt, user_id 十进制字符串)。
@@ -199,9 +127,7 @@ async fn cleanup(db: &sqlx::MySqlPool, user_ids: &[u64], order_ids: &[u64]) {
 }
 
 async fn open_db() -> Option<Arc<sqlx::MySqlPool>> {
-    let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
-    };
+    let db_url = support::mysql_url();
     match chargepilot_storage::open_pool(&db_url, 8).await {
         Ok(d) => Some(Arc::new(d)),
         Err(e) => {
@@ -215,14 +141,11 @@ async fn open_db() -> Option<Arc<sqlx::MySqlPool>> {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn phone_bind_unbind_flow() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _ = tracing_subscriber::fmt()
         .with_test_writer()
         .with_env_filter("warn")
         .try_init();
-    let Some(router) = build_app(None).await else {
-        return;
-    };
+    let router = TestApp::builder().build().await.router;
     let db = open_db().await.unwrap();
     let account = format!("it-ph-{}", rand_suffix());
     let (jwt, user_id) = dev_login(&router, &account).await;
@@ -299,18 +222,15 @@ async fn phone_bind_unbind_flow() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn phone_bind_wechat_mode_admission() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(dev_router) = build_app(None).await else {
-        return;
-    };
-    let Some(router) = build_app(Some(Exchanger::Wechat {
-        appid: "wx-test".into(),
-        secret: "test".into(),
-    }))
-    .await
-    else {
-        return;
-    };
+    let dev_router = TestApp::builder().build().await.router;
+    let router = TestApp::builder()
+        .with_exchanger(chargepilot_mod_identity::wechat::Exchanger::Wechat {
+            appid: "wx-test".into(),
+            secret: "test".into(),
+        })
+        .build()
+        .await
+        .router;
     let account = format!("it-wx-{}", rand_suffix());
     let (jwt, _) = dev_login(&dev_router, &account).await;
 
@@ -354,10 +274,7 @@ async fn phone_bind_wechat_mode_admission() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn cards_list_flow() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(router) = build_app(None).await else {
-        return;
-    };
+    let router = TestApp::builder().build().await.router;
     let db = open_db().await.unwrap();
     let alloc = Arc::new(SegmentAllocator::new((*db).clone(), 70));
     alloc.warm_up().await.unwrap();
@@ -386,10 +303,7 @@ async fn cards_list_flow() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn card_status_change_flow() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(router) = build_app(None).await else {
-        return;
-    };
+    let router = TestApp::builder().build().await.router;
     let db = open_db().await.unwrap();
     let alloc = Arc::new(SegmentAllocator::new((*db).clone(), 70));
     alloc.warm_up().await.unwrap();
@@ -499,10 +413,7 @@ async fn card_status_change_flow() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn feedback_submit_flow() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(router) = build_app(None).await else {
-        return;
-    };
+    let router = TestApp::builder().build().await.router;
     let db = open_db().await.unwrap();
     let alloc = Arc::new(SegmentAllocator::new((*db).clone(), 70));
     alloc.warm_up().await.unwrap();

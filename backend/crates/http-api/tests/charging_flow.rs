@@ -10,89 +10,16 @@
 //! 启动命令与端口预占 → 设备回执 charging → 用户停止（计费截止冻结）→
 //! 结束回执（订单完成 + 计费任务 + 出站事件）。
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::{ApiDeps, WalletServices};
+mod support;
+
+use axum::http::StatusCode;
 use chargepilot_mod_charging::{SimulationSink, StartDispatcher};
 use chargepilot_platform::ids::SegmentAllocator;
-use http_body_util::BodyExt;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::sync::Arc;
-use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .unwrap()
-        })
-        .clone()
-}
+use support::{TestApp, rand_suffix, req};
 
 /// 状态机测试互斥锁：端口预占依赖库中唯一事实。
-static FLOW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAllocator>)> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("warn")
-        .try_init();
-    let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
-    };
-    let Some(redis_url) = env_or_skip("TEST_REDIS_URL") else {
-        panic!("集成测试需要 TEST_REDIS_URL（node tasks.mjs test-integration）");
-    };
-    let db = match chargepilot_storage::open_pool(&db_url, 8).await {
-        Ok(d) => d,
-        Err(e) => {
-            panic!("数据库连接失败：{e}");
-        }
-    };
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 60));
-    if let Err(e) = allocator.warm_up().await {
-        panic!("号段预热失败：{e}");
-    }
-    let deps = Arc::new(ApiDeps {
-        db: db.clone(),
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: allocator.clone(),
-        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        wallet: Some(Arc::new(WalletServices::build(db.clone()))),
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: true,
-        snapshots: None,
-        charging_stop: Some(Arc::new(chargepilot_mod_charging::StopService {
-            pool: db.clone(),
-            sink: Arc::new(SimulationSink),
-        })),
-    });
-    Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
-        Arc::new(db),
-        allocator,
-    ))
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
 fn rand_uuid() -> String {
     use rand::RngCore;
     let mut b = [0u8; 16];
@@ -110,40 +37,10 @@ fn rand_uuid() -> String {
     )
 }
 
-async fn req(
-    router: axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-    token: Option<&str>,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder().method(method).uri(path).header(
-        "x-real-ip",
-        format!("10.{}.{}.{}", rand_suffix(), rand_suffix(), rand_suffix()),
-    );
-    if let Some(t) = token {
-        builder = builder.header("authorization", format!("Bearer {t}"));
-    }
-    let req = match body {
-        Some(b) => builder
-            .header("content-type", "application/json")
-            .body(Body::from(b.to_string()))
-            .unwrap(),
-        None => builder.body(Body::empty()).unwrap(),
-    };
-    let resp = router.oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
-}
-
 /// 开发登录并返回 (jwt, user_id)。
 async fn dev_login(router: &axum::Router, openid: &str) -> (String, u64) {
     let (status, body) = req(
-        router.clone(),
+        router,
         "POST",
         "/api/v1/user/auth/login",
         Some(json!({"code": format!("dev:{openid}")})),
@@ -285,10 +182,15 @@ async fn create_paid_order(
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn state_machine_full_flow() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let app = TestApp::builder()
+        .with_wallet()
+        .with_simulation_route()
+        .with_charging_stop()
+        .build()
+        .await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let (station_id, device_id, port_code, rule_id) = seed_station_device_rule(&db, &alloc).await;
     let openid = format!("c4-{}", rand_suffix());
     let (token, user_id) = dev_login(&router, &openid).await;
@@ -346,7 +248,7 @@ async fn state_machine_full_flow() {
 
     // 3. 用户停止：截止冻结 + 停止命令。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/user/charging/{order_no}/stop"),
         None,
@@ -380,7 +282,7 @@ async fn state_machine_full_flow() {
     .await
     .unwrap();
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/user/charging/{order_no}/stop"),
         None,

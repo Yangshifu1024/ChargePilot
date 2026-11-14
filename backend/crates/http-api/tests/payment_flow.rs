@@ -10,112 +10,12 @@
 //! （支付成功事务：订单 paid + 快照冻结 + 事件出站）、迟到支付退款与
 //! 钱包充值全链（批 2 缝合）。断言 HTTP 响应与库中资金行。
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::{ApiDeps, WalletServices};
+mod support;
+
+use axum::http::StatusCode;
 use chargepilot_platform::ids::SegmentAllocator;
-use http_body_util::BodyExt;
-use serde_json::{Value, json};
-use std::sync::Arc;
-use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .unwrap()
-        })
-        .clone()
-}
-
-/// 支付测试互斥锁：端口预占与频次窗口依赖库中唯一事实。
-static FLOW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-type RouterEnv = (axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAllocator>);
-
-async fn build() -> Option<RouterEnv> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("warn")
-        .try_init();
-    let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
-    };
-    let Some(redis_url) = env_or_skip("TEST_REDIS_URL") else {
-        panic!("集成测试需要 TEST_REDIS_URL（node tasks.mjs test-integration）");
-    };
-    let db = match chargepilot_storage::open_pool(&db_url, 8).await {
-        Ok(d) => d,
-        Err(e) => {
-            panic!("数据库连接失败：{e}");
-        }
-    };
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 60));
-    if let Err(e) = allocator.warm_up().await {
-        panic!("号段预热失败：{e}");
-    }
-    // 支付域按 simulation 装配（旧版 PAYMENT_MODE=simulation 语义）。
-    let provider: Arc<dyn chargepilot_mod_payment::PayProvider> =
-        Arc::new(chargepilot_mod_payment::channel::SimulationProvider);
-    let scanner: Arc<dyn chargepilot_mod_payment::PortScanner> = Arc::new(
-        chargepilot_mod_payment::scan::TablePortScanner::new(db.clone()),
-    );
-    let checkout = Arc::new(chargepilot_mod_payment::CheckoutService {
-        pool: db.clone(),
-        allocator: (*allocator).clone(),
-        scanner: scanner.clone(),
-        provider: provider.clone(),
-    });
-    let bridge = Arc::new(
-        chargepilot_mod_payment::recharge_bridge::RechargePaymentBridge {
-            pool: db.clone(),
-            allocator: (*allocator).clone(),
-            provider,
-        },
-    );
-    let wallet_recharge = Arc::new(chargepilot_mod_wallet::recharge::RechargeService {
-        db: db.clone(),
-        payments: bridge,
-    });
-    let deps = Arc::new(ApiDeps {
-        db: db.clone(),
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: allocator.clone(),
-        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        wallet: Some(Arc::new(WalletServices::build(db.clone()))),
-        checkout: Some(checkout),
-        wallet_recharge: Some(wallet_recharge),
-        simulation_payment: true,
-        snapshots: None,
-        charging_stop: Some(Arc::new(chargepilot_mod_charging::StopService {
-            pool: db.clone(),
-            sink: Arc::new(chargepilot_mod_charging::SimulationSink),
-        })),
-    });
-    Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
-        Arc::new(db),
-        allocator,
-    ))
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
+use serde_json::json;
+use support::{TestApp, rand_suffix, req};
 
 /// 合法 UUID v4（客户端幂等请求号）。
 fn rand_uuid() -> String {
@@ -135,40 +35,10 @@ fn rand_uuid() -> String {
     )
 }
 
-async fn req(
-    router: axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-    token: Option<&str>,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder().method(method).uri(path).header(
-        "x-real-ip",
-        format!("10.{}.{}.{}", rand_suffix(), rand_suffix(), rand_suffix()),
-    );
-    if let Some(t) = token {
-        builder = builder.header("authorization", format!("Bearer {t}"));
-    }
-    let req = match body {
-        Some(b) => builder
-            .header("content-type", "application/json")
-            .body(Body::from(b.to_string()))
-            .unwrap(),
-        None => builder.body(Body::empty()).unwrap(),
-    };
-    let resp = router.oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
-}
-
 /// 开发登录并返回 (jwt, user_id)。
 async fn dev_login(router: &axum::Router, openid: &str) -> (String, u64) {
     let (status, body) = req(
-        router.clone(),
+        router,
         "POST",
         "/api/v1/user/auth/login",
         Some(json!({"code": format!("dev:{openid}")})),
@@ -234,10 +104,15 @@ async fn cleanup(db: &sqlx::MySqlPool, device_id: &str) {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn checkout_confirm_and_late_refund_flow() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let app = TestApp::builder()
+        .with_wallet()
+        .with_simulation_payment()
+        .with_charging_stop()
+        .build()
+        .await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let (_station_id, device_id, port_code, rule_id) = seed_station_device_rule(&db, &alloc).await;
 
     // 用户 A 登录（开发登录即建用户）。
@@ -246,7 +121,7 @@ async fn checkout_confirm_and_late_refund_flow() {
 
     // 1. offers：端口套餐可查。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/scan/offers",
         Some(json!({"port_code": port_code})),
@@ -263,8 +138,7 @@ async fn checkout_confirm_and_late_refund_flow() {
 
     // 2. checkout：冻结意图与端口。
     let request_id = rand_uuid();
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req(&router,
         "POST",
         "/api/v1/user/scan/start",
         Some(json!({"client_request_id": request_id, "port_code": port_code, "offer_id": rule_id * 100 + 1})),
@@ -305,8 +179,7 @@ async fn checkout_confirm_and_late_refund_flow() {
     assert_eq!(biz_id, 0, "支付单在到账前不关联业务");
 
     // 3. 同请求重放：同一商户单号（幂等）。
-    let (status, replay) = req(
-        router.clone(),
+    let (status, replay) = req(&router,
         "POST",
         "/api/v1/user/scan/start",
         Some(json!({"client_request_id": request_id, "port_code": port_code, "offer_id": rule_id * 100 + 1})),
@@ -321,8 +194,7 @@ async fn checkout_confirm_and_late_refund_flow() {
     );
 
     // 4. 同请求不同套餐：409（旧版 existingIntent 逐项核对）。
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req(&router,
         "POST",
         "/api/v1/user/scan/start",
         Some(json!({"client_request_id": request_id, "port_code": port_code, "offer_id": rule_id * 100 + 2})),
@@ -333,7 +205,7 @@ async fn checkout_confirm_and_late_refund_flow() {
 
     // 5. 模拟确认：走支付成功事务。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/development/payments/confirm",
         Some(json!({"merchant_order_no": merchant_order_no})),
@@ -378,7 +250,7 @@ async fn checkout_confirm_and_late_refund_flow() {
 
     // 6. 二次确认：幂等重放。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/development/payments/confirm",
         Some(json!({"merchant_order_no": merchant_order_no})),
@@ -395,8 +267,7 @@ async fn checkout_confirm_and_late_refund_flow() {
     // 7. 端口预占：用户 B 同端口下单被拒（端口已被进行中订单占用）。
     let openid_b = format!("pay-b-{}", rand_suffix());
     let (token_b, _user_b) = dev_login(&router, &openid_b).await;
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req(&router,
         "POST",
         "/api/v1/user/scan/start",
         Some(json!({"client_request_id": rand_uuid(), "port_code": port_code, "offer_id": rule_id * 100 + 1})),
@@ -409,8 +280,7 @@ async fn checkout_confirm_and_late_refund_flow() {
     let port_code2 = format!("port-{}", rand_suffix());
     sqlx::query("INSERT INTO `device_port` (`device_id`, `port_no`, `port_code`, `status`) VALUES (?, 2, ?, 'idle')")
         .bind(&device_id).bind(&port_code2).execute(db.as_ref()).await.unwrap();
-    let (status, body) = req(
-        router.clone(),
+    let (status, body) = req(&router,
         "POST",
         "/api/v1/user/scan/start",
         Some(json!({"client_request_id": rand_uuid(), "port_code": port_code2, "offer_id": rule_id * 100 + 1})),
@@ -428,7 +298,7 @@ async fn checkout_confirm_and_late_refund_flow() {
         .await
         .unwrap();
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/development/payments/confirm",
         Some(json!({"merchant_order_no": late_order_no})),
@@ -454,10 +324,15 @@ async fn checkout_confirm_and_late_refund_flow() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn wallet_recharge_full_chain() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, _alloc)) = build().await else {
-        return;
-    };
+    let app = TestApp::builder()
+        .with_wallet()
+        .with_simulation_payment()
+        .with_charging_stop()
+        .build()
+        .await;
+    let router = app.router;
+    let db = app.db;
+    let _alloc = app.allocator;
     // 充值链不需要设备；直接登录用户。
     let openid = format!("pay-w-{}", rand_suffix());
     let (token, user_id) = dev_login(&router, &openid).await;
@@ -465,7 +340,7 @@ async fn wallet_recharge_full_chain() {
     // 1. 充值申请：幂等请求号 + 500 分。
     let request_id = rand_uuid();
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/wallet/recharge",
         Some(json!({"request_id": request_id, "amount_cents": 500})),
@@ -481,7 +356,7 @@ async fn wallet_recharge_full_chain() {
 
     // 2. 同请求重放：同支付单。
     let (status, replay) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/wallet/recharge",
         Some(json!({"request_id": request_id, "amount_cents": 500})),
@@ -496,7 +371,7 @@ async fn wallet_recharge_full_chain() {
 
     // 3. 模拟确认 → 余额到账（批 2 缝合：支付成功事务 → 钱包入账）。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/development/payments/confirm",
         Some(json!({"merchant_order_no": merchant_order_no})),
@@ -524,7 +399,7 @@ async fn wallet_recharge_full_chain() {
 
     // 4. 二次确认：不重复入账。
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/development/payments/confirm",
         Some(json!({"merchant_order_no": merchant_order_no})),
@@ -542,7 +417,7 @@ async fn wallet_recharge_full_chain() {
 
     // 5. C 端余额接口可见（批 2 路由缝合）。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/user/wallet/balance",
         None,
@@ -558,16 +433,21 @@ async fn wallet_recharge_full_chain() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn checkout_rejects_coupon_with_offer() {
-    let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let app = TestApp::builder()
+        .with_wallet()
+        .with_simulation_payment()
+        .with_charging_stop()
+        .build()
+        .await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let (_station_id, device_id, port_code, rule_id) = seed_station_device_rule(&db, &alloc).await;
     let openid = format!("pay-mk-{}", rand_suffix());
     let (token, _uid) = dev_login(&router, &openid).await;
     // 带 coupon_grant_id 的下单：互斥冲突（校验在扫码读取之前，端口不存在也不影响）。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/user/scan/start",
         Some(json!({

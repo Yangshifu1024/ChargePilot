@@ -6,101 +6,12 @@
 
 //! 阶段 03 批 1 主缝集成测试：计费方案发布幂等/版本基线/继承、站点、厂商。
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use chargepilot_http_api::deps::ApiDeps;
+mod support;
+
+use axum::http::StatusCode;
 use chargepilot_platform::ids::SegmentAllocator;
-use http_body_util::BodyExt;
-use serde_json::{Value, json};
-use std::sync::Arc;
-use tower::ServiceExt;
-
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => Some(v),
-        _ => None,
-    }
-}
-
-fn prometheus_handle() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
-    HANDLE
-        .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
-                .install_recorder()
-                .unwrap()
-        })
-        .clone()
-}
-
-async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAllocator>)> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("warn")
-        .try_init();
-    let db_url = env_or_skip("TEST_MYSQL_URL")?;
-    let redis_url = env_or_skip("TEST_REDIS_URL")?;
-    let db = chargepilot_storage::open_pool(&db_url, 8).await.ok()?;
-    let allocator = Arc::new(SegmentAllocator::new(db.clone(), 50));
-    allocator.warm_up().await.ok()?;
-    let deps = Arc::new(ApiDeps {
-        db: db.clone(),
-        redis_url: Arc::new(redis_url),
-        jwt_secret: Arc::new("0123456789abcdef0123456789abcdef".into()),
-        allocator: allocator.clone(),
-        exchanger: Arc::new(chargepilot_mod_identity::wechat::Exchanger::Development),
-        // 这些 flow 不触达钱包与支付域。
-        wallet: None,
-        checkout: None,
-        wallet_recharge: None,
-        simulation_payment: false,
-        snapshots: None,
-        charging_stop: None,
-    });
-    Some((
-        chargepilot_http_api::build_router(deps, prometheus_handle(), None).await,
-        Arc::new(db),
-        allocator,
-    ))
-}
-
-fn rand_suffix() -> String {
-    use rand::RngCore;
-    let mut b = [0u8; 4];
-    rand::rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
-async fn req(
-    router: axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-    token: Option<&str>,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder().method(method).uri(path).header(
-        "x-real-ip",
-        format!("10.{}.{}.{}", rand_suffix(), rand_suffix(), rand_suffix()),
-    );
-    if let Some(t) = token {
-        builder = builder.header("authorization", format!("Bearer {t}"));
-    }
-    let req = match body {
-        Some(v) => builder
-            .header("content-type", "application/json")
-            .body(Body::from(v.to_string()))
-            .unwrap(),
-        None => builder.body(Body::empty()).unwrap(),
-    };
-    let resp = router.oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
-}
+use serde_json::json;
+use support::{TestApp, flow_lock, rand_suffix, req};
 
 async fn login_super(
     router: &axum::Router,
@@ -114,7 +25,7 @@ async fn login_super(
     sqlx::query("INSERT INTO `admin_user` (`id`, `username`, `password_hash`, `role_id`) VALUES (?, ?, ?, 1)")
         .bind(id).bind(&username).bind(hash).execute(db).await.unwrap();
     let (status, body) = req(
-        router.clone(),
+        router,
         "POST",
         "/api/v1/admin/auth/login",
         Some(json!({"username": username, "password": "super-pass-123"})),
@@ -128,35 +39,25 @@ async fn login_super(
     body["data"]["access_token"].as_str().map(str::to_string)
 }
 
-/// 跨测试文件互斥锁：这些 flow 共享开发库，部分断言依赖全局计数
-/// （如"最后一个客户管理员"），用固定端口的 TCP 监听作锁串行各文件。
-fn global_flow_lock() -> std::net::TcpListener {
-    loop {
-        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:39701") {
-            return l;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-}
-
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn publish_inherit_and_version_baseline() {
-    let _flow_lock = global_flow_lock();
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let _flow_lock = flow_lock();
+    let app = TestApp::builder().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let token = login_super(&router, &db, &alloc).await.expect("超管登录");
 
     // 建站点 + 厂商
-    let (status, body) = req(router.clone(), "POST", "/api/v1/admin/stations", Some(json!({
+    let (status, body) = req(&router, "POST", "/api/v1/admin/stations", Some(json!({
         "name": format!("站点{}", rand_suffix()), "longitude": 120.1, "latitude": 30.2, "status": "active"
     })), Some(&token)).await;
     assert_eq!(status, StatusCode::OK, "建站点应成功: {body}");
     let station_id = body["data"]["id"].as_u64().unwrap();
     // 前端「全部状态」以空串发送（axios 照发 status=）：空串须视同未传，返回全部。
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         "/api/v1/admin/stations?status=&keyword=&page=1&page_size=50",
         None,
@@ -173,7 +74,7 @@ async fn publish_inherit_and_version_baseline() {
         "空串过滤的列表应含新建站点"
     );
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/vendors",
         Some(json!({
@@ -199,7 +100,7 @@ async fn publish_inherit_and_version_baseline() {
         "display": {"duration": [], "energy": []}
     });
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/settings/charging-schemes",
         Some(json!({"scheme": scheme})),
@@ -211,7 +112,7 @@ async fn publish_inherit_and_version_baseline() {
 
     // 发布到站点（版本基线 0）→ version=1
     let rid1 = format!("pub-{}", rand_suffix());
-    let (status, body) = req(router.clone(), "POST", "/api/v1/admin/settings/charging-schemes/apply", Some(json!({
+    let (status, body) = req(&router, "POST", "/api/v1/admin/settings/charging-schemes/apply", Some(json!({
         "request_id": rid1, "station_id": station_id, "template_id": template_id, "expected_version": 0
     })), Some(&token)).await;
     assert_eq!(status, StatusCode::OK, "发布应成功: {body}");
@@ -219,7 +120,7 @@ async fn publish_inherit_and_version_baseline() {
     assert_eq!(body["data"]["replayed"], false);
 
     // 同 request_id 重放 → replayed=true
-    let (status, body) = req(router.clone(), "POST", "/api/v1/admin/settings/charging-schemes/apply", Some(json!({
+    let (status, body) = req(&router, "POST", "/api/v1/admin/settings/charging-schemes/apply", Some(json!({
         "request_id": rid1, "station_id": station_id, "template_id": template_id, "expected_version": 0
     })), Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
@@ -227,7 +128,7 @@ async fn publish_inherit_and_version_baseline() {
 
     // 同 request_id 不同内容 → 409
     let (status, _) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/settings/charging-schemes/apply",
         Some(json!({
@@ -240,7 +141,7 @@ async fn publish_inherit_and_version_baseline() {
 
     // 版本冲突：expected_version=0 再发（基线已是 1）→ 409
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/settings/charging-schemes/apply",
         Some(json!({
@@ -254,7 +155,7 @@ async fn publish_inherit_and_version_baseline() {
 
     // 生效查询：站点默认
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/stations/{station_id}/charging-scheme"),
         None,
@@ -268,7 +169,7 @@ async fn publish_inherit_and_version_baseline() {
     // 设备覆盖发布（expected=1）→ version=2；生效查询设备优先
     let device_id = format!("dev-{}", rand_suffix());
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/settings/charging-schemes/apply",
         Some(json!({
@@ -280,7 +181,7 @@ async fn publish_inherit_and_version_baseline() {
     .await;
     assert_eq!(status, StatusCode::OK, "设备覆盖发布应成功: {body}");
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/stations/{station_id}/charging-scheme?device_id={device_id}"),
         None,
@@ -293,7 +194,7 @@ async fn publish_inherit_and_version_baseline() {
 
     // 继承（删除设备覆盖）→ 设备回落站点默认
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         &format!("/api/v1/admin/stations/{station_id}/charging-scheme/inherit"),
         Some(json!({"device_id": device_id, "expected_version": 1})),
@@ -302,7 +203,7 @@ async fn publish_inherit_and_version_baseline() {
     .await;
     assert_eq!(status, StatusCode::OK, "继承应成功: {body}");
     let (status, body) = req(
-        router.clone(),
+        &router,
         "GET",
         &format!("/api/v1/admin/stations/{station_id}/charging-scheme?device_id={device_id}"),
         None,
@@ -328,10 +229,11 @@ async fn publish_inherit_and_version_baseline() {
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn invalid_scheme_is_rejected_with_conflict() {
-    let _flow_lock = global_flow_lock();
-    let Some((router, db, alloc)) = build().await else {
-        return;
-    };
+    let _flow_lock = flow_lock();
+    let app = TestApp::builder().build().await;
+    let router = app.router;
+    let db = app.db;
+    let alloc = app.allocator;
     let token = login_super(&router, &db, &alloc).await.expect("超管登录");
     // 时段不覆盖全天 → 409
     let bad = json!({
@@ -342,7 +244,7 @@ async fn invalid_scheme_is_rejected_with_conflict() {
         "stop": {}, "card": {"package_id": 2, "max_minutes": 600}, "display": {"duration": [], "energy": []}
     });
     let (status, body) = req(
-        router.clone(),
+        &router,
         "POST",
         "/api/v1/admin/settings/charging-schemes",
         Some(json!({"scheme": bad})),
