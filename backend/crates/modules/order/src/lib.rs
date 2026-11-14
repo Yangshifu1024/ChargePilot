@@ -293,18 +293,26 @@ pub async fn mark_charging_tx(
     Ok(())
 }
 
-/// 启动失败：paid → failed 并记录原因（旧版失败回执分支）。
-pub async fn mark_failed_tx(
+/// 启动被拒（设备明确拒绝或超时兜底）：paid → refunding 并记录原因。
+/// 旧版 MarkStartRejectedInTx 语义——订单进入退款流程，渠道退款由执行器
+/// 按 refund_record 推进，成功收尾 refunding → refunded；failed 保持死值
+/// （state-machine.md 定案，旧版逐写点核实：生产零写入）。
+pub async fn mark_start_rejected_tx(
     tx: &mut MySqlConnection,
     charge_order_id: u64,
     order_no: &str,
     reason: &str,
 ) -> Result<(), OrderError> {
+    // 类型层迁移证明：paid 证据 → mark_start_rejected → refunding。
+    let _refunding = chargepilot_domain::charging_state::PaidOrder {
+        id: chargepilot_domain::charging_state::OrderId(charge_order_id),
+    }
+    .mark_start_rejected(reason);
     let n = sqlx::query(
         "UPDATE `charge_order` SET `status` = ?, `failure_reason` = ? \
          WHERE `id` = ? AND `order_no` = ? AND `status` = ?",
     )
-    .bind(OrderStatus::FAILED)
+    .bind(OrderStatus::REFUNDING)
     .bind(reason)
     .bind(charge_order_id as i64)
     .bind(order_no)

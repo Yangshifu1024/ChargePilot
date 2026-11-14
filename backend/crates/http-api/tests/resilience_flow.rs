@@ -110,20 +110,21 @@ async fn slow_receipt_sweeper_fails_order_with_refund() {
         .execute(&db)
         .await
         .unwrap();
+    let payment_id = alloc_next_payment_id(&alloc).await;
     sqlx::query(
         "INSERT INTO `charge_order` (`id`, `order_no`, `user_id`, `device_id`, `port_no`, `port_code`, \
-         `status`, `created_month`) VALUES (?, ?, ?, ?, 1, ?, 'paid', ?)",
+         `status`, `payment_order_id`, `created_month`) VALUES (?, ?, ?, ?, 1, ?, 'paid', ?, ?)",
     )
     .bind(charge_order_id as i64)
     .bind(format!("C{charge_order_id}"))
     .bind(USER_ID as i64)
     .bind(&device_id)
     .bind(format!("pc-{charge_order_id}"))
+    .bind(payment_id as i64)
     .bind(chargepilot_mod_order::month_start_of(chrono::Utc::now()))
     .execute(&db)
     .await
     .unwrap();
-    let payment_id = alloc_next_payment_id(&alloc).await;
     let month = chargepilot_mod_order::month_start_of(chrono::Utc::now()).to_string();
     sqlx::query(&format!(
         "INSERT INTO `payment_order` (`id`, `order_no`, `user_id`, `biz_type`, `biz_id`, \
@@ -182,7 +183,7 @@ async fn slow_receipt_sweeper_fails_order_with_refund() {
             .fetch_one(&db)
             .await
             .unwrap();
-    assert_eq!(status, "failed", "订单推进失败态");
+    assert_eq!(status, "refunding", "超时出口走退款流程（failed 保持死值）");
     let refunds: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM `refund_record` WHERE `biz_id` = ?")
             .bind(charge_order_id as i64)
@@ -198,6 +199,21 @@ async fn slow_receipt_sweeper_fails_order_with_refund() {
     .await
     .unwrap();
     assert_eq!(cmd_status, "rejected", "命令标记拒绝");
+
+    // 退款执行链闭环：执行器按 refund_record 领取，成功后收尾 refunding → refunded。
+    chargepilot_mod_settlement::refund_executor::run_once(&db, 50)
+        .await
+        .unwrap();
+    let status: String =
+        sqlx::query_scalar("SELECT CAST(`status` AS CHAR) FROM `charge_order` WHERE `id` = ?")
+            .bind(charge_order_id as i64)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(
+        status, "refunded",
+        "退款成功后订单收尾 refunded（不再滞留中间态）"
+    );
 
     cleanup_order(&db, charge_order_id, &device_id, "").await;
 }

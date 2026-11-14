@@ -14,6 +14,8 @@ pub struct OrderId(pub u64);
 pub struct PaidOrder {
     pub id: OrderId,
 }
+// 构造来源：支付回调 / 刷卡扣款事务（创建即 paid）；启动被拒路径
+// （回执失败 / 超时兜底）经 `mark_start_rejected` 消费本证据类型。
 
 /// 状态 `charging`：设备启动确认后的充电中。
 #[derive(Debug)]

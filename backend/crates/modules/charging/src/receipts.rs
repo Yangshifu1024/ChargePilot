@@ -57,7 +57,7 @@ impl From<chargepilot_mod_order::OrderError> for ReceiptError {
 
 /// 应用启动回执（旧版 StartResultService.Apply，微信支付路径）。
 /// 返回 true 表示同内容重放。成功 → 订单 charging + 端口占用确认；
-/// 失败 → 订单 failed + 登记渠道退款记录 + 出站退款事件。
+/// 失败 → 订单 refunding + 登记渠道退款记录 + 出站退款事件。
 pub async fn apply_start_receipt(
     pool: &MySqlPool,
     input: &StartReceiptInput,
@@ -183,9 +183,10 @@ pub async fn apply_start_receipt(
         tx.commit().await?;
         return Ok(false);
     }
-    // 失败：订单 failed + 登记自动渠道退款 + 出站事件（退款执行随批 5）。
+    // 失败：订单 refunding（旧版 MarkStartRejectedInTx 语义）+ 登记自动渠道退款
+    // + 出站事件；退款执行成功后由执行器收尾 refunding → refunded。
     let reason = format!("设备启动失败（结果码 {}）", input.result_code);
-    chargepilot_mod_order::mark_failed_tx(&mut *c, id, &order_no, &reason).await?;
+    chargepilot_mod_order::mark_start_rejected_tx(&mut *c, id, &order_no, &reason).await?;
     chargepilot_mod_card::fail_start_operation_tx(&mut *c, id).await?;
     let payment_order_id: u64 = sqlx::query_scalar(
         "SELECT `payment_order_id` FROM `charge_payment_intent` WHERE `charge_order_id` = ?",

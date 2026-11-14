@@ -1,5 +1,6 @@
 //! 超时兜底扫描（旧版 worker 定时循环的状态机出口对应物）。
-//! 启动超时：paid 订单的 pending/rejected 命令超期未 ack → 订单 failed +
+//! 启动超时：paid 订单的 pending/sent 命令超期未 ack → 订单 refunding
+//! （旧版 MarkStartRejectedInTx 同款路径，ADR 002 补充的超时出口）+
 //! 登记退款；由定时任务驱动，注入时钟推进可测。
 
 use sqlx::{Acquire, MySqlPool};
@@ -11,8 +12,9 @@ pub struct StartTimeoutSweeper {
     pub timeout_minutes: i64,
 }
 
-/// 扫描一轮：把超期未确认的启动命令对应订单置 failed 并登记退款。
-/// 返回处理单数。命令 sent 超期视为设备无应答。
+/// 扫描一轮：把超期未确认的启动命令对应订单置 refunding 并登记退款。
+/// 返回处理单数。命令 sent 超期视为设备无应答；退款成功后由执行器
+/// 收尾 refunding → refunded。
 pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Result<usize> {
     let due: Vec<(u64, String, String)> = sqlx::query_as(
         "SELECT c.`id`, c.`order_no`, CAST(cmd.`command_id` AS CHAR) \
@@ -34,8 +36,14 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
             .execute(&mut *conn)
             .await?;
         let mut tx = conn.begin().await?;
+        // 类型层迁移证明：paid 证据 → mark_start_rejected → refunding（超时出口
+        // 与设备拒绝启动同款路径，state-machine.md 迁移 2；failed 保持死值）。
+        let _refunding = chargepilot_domain::charging_state::PaidOrder {
+            id: chargepilot_domain::charging_state::OrderId(id),
+        }
+        .mark_start_rejected(&reason);
         let updated = sqlx::query(
-            "UPDATE `charge_order` SET `status` = 'failed', `failure_reason` = ? \
+            "UPDATE `charge_order` SET `status` = 'refunding', `failure_reason` = ? \
              WHERE `id` = ? AND `order_no` = ? AND `status` = 'paid'",
         )
         .bind(reason)

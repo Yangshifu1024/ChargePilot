@@ -349,6 +349,33 @@ async fn permission_boundary_and_management() {
         .any(|a| a["id"].as_u64() == Some(ann_id));
     assert!(found, "新公告应在 C 端可见");
 
+    // 7b. 定向公告（scope=station）不得进入 C 端全局列表（未提供位置上下文）。
+    sqlx::query(
+        "INSERT INTO `announcement` (`title`, `content`, `scope`, `start_at`, `status`, `created_by`) \
+         VALUES ('定向站公告', '仅站点可见', 'station', UTC_TIMESTAMP(3), 'published', 1)",
+    )
+    .execute(db.as_ref())
+    .await
+    .unwrap();
+    let (status, body) = req(
+        router.clone(),
+        "GET",
+        "/api/v1/user/announcement/list?page=1&page_size=50",
+        None,
+        None,
+        &rand_ip(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !body["data"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["title"] == "定向站公告"),
+        "station 定向公告不得出现在 C 端全局列表"
+    );
+
     // 8. 仪表盘（受限账号有 dashboard.read）→ 形状断言
     let (status, body) = req(
         router.clone(),

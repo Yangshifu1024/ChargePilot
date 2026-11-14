@@ -134,8 +134,9 @@ pub async fn publish(
     Ok(id)
 }
 
-/// C 端公告分页：仅 published + 生效窗口内 + scope=global（未提供位置）。
-/// SQL 先取 page_size*3 条候选再按 global 过滤（旧版固有语义：分页可能不满页）。
+/// C 端公告分页：仅 published + 生效窗口内 + scope=global。
+/// 未提供位置上下文，station/city 定向公告不进入全局列表（旧版
+/// AnnouncementQueryService.List 以 stationID=0 内存过滤，此处改为 SQL 过滤）。
 #[derive(Debug, sqlx::FromRow, serde::Serialize)]
 pub struct PublicAnnouncement {
     pub id: u64,
@@ -155,11 +156,11 @@ pub async fn public_list(
                 DATE_FORMAT(`start_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `start_at`, \
                 DATE_FORMAT(`end_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `end_at` \
          FROM `announcement` \
-         WHERE `deleted_at` IS NULL AND `status` = 'published' \
+         WHERE `deleted_at` IS NULL AND `status` = 'published' AND `scope` = 'global' \
            AND `start_at` <= NOW(3) AND (`end_at` IS NULL OR `end_at` >= NOW(3)) \
          ORDER BY `start_at` DESC, `id` DESC LIMIT ? OFFSET ?",
     )
-    .bind(page_size as i64 * 3)
+    .bind(page_size as i64)
     .bind(((page - 1) as i64) * (page_size as i64))
     .fetch_all(pool)
     .await
