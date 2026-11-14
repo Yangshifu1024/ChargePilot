@@ -96,7 +96,9 @@ async fn login(
     }
     match service(&deps).login(&username, &password, &ip).await {
         Ok(LoginOutcome::Challenge(challenge)) => {
-            let data = serde_json::json!({ "challenge": challenge });
+            // 前端契约（Login.tsx / 旧版语义）：密码通过待验码时回
+            // mfa_required + mfa_challenge，前端以 mfa_challenge 提交第二步。
+            let data = serde_json::json!({ "mfa_required": true, "mfa_challenge": challenge });
             httpx::ok(data, &rid)
         }
         Ok(LoginOutcome::Access(reply)) => reply_response(reply, &rid),
@@ -113,7 +115,7 @@ async fn verify_mfa(
     let ip = client_ip(&headers);
     let (challenge, code) = match body.as_ref().map(|b| &b.0) {
         Some(v) => (
-            v["challenge"].as_str().unwrap_or_default().to_string(),
+            v["mfa_challenge"].as_str().unwrap_or_default().to_string(),
             v["code"].as_str().unwrap_or_default().to_string(),
         ),
         None => (String::new(), String::new()),

@@ -263,7 +263,7 @@ async fn mfa_login_flow_with_replay_rejection() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let challenge = body["data"]["challenge"]
+    let challenge = body["data"]["mfa_challenge"]
         .as_str()
         .expect("应返回挑战")
         .to_string();
@@ -276,7 +276,7 @@ async fn mfa_login_flow_with_replay_rejection() {
     let (status, body) = post(
         router.clone(),
         "/api/v1/admin/auth/mfa",
-        &format!(r#"{{"challenge":"{challenge}","code":"000000"}}"#),
+        &format!(r#"{{"mfa_challenge":"{challenge}","code":"000000"}}"#),
         &ip,
     )
     .await;
@@ -289,7 +289,7 @@ async fn mfa_login_flow_with_replay_rejection() {
     let (status, body) = post(
         router.clone(),
         "/api/v1/admin/auth/mfa",
-        &format!(r#"{{"challenge":"{challenge}","code":"{code}"}}"#),
+        &format!(r#"{{"mfa_challenge":"{challenge}","code":"{code}"}}"#),
         &ip,
     )
     .await;
@@ -301,7 +301,7 @@ async fn mfa_login_flow_with_replay_rejection() {
     let (status, body) = post(
         router.clone(),
         "/api/v1/admin/auth/mfa",
-        &format!(r#"{{"challenge":"{challenge}","code":"{code}"}}"#),
+        &format!(r#"{{"mfa_challenge":"{challenge}","code":"{code}"}}"#),
         &ip,
     )
     .await;
@@ -317,11 +317,11 @@ async fn mfa_login_flow_with_replay_rejection() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let challenge2 = body["data"]["challenge"].as_str().unwrap().to_string();
+    let challenge2 = body["data"]["mfa_challenge"].as_str().unwrap().to_string();
     let (status, body) = post(
         router.clone(),
         "/api/v1/admin/auth/mfa",
-        &format!(r#"{{"challenge":"{challenge2}","code":"{code}"}}"#),
+        &format!(r#"{{"mfa_challenge":"{challenge2}","code":"{code}"}}"#),
         &ip,
     )
     .await;
