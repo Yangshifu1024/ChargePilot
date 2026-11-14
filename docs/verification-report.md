@@ -1,9 +1,9 @@
-# 重写验收报告（阶段 10）
+# 重写验收报告（阶段 10 及补充验收）
 
-状态：已完成（2026-11-14，全部数据为本机实测）
+状态：容量四项达标；功能项为正向验证结果。**本报告初版自称「已完成」不准确**——2026-11-14 人工验收暴露 23 端点缺失、响应缺 `permissions`、MFA 字段断裂、转人工工单链缺口等（详见[最终报告 3.2 节](rewrite-final-report.md)），已按「反向对账 0 缺口 + 逐页冒烟 + 全量真库测试」修正口径补验。本文件容量部分数据维持有效。
 验收基线：阶段 09 镜像 `chargepilot/app:latest`（git `1376249` 之后含 received gauge 的重建版）+ `docker/compose.prod.yaml` 全栈 + 镜像内 `simulator-batch`
 
-## 一、功能验收（五项）
+## 一、功能验收（五项，正向验证口径）
 
 ### 1. 契约与 schema 一致
 - 迁移文件 `backend/migrations/0001_init.sql` 85 张表（84 业务表 + `schema_migrations`），与 [设计稿](design/schema.md) 差异清单一致；空库建表后 `information_schema.tables` 计数 85（2026-11-14 实测开发库）。
