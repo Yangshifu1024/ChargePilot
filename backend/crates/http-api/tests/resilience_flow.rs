@@ -90,12 +90,12 @@ async fn cleanup_order(
 }
 
 /// 场景 1：启动命令超时（回执迟到）——兜底扫描推进失败态并登记自动退款。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn slow_receipt_sweeper_fails_order_with_refund() {
     let _guard = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     let db = chargepilot_storage::open_pool(&db_url, 4).await.unwrap();
     let alloc = SegmentAllocator::new(db.clone(), 60);
@@ -219,12 +219,12 @@ async fn slow_receipt_sweeper_fails_order_with_refund() {
 }
 
 /// 场景 2：事件投递器故障——失败退避后重放成功，命令生成且事件标记 published。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn event_dispatch_failure_replays() {
     let _guard = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     let db = chargepilot_storage::open_pool(&db_url, 4).await.unwrap();
     let alloc = SegmentAllocator::new(db.clone(), 60);
@@ -376,12 +376,12 @@ async fn event_dispatch_failure_replays() {
 }
 
 /// 场景 3：进程重启——结束回执同内容重放幂等，状态收敛且计费任务不翻倍。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn restart_replays_end_receipt_idempotently() {
     let _guard = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     let db = chargepilot_storage::open_pool(&db_url, 4).await.unwrap();
     let alloc = SegmentAllocator::new(db.clone(), 60);
@@ -487,12 +487,12 @@ async fn restart_replays_end_receipt_idempotently() {
 }
 
 /// 场景 4：遥测缓冲满——丢弃计数增长，落库明细与聚合完好。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn telemetry_buffer_overflow_drops_oldest() {
     let _guard = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     let db = chargepilot_storage::open_pool(&db_url, 4).await.unwrap();
     let device_id = format!("resil-buf-{}", rand_suffix());

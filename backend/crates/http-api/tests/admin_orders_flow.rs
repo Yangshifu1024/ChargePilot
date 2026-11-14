@@ -616,6 +616,7 @@ fn find_item<'a>(body: &'a Value, order_id: u64) -> &'a Value {
         .unwrap_or_else(|| panic!("列表应包含订单 {order_id}: {}", body))
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn admin_orders_flow() {
     let _flow_lock = global_flow_lock();

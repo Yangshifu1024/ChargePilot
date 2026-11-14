@@ -40,24 +40,20 @@ async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAlloc
         .with_env_filter("warn")
         .try_init();
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return None;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     let Some(redis_url) = env_or_skip("TEST_REDIS_URL") else {
-        eprintln!("跳过：TEST_REDIS_URL 未设置");
-        return None;
+        panic!("集成测试需要 TEST_REDIS_URL（node tasks.mjs test-integration）");
     };
     let db = match chargepilot_storage::open_pool(&db_url, 8).await {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("跳过：数据库连接失败 {e}");
-            return None;
+            panic!("数据库连接失败：{e}");
         }
     };
     let allocator = Arc::new(SegmentAllocator::new(db.clone(), 60));
     if let Err(e) = allocator.warm_up().await {
-        eprintln!("跳过：号段预热失败 {e}");
-        return None;
+        panic!("号段预热失败：{e}");
     }
     let deps = Arc::new(ApiDeps {
         db: db.clone(),
@@ -338,6 +334,7 @@ async fn cleanup_invoices(db: &sqlx::MySqlPool, uid: u64) {
 
 /// 场景一（账单）：计费入账事务自动签发账单 → 列表/详情字段齐 → 已读幂等
 /// （两次 read，read_at 不变）→ 越权 404（detail 与 read 同一致）。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn bill_lifecycle_read_idempotent_and_forbidden() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -528,6 +525,7 @@ async fn bill_lifecycle_read_idempotent_and_forbidden() {
 
 /// 场景二（发票）：refunding 订单申请开票 → 重复同 UUID 幂等复用 →
 /// 换请求号同订单 409 → my 列表可见 → 他人订单 404。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn invoice_apply_idempotent_conflict_and_my_list() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());

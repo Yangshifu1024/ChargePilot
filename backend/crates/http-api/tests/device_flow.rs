@@ -136,6 +136,7 @@ fn global_flow_lock() -> std::net::TcpListener {
     }
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn import_devices_and_fault_flow() {
     let _flow_lock = global_flow_lock();

@@ -308,6 +308,7 @@ async fn cleanup(
         .await;
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn misc_endpoints_flow() {
     let _flow_lock = global_flow_lock();

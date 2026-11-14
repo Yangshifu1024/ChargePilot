@@ -34,6 +34,28 @@ const tasks = {
     tasks.test();
   },
   migrate() { run('cargo', ['run', '-p', 'chargepilot-app', '--', 'migrate'], { env: envOf() }); },
+  // 真库集成测试（票 01，.scratch/engineering-refactor/issues/01）：
+  // 真库门控测试静态标记 #[ignore]，本任务注入连接变量并以 --include-ignored 全量执行。
+  // 用法：node tasks.mjs test-integration [fresh]——fresh 先重建开发库（DROP+CREATE）再跑，
+  // 清理历史残留数据对频次窗口类断言的干扰。需 db-up / redis-up 容器在运行。
+  'test-integration'() {
+    const TEST_MYSQL_URL = 'mysql://chargepilot:chargepilot@127.0.0.1:3307/chargepilot_dev';
+    const TEST_REDIS_URL = 'redis://127.0.0.1:6380';
+    if (process.argv[3] === 'fresh') {
+      spawnSync('docker', [
+        'exec', 'chargepilot-dev-mysql', 'mysql', '-uroot', '-proot', '-e',
+        'DROP DATABASE IF EXISTS chargepilot_dev; CREATE DATABASE chargepilot_dev;',
+      ], { stdio: 'inherit' });
+      console.log('开发库已重建，重新迁移…');
+    }
+    // 集成测试假设 schema 就绪；fresh 后必须重新迁移（平时迁移幂等，代价低）。
+    run('cargo', ['run', '-p', 'chargepilot-app', '--', 'migrate'], {
+      env: { ...envOf(), DATABASE_URL: TEST_MYSQL_URL },
+    });
+    run('cargo', ['test', '--workspace', '--', '--include-ignored'], {
+      env: { ...envOf(), TEST_MYSQL_URL, TEST_REDIS_URL },
+    });
+  },
   // 开发数据库：临时 MySQL 容器（gh-proxy 镜像前缀，见阶段 09 spec）
   'db-up'() {
     run('docker', [
@@ -52,7 +74,7 @@ const tasks = {
   },
   'redis-down'() { spawnSync('docker', ['rm', '-f', 'chargepilot-dev-redis'], { stdio: 'inherit' }); },
   help() {
-    console.log('任务：build | test | fmt | fmt-check | check | migrate | db-up | db-down | redis-up | redis-down');
+    console.log('任务：build | test | fmt | fmt-check | check | migrate | test-integration [fresh] | db-up | db-down | redis-up | redis-down');
   },
 };
 

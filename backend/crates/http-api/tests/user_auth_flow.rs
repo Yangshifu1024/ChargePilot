@@ -101,6 +101,7 @@ async fn take(resp: axum::response::Response) -> (StatusCode, Value) {
     (status, json)
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn dev_login_full_flow() {
     let _ = tracing_subscriber::fmt()
@@ -193,6 +194,7 @@ async fn dev_login_full_flow() {
     assert_eq!(body["message"], "session expired", "JWT 有效但会话已注销");
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn invalid_code_maps_to_wechat_failure() {
     let Some((router, _, _)) = build_app().await else {
@@ -210,6 +212,7 @@ async fn invalid_code_maps_to_wechat_failure() {
     assert_eq!(body["message"], "WeChat login failed");
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn forged_jwt_is_rejected() {
     let Some((router, account, _)) = build_app().await else {

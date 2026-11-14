@@ -150,6 +150,7 @@ fn global_flow_lock() -> std::net::TcpListener {
     }
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn plain_login_flow() {
     let _flow_lock = global_flow_lock();
@@ -239,6 +240,7 @@ async fn refresh_with(router: axum::Router, token: &str, ip: &str) -> (StatusCod
     )
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn mfa_login_flow_with_replay_rejection() {
     let _flow_lock = global_flow_lock();
@@ -339,6 +341,7 @@ async fn mfa_login_flow_with_replay_rejection() {
     assert_eq!(body["data"]["mfa_enabled"], true);
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn login_rate_limit() {
     let _flow_lock = global_flow_lock();

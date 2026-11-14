@@ -192,20 +192,19 @@ async fn cleanup(db: &sqlx::MySqlPool, user_ids: &[u64], order_ids: &[u64]) {
 
 async fn open_db() -> Option<Arc<sqlx::MySqlPool>> {
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return None;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     match chargepilot_storage::open_pool(&db_url, 8).await {
         Ok(d) => Some(Arc::new(d)),
         Err(e) => {
-            eprintln!("跳过：数据库连接失败 {e}");
-            None
+            panic!("数据库连接失败：{e}");
         }
     }
 }
 
 /// 场景 1：development 登录 → 明文绑定 → profile 可见 → 解绑 → profile 消失；
 /// 附无效号码与 wechat 模式准入语义。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn phone_bind_unbind_flow() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -289,6 +288,7 @@ async fn phone_bind_unbind_flow() {
 /// 场景 1b：wechat 模式准入——明文与 code 互斥；交换能力未接入按暂不可用拒绝。
 /// 登录走 development app（wechat 交换未实现无法建会话），鉴权链路（JWT +
 /// Redis 会话）与登录模式无关，同一凭据在 wechat app 上同样有效。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn phone_bind_wechat_mode_admission() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -343,6 +343,7 @@ async fn phone_bind_wechat_mode_admission() {
 }
 
 /// 场景 2：直插在线卡 → 列表可见、字段对齐旧版（id 数字、user_id 字符串）。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn cards_list_flow() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -374,6 +375,7 @@ async fn cards_list_flow() {
 
 /// 场景 3：状态操作——挂失成功带审计；非法状态 400；他人卡 404；
 /// 解绑成功后列表消失且再操作 404。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn card_status_change_flow() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -486,6 +488,7 @@ async fn card_status_change_flow() {
 
 /// 场景 4：反馈提交——成功、重复 409、他人订单 404、非完成状态 404、
 /// 业务单号提交、校验失败 400。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn feedback_submit_flow() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());

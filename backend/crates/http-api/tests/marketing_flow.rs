@@ -39,24 +39,20 @@ async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAlloc
         .with_env_filter("warn")
         .try_init();
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return None;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     let Some(redis_url) = env_or_skip("TEST_REDIS_URL") else {
-        eprintln!("跳过：TEST_REDIS_URL 未设置");
-        return None;
+        panic!("集成测试需要 TEST_REDIS_URL（node tasks.mjs test-integration）");
     };
     let db = match chargepilot_storage::open_pool(&db_url, 8).await {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("跳过：数据库连接失败 {e}");
-            return None;
+            panic!("数据库连接失败：{e}");
         }
     };
     let allocator = Arc::new(SegmentAllocator::new(db.clone(), 60));
     if let Err(e) = allocator.warm_up().await {
-        eprintln!("跳过：号段预热失败 {e}");
-        return None;
+        panic!("号段预热失败：{e}");
     }
     let deps = Arc::new(ApiDeps {
         db: db.clone(),
@@ -265,6 +261,7 @@ async fn cleanup(
     }
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn coupon_create_grant_query_stats() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -609,6 +606,7 @@ async fn coupon_create_grant_query_stats() {
 /// 批 4 主缝：券的报价（quote）与到账核销（redeem_in_tx 随支付事务）。
 /// 套餐下单带券返回冲突（旧版互斥约束）；带券意图走 apply_payment 直调
 /// 验证核销、幂等重放与订单冻结优惠。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn coupon_quote_and_redeem() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());

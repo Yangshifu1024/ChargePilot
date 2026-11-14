@@ -40,24 +40,20 @@ async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAlloc
         .with_env_filter("warn")
         .try_init();
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return None;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     let Some(redis_url) = env_or_skip("TEST_REDIS_URL") else {
-        eprintln!("跳过：TEST_REDIS_URL 未设置");
-        return None;
+        panic!("集成测试需要 TEST_REDIS_URL（node tasks.mjs test-integration）");
     };
     let db = match chargepilot_storage::open_pool(&db_url, 8).await {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("跳过：数据库连接失败 {e}");
-            return None;
+            panic!("数据库连接失败：{e}");
         }
     };
     let allocator = Arc::new(SegmentAllocator::new(db.clone(), 60));
     if let Err(e) = allocator.warm_up().await {
-        eprintln!("跳过：号段预热失败 {e}");
-        return None;
+        panic!("号段预热失败：{e}");
     }
     let deps = Arc::new(ApiDeps {
         db: db.clone(),
@@ -284,6 +280,7 @@ fn global_flow_lock() -> std::net::TcpListener {
     }
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn wallet_refund_flow() {
     let _flow_lock = global_flow_lock();
@@ -600,6 +597,7 @@ async fn wallet_refund_flow() {
         .await;
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn wallet_review_rejection_path() {
     let _flow_lock = global_flow_lock();

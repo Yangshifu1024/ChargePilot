@@ -112,12 +112,12 @@ async fn cleanup(
         .await;
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn single_device_closed_loop() {
     let _guard = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     let db = chargepilot_storage::open_pool(&db_url, 6).await.unwrap();
     let alloc = SegmentAllocator::new(db.clone(), 60);

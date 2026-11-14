@@ -23,14 +23,12 @@ async fn open_db() -> Option<Arc<sqlx::MySqlPool>> {
         .with_env_filter("warn")
         .try_init();
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return None;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     match chargepilot_storage::open_pool(&db_url, 8).await {
         Ok(d) => Some(Arc::new(d)),
         Err(e) => {
-            eprintln!("跳过：数据库连接失败 {e}");
-            None
+            panic!("数据库连接失败：{e}");
         }
     }
 }
@@ -234,6 +232,7 @@ async fn cleanup(
         .await;
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn card_swipe_full_flow() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -524,6 +523,7 @@ async fn card_swipe_full_flow() {
 }
 
 /// domain 纯规则烟测：卡号校验与续购判定（详测在 domain 单测）。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[test]
 fn card_rules_smoke() {
     assert!(chargepilot_domain::card::valid_card_no("12345678"));

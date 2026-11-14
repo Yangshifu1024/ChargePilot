@@ -443,6 +443,7 @@ async fn seed_invoice(db: &sqlx::MySqlPool, alloc: &SegmentAllocator) -> (u64, u
     (invoice_id, user_id)
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn invoice_list_and_review_flow() {
     let _flow_lock = global_flow_lock();
@@ -687,6 +688,7 @@ async fn invoice_list_and_review_flow() {
     }
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn meter_review_list_propose_decide_flow() {
     let _flow_lock = global_flow_lock();
@@ -1020,6 +1022,7 @@ async fn meter_review_list_propose_decide_flow() {
     .await;
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn refund_list_create_review_retry_flow() {
     let _flow_lock = global_flow_lock();

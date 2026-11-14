@@ -400,12 +400,12 @@ async fn latest_payload(db: &sqlx::MySqlPool, device_id: &str, event_type: &str)
 }
 
 /// 刷卡链：B6 事件受理 → 订单/卡扣/会话落地 → 授权（B7）经命令通道下发。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn card_swipe_authorizes_with_start_command() {
     let _guard = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     let db = chargepilot_storage::open_pool(&db_url, 6).await.unwrap();
     let alloc = SegmentAllocator::new(db.clone(), 60);
@@ -543,12 +543,12 @@ async fn dispatcher_handle_twice_replay_check(
 }
 
 /// 刷卡拒绝：余额不足 → BD 拒绝帧（保留余额显示），不落订单不扣款。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn card_swipe_insufficient_balance_denies() {
     let _guard = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     let db = chargepilot_storage::open_pool(&db_url, 6).await.unwrap();
     let alloc = SegmentAllocator::new(db.clone(), 60);
@@ -597,12 +597,12 @@ async fn card_swipe_insufficient_balance_denies() {
 }
 
 /// 告警链：故障事件生成告警，重放与合并升级不重复建行，恢复心跳置 auto_resolved。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn fault_alert_records_and_recovers() {
     let _guard = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     let db = chargepilot_storage::open_pool(&db_url, 6).await.unwrap();
     let alloc = SegmentAllocator::new(db.clone(), 60);
@@ -714,12 +714,12 @@ async fn fault_alert_records_and_recovers() {
 
 /// B4 本地启动：真实 TCP 会话下发 B5 确认，平台补单落地订单/卡扣；
 /// 离线卡卡号不存在时按刷卡链下发 BD 拒绝。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn local_start_confirms_and_compensates() {
     let _guard = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     let db = chargepilot_storage::open_pool(&db_url, 6).await.unwrap();
     let alloc = SegmentAllocator::new(db.clone(), 60);
@@ -831,12 +831,12 @@ async fn local_start_confirms_and_compensates() {
 }
 
 /// B4 卡无效路径：离线卡号未绑定 → BD 拒绝（invalid=true），不补单不扣款。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn local_start_unknown_card_denies() {
     let _guard = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     let db = chargepilot_storage::open_pool(&db_url, 6).await.unwrap();
     let alloc = SegmentAllocator::new(db.clone(), 60);

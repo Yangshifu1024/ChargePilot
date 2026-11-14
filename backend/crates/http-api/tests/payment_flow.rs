@@ -41,24 +41,20 @@ async fn build() -> Option<RouterEnv> {
         .with_env_filter("warn")
         .try_init();
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return None;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     let Some(redis_url) = env_or_skip("TEST_REDIS_URL") else {
-        eprintln!("跳过：TEST_REDIS_URL 未设置");
-        return None;
+        panic!("集成测试需要 TEST_REDIS_URL（node tasks.mjs test-integration）");
     };
     let db = match chargepilot_storage::open_pool(&db_url, 8).await {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("跳过：数据库连接失败 {e}");
-            return None;
+            panic!("数据库连接失败：{e}");
         }
     };
     let allocator = Arc::new(SegmentAllocator::new(db.clone(), 60));
     if let Err(e) = allocator.warm_up().await {
-        eprintln!("跳过：号段预热失败 {e}");
-        return None;
+        panic!("号段预热失败：{e}");
     }
     // 支付域按 simulation 装配（旧版 PAYMENT_MODE=simulation 语义）。
     let provider: Arc<dyn chargepilot_mod_payment::PayProvider> =
@@ -227,6 +223,7 @@ async fn cleanup(db: &sqlx::MySqlPool, device_id: &str) {
         .await;
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn checkout_confirm_and_late_refund_flow() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -446,6 +443,7 @@ async fn checkout_confirm_and_late_refund_flow() {
     cleanup(db.as_ref(), &device_id).await;
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn wallet_recharge_full_chain() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -549,6 +547,7 @@ async fn wallet_recharge_full_chain() {
 
 /// 批 4 互斥约束：套餐下单带券返回冲突（旧版 Reserve 的
 /// "当前套餐不允许使用优惠券"）；无券字段正常下单不受影响。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn checkout_rejects_coupon_with_offer() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());

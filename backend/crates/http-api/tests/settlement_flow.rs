@@ -21,14 +21,12 @@ async fn open_db() -> Option<Arc<sqlx::MySqlPool>> {
         .with_env_filter("warn")
         .try_init();
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return None;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     match chargepilot_storage::open_pool(&db_url, 8).await {
         Ok(d) => Some(Arc::new(d)),
         Err(e) => {
-            eprintln!("跳过：数据库连接失败 {e}");
-            None
+            panic!("数据库连接失败：{e}");
         }
     }
 }
@@ -210,6 +208,7 @@ async fn cleanup(db: &sqlx::MySqlPool, seeds: &[SettledSeed]) {
     }
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn billing_batch_and_refund_executor() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -448,6 +447,7 @@ async fn billing_batch_and_refund_executor() {
         .await;
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn wallet_recharge_refund_returns_balance() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());

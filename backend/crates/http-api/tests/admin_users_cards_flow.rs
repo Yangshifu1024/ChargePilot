@@ -337,6 +337,7 @@ async fn cleanup(db: &sqlx::MySqlPool, s: &Seed) {
         .await;
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn admin_users_and_online_cards_flow() {
     let _flow_lock = global_flow_lock();

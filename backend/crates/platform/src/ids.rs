@@ -159,22 +159,25 @@ mod tests {
         std::env::var("TEST_MYSQL_URL").unwrap_or_default()
     }
 
-    async fn fresh_pool() -> Option<MySqlPool> {
+    /// 门控语义：未设 TEST_MYSQL_URL 属调用方式错误（应经 test-integration 入口），
+    /// 连接失败属环境故障——两者都必须判失败，不允许静默跳过制造假绿。
+    async fn fresh_pool() -> MySqlPool {
         let url = test_pool_url();
         if url.is_empty() {
-            return None;
+            panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
         }
         // 共享水位绝不回拨：库中已有历史发号，重置会令后续测试
         // 从旧区间重新发号，撞出主键冲突（1062）。号段本应只进不退。
-        MySqlPool::connect(&url).await.ok()
+        MySqlPool::connect(&url)
+            .await
+            .unwrap_or_else(|e| panic!("数据库连接失败：{e}"))
     }
 
+    #[ignore = "真库集成：node tasks.mjs test-integration"]
     #[tokio::test]
     async fn concurrent_ids_unique_and_monotonic() {
         let _guard = ID_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(pool) = fresh_pool().await else {
-            return;
-        };
+        let pool = fresh_pool().await;
         let alloc = SegmentAllocator::new(pool.clone(), 100);
         alloc.warm_up().await.unwrap();
         let alloc = std::sync::Arc::new(alloc);
@@ -200,12 +203,11 @@ mod tests {
         pool.close().await;
     }
 
+    #[ignore = "真库集成：node tasks.mjs test-integration"]
     #[tokio::test]
     async fn watermark_survives_restart() {
         let _guard = ID_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(pool) = fresh_pool().await else {
-            return;
-        };
+        let pool = fresh_pool().await;
         let a1 = SegmentAllocator::new(pool.clone(), 10);
         a1.warm_up().await.unwrap();
         let first = a1.next_id().await.unwrap();

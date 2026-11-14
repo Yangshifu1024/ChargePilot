@@ -40,24 +40,20 @@ async fn build() -> Option<(axum::Router, Arc<sqlx::MySqlPool>, Arc<SegmentAlloc
         .with_env_filter("warn")
         .try_init();
     let Some(db_url) = env_or_skip("TEST_MYSQL_URL") else {
-        eprintln!("跳过：TEST_MYSQL_URL 未设置");
-        return None;
+        panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）");
     };
     let Some(redis_url) = env_or_skip("TEST_REDIS_URL") else {
-        eprintln!("跳过：TEST_REDIS_URL 未设置");
-        return None;
+        panic!("集成测试需要 TEST_REDIS_URL（node tasks.mjs test-integration）");
     };
     let db = match chargepilot_storage::open_pool(&db_url, 8).await {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("跳过：数据库连接失败 {e}");
-            return None;
+            panic!("数据库连接失败：{e}");
         }
     };
     let allocator = Arc::new(SegmentAllocator::new(db.clone(), 60));
     if let Err(e) = allocator.warm_up().await {
-        eprintln!("跳过：号段预热失败 {e}");
-        return None;
+        panic!("号段预热失败：{e}");
     }
     let deps = Arc::new(ApiDeps {
         db: db.clone(),
@@ -390,6 +386,7 @@ async fn mark_completed_with_facts(db: &sqlx::MySqlPool, charge_order_id: u64, r
 }
 
 /// 场景 1：已完订单的历史列表与详情字段（对照 formatOrder 消费字段）。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn history_and_detail_fields() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -530,6 +527,7 @@ async fn history_and_detail_fields() {
 }
 
 /// 场景 2：充电中订单 ongoing 可见；快照无在线会话走回退/待上报语义不 5xx。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn ongoing_and_snapshot_fallback() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -628,6 +626,7 @@ async fn ongoing_and_snapshot_fallback() {
 }
 
 /// 场景 3：曲线端点空数据返回空数组；窗口与粒度校验按旧版错误码。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn curve_windows_and_validation() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -720,6 +719,7 @@ async fn curve_windows_and_validation() {
 }
 
 /// 场景 4：扫码解析与端口查询（已导入设备返回端口集合与运营态）。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn scan_resolve_and_port() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -839,6 +839,7 @@ async fn scan_resolve_and_port() {
 }
 
 /// 场景 5：旧形状停止路由（charging 订单停止成功；越权 404；重放幂等）。
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn stop_body_shape_and_forbidden() {
     let _g = FLOW_LOCK.lock().unwrap_or_else(|e| e.into_inner());

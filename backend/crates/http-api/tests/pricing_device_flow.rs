@@ -133,6 +133,7 @@ fn global_flow_lock() -> std::net::TcpListener {
     }
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn publish_inherit_and_version_baseline() {
     let _flow_lock = global_flow_lock();
@@ -318,6 +319,7 @@ async fn publish_inherit_and_version_baseline() {
         .await;
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn invalid_scheme_is_rejected_with_conflict() {
     let _flow_lock = global_flow_lock();

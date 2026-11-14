@@ -462,3 +462,19 @@ impl FromRef<AppState> for wallet::Handles { … }
 - 测试：`http-api/tests/*`（19 门控文件 + gateway-runtime 2）；`platform/src/config.rs:270-313`；`settlement_admin_flow.rs:421-595`；`sessiontoken.rs:129-189`
 - 状态机：`domain/src/charging_state.rs`；6 写点 `order/src/lib.rs:279,312,341`、`settlement/billing.rs:298`、`refund_executor.rs:156`、`charging/sweeper.rs:46`
 - ENUM 真相源：`migrations/0001_init.sql`（63 列；`payment_order.status` 283 行 6 值、`charge_order.payment_status` 206 行 4 值）
+
+## 附录 C：S0 证据复核记录（票 01，2026-11-14，commit 007d2d8）
+
+按票 01 要求在修复会话合流（`007d2d8`，+17 用户端端点）后重跑诊断证据，偏差如下（快照基线为本文初版 `b4a732f`）：
+
+| 项 | 快照 | 实测 | 偏差与处置 |
+|---|---|---|---|
+| 字符串相等比较（modules / domain） | 73 / 14 | 73 / 14 | 一致 |
+| 字符串相等比较（http-api） | 3 | 19 | +16：新端点文件延续既有写法，随 S3/S5 批次一并处理 |
+| `match …as_str()` | 21 | 13 | −8：修复提交消化了部分分支；继续按批次清零 |
+| 非测试 unwrap | 约 137 | 137 | 一致 |
+| 模块/HTTP 层 env 直读 | 11 | 14 | +3：新增端点文件随 S4 清零 |
+| 门控测试文件 | 21 + 2 内嵌 | **25 + 2 内嵌**（+redisx 待删项） | +4：`device_chains`、`user_charging_query`、`user_identity_cards`、`user_settlement` 为修复会话新增；已随票 01 一并纳入忽略治理 |
+| 微信回调端点 | 未接线 | 未接线（81 admin + 41 user 路由，无 public 前缀） | 与快照一致；登记见规格 Comments |
+
+结论：偏差全部来自修复会话的既有写法延续，不改变方案任何批次的方向与估时；票 06 的打样输入（money 词表、跨表混装）无变化。

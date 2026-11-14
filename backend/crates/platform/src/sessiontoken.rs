@@ -126,13 +126,15 @@ mod tests {
         assert_ne!(digest("abc"), digest("abd"));
     }
 
+    #[ignore = "真库集成：node tasks.mjs test-integration"]
     #[tokio::test]
     async fn rotate_and_revoke_scripts() {
+        // 门控语义：未设 TEST_REDIS_URL 属调用方式错误，判失败而非静默跳过。
         let Ok(url) = std::env::var("TEST_REDIS_URL") else {
-            return;
+            panic!("集成测试需要 TEST_REDIS_URL（node tasks.mjs test-integration）");
         };
         if url.is_empty() {
-            return;
+            panic!("集成测试需要 TEST_REDIS_URL（node tasks.mjs test-integration）");
         }
         let client = redis::Client::open(url).unwrap();
         let mut conn = client.get_multiplexed_tokio_connection().await.unwrap();

@@ -180,6 +180,7 @@ fn global_flow_lock() -> std::net::TcpListener {
     }
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn permission_boundary_and_management() {
     let _flow_lock = global_flow_lock();
@@ -425,6 +426,7 @@ async fn permission_boundary_and_management() {
     );
 }
 
+#[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn last_admin_self_protection() {
     let _flow_lock = global_flow_lock();
