@@ -10,6 +10,7 @@ sqlx.workspace = true
 anyhow.workspace = true
 metrics.workspace = true
 tracing.workspace = true
+chargepilot-domain.workspace = true
 chargepilot-platform.workspace = true
 
 [lints]

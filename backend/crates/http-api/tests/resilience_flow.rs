@@ -303,7 +303,7 @@ async fn event_dispatch_failure_replays() {
         chargepilot_events::enqueue::in_tx(
             &mut conn,
             chargepilot_events::EventSource::User,
-            "charge_payment_confirmed",
+            chargepilot_events::EventKind::ChargePaymentConfirmed,
             &event_id,
             &serde_json::json!({"charge_order_id": charge_order_id}),
         )

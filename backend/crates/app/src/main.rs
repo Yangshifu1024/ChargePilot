@@ -114,7 +114,7 @@ async fn serve() -> anyhow::Result<()> {
     // 设备事件（B8/BA/BB）由网关侧处理器推进回执。
     let mut registry = chargepilot_events::runtime::Registry::new();
     registry.register(
-        "charge_payment_confirmed",
+        chargepilot_events::EventKind::ChargePaymentConfirmed,
         Arc::new(chargepilot_mod_charging::StartDispatcher {
             pool: db.clone(),
             allocator: (*allocator).clone(),
@@ -125,7 +125,7 @@ async fn serve() -> anyhow::Result<()> {
         }),
     );
     registry.register(
-        chargepilot_events::kind::DEVICE_EVENT,
+        chargepilot_events::EventKind::DeviceEvent,
         Arc::new(chargepilot_gateway_runtime::DeviceEventDispatcher {
             pool: db.clone(),
             allocator: (*allocator).clone(),

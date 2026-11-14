@@ -8,9 +8,11 @@ pub async fn claim_batch(pool: &MySqlPool, limit: u32) -> anyhow::Result<Vec<Enq
     let rows = sqlx::query_as(
         "SELECT `id`, `event_id`, `source`, `kind`, `payload_json`, `retry_count` \
          FROM `domain_event` \
-         WHERE `status` IN ('pending','failed') AND `scheduled_at` <= NOW(3) \
+         WHERE `status` IN (?, ?) AND `scheduled_at` <= NOW(3) \
          ORDER BY `id` LIMIT ?",
     )
+    .bind(crate::EventDeliveryStatus::Pending)
+    .bind(crate::EventDeliveryStatus::Failed)
     .bind(i64::from(limit))
     .fetch_all(pool)
     .await?;
@@ -50,7 +52,8 @@ impl std::str::FromStr for crate::EventSource {
 
 /// 投递成功：置 published。
 pub async fn mark_published(pool: &MySqlPool, id: u64) -> anyhow::Result<()> {
-    sqlx::query("UPDATE `domain_event` SET `status`='published', `published_at`=NOW(3), `last_error`=NULL WHERE `id`=?")
+    sqlx::query("UPDATE `domain_event` SET `status`=?, `published_at`=NOW(3), `last_error`=NULL WHERE `id`=?")
+        .bind(crate::EventDeliveryStatus::Published)
         .bind(id as i64)
         .execute(pool)
         .await?;
@@ -66,9 +69,10 @@ pub async fn mark_failed(
 ) -> anyhow::Result<()> {
     let backoff_secs: i64 = 1i64 << retry_count.min(8);
     sqlx::query(
-        "UPDATE `domain_event` SET `status`='failed', `retry_count`=?, `last_error`=?, \
+        "UPDATE `domain_event` SET `status`=?, `retry_count`=?, `last_error`=?, \
          `scheduled_at`=DATE_ADD(NOW(3), INTERVAL ? SECOND) WHERE `id`=?",
     )
+    .bind(crate::EventDeliveryStatus::Failed)
     .bind(retry_count as i64 + 1)
     .bind(truncate(err, 250))
     .bind(backoff_secs)

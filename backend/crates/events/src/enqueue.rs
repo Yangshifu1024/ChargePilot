@@ -1,6 +1,6 @@
 //! 事务内入队：事件与业务写入同事务提交（可靠投递的根基）。
 
-use crate::{EventSource, kind};
+use crate::{EventKind, EventSource};
 use sqlx::MySqlConnection;
 
 /// 在既有业务事务上写 `domain_event` 行（status=pending）。
@@ -10,7 +10,7 @@ use sqlx::MySqlConnection;
 pub fn in_tx(
     conn: &mut MySqlConnection,
     source: EventSource,
-    kind: &str,
+    kind: EventKind,
     event_id: &str,
     payload: &serde_json::Value,
 ) -> impl std::future::Future<Output = Result<(), anyhow::Error>> + Send {
@@ -20,7 +20,7 @@ pub fn in_tx(
         EventSource::Gateway => "gateway",
     };
     let payload = payload.clone();
-    let kind = kind.to_string();
+    let kind = kind.as_str().to_owned();
     let event_id = event_id.to_string();
     async move {
         let result = sqlx::query(
@@ -39,8 +39,8 @@ pub fn in_tx(
     }
 }
 
-/// 编译期锁定首批事件类别常量与来源枚举可见性。
+/// 编译期锁定首批事件类别与来源枚举可见性。
 #[allow(dead_code)]
 fn smoke() {
-    let _ = (kind::CHARGE_ENDED, EventSource::Gateway);
+    let _ = (EventKind::ChargeEnded, EventSource::Gateway);
 }

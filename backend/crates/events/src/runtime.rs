@@ -2,16 +2,18 @@
 //!
 //! 作为受管理任务由 TaskManager 驱动（platform::lifecycle）；停机时通过 CancelToken 退出。
 
-use crate::{EnqueuedEvent, EventDispatcher, repo};
+use crate::{EnqueuedEvent, EventDispatcher, EventKind, repo};
 use chargepilot_platform::lifecycle::CancelToken;
 use sqlx::MySqlPool;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// kind → 处理器登记表。处理器必须幂等（ADR 002 红线）。
+/// 键为 [`EventKind`] 进程内词表：未知 kind（历史行/未来类别）在路由处
+/// 归入「无已登记处理器」路径，与旧行为一致。
 #[derive(Default)]
 pub struct Registry {
-    handlers: HashMap<String, Arc<dyn EventDispatcher>>,
+    handlers: HashMap<EventKind, Arc<dyn EventDispatcher>>,
 }
 
 impl Registry {
@@ -19,12 +21,12 @@ impl Registry {
         Self::default()
     }
 
-    pub fn register(&mut self, kind: &str, handler: Arc<dyn EventDispatcher>) {
-        self.handlers.insert(kind.to_string(), handler);
+    pub fn register(&mut self, kind: EventKind, handler: Arc<dyn EventDispatcher>) {
+        self.handlers.insert(kind, handler);
     }
 
     pub fn get(&self, kind: &str) -> Option<Arc<dyn EventDispatcher>> {
-        self.handlers.get(kind).cloned()
+        EventKind::parse(kind).and_then(|k| self.handlers.get(&k).cloned())
     }
 }
 

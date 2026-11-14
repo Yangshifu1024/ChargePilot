@@ -355,7 +355,7 @@ async fn persist_event(pool: &MySqlPool, event: &Event) -> anyhow::Result<()> {
         chargepilot_events::enqueue::in_tx(
             &mut tx,
             chargepilot_events::EventSource::Gateway,
-            chargepilot_events::kind::DEVICE_EVENT,
+            chargepilot_events::EventKind::DeviceEvent,
             &format!("device-event-{key}"),
             &payload,
         )

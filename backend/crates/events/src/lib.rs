@@ -14,15 +14,117 @@ pub enum EventSource {
     Gateway,
 }
 
-/// 事件类别词表（`domain_event.kind`）。首批沿用旧版流名语义，后续随各域落地增补。
+/// 事件类别词表（`domain_event.kind`，进程内约束——该列为无约束 VARCHAR，
+/// 枚举只约束注册表路由与入队校验；载荷透传，未知类别保持「无处理器」路径）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EventKind {
+    ChargeEnded,
+    RefundRequired,
+    RefundSucceeded,
+    ChargeSettled,
+    ChargePaymentConfirmed,
+    WalletRechargeSettled,
+    DeviceEvent,
+}
+
+impl EventKind {
+    /// DB 字面量锚点（与写入侧 `kind` 字面量逐字节一致）。
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ChargeEnded => "charge_ended",
+            Self::RefundRequired => "refund_required",
+            Self::RefundSucceeded => "refund_succeeded",
+            Self::ChargeSettled => "charge_settled",
+            Self::ChargePaymentConfirmed => "charge_payment_confirmed",
+            Self::WalletRechargeSettled => "wallet_recharge_settled",
+            Self::DeviceEvent => "device_event",
+        }
+    }
+
+    /// 字面量 → 类别；未知值 None（路由层按无处理器处理）。
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "charge_ended" => Self::ChargeEnded,
+            "refund_required" => Self::RefundRequired,
+            "refund_succeeded" => Self::RefundSucceeded,
+            "charge_settled" => Self::ChargeSettled,
+            "charge_payment_confirmed" => Self::ChargePaymentConfirmed,
+            "wallet_recharge_settled" => Self::WalletRechargeSettled,
+            "device_event" => Self::DeviceEvent,
+            _ => return None,
+        })
+    }
+}
+
+/// 事件类别常量（旧 `kind::` 模块的兼容入口；新代码用 [`EventKind`]）。
 pub mod kind {
-    pub const CHARGE_ENDED: &str = "charge_ended";
-    pub const REFUND_REQUIRED: &str = "refund_required";
-    pub const REFUND_SUCCEEDED: &str = "refund_succeeded";
-    pub const CHARGE_SETTLED: &str = "charge_settled";
-    pub const CHARGE_PAYMENT_CONFIRMED: &str = "charge_payment_confirmed";
-    pub const WALLET_RECHARGE_SETTLED: &str = "wallet_recharge_settled";
-    pub const DEVICE_EVENT: &str = "device_event";
+    use super::EventKind;
+    pub const CHARGE_ENDED: &str = EventKind::ChargeEnded.as_str();
+    pub const REFUND_REQUIRED: &str = EventKind::RefundRequired.as_str();
+    pub const REFUND_SUCCEEDED: &str = EventKind::RefundSucceeded.as_str();
+    pub const CHARGE_SETTLED: &str = EventKind::ChargeSettled.as_str();
+    pub const CHARGE_PAYMENT_CONFIRMED: &str = EventKind::ChargePaymentConfirmed.as_str();
+    pub const WALLET_RECHARGE_SETTLED: &str = EventKind::WalletRechargeSettled.as_str();
+    pub const DEVICE_EVENT: &str = EventKind::DeviceEvent.as_str();
+}
+
+/// domain_event.status 列的投递状态（三值；pending 领取中、
+/// published 处理器已确认、failed 待退避重排）。
+/// sqlx 三件套手写（与 domain wordlist_enum! 同款打样范式；events 是
+/// domain 外的独立 crate，宏保持 pub(crate) 不跨 crate 导出）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventDeliveryStatus {
+    Pending,
+    Published,
+    Failed,
+}
+
+impl EventDeliveryStatus {
+    /// DB 字面量锚点（与 `migrations/0001_init.sql` 逐字节一致）。
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Published => "published",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl sqlx::Type<sqlx::MySql> for EventDeliveryStatus {
+    fn type_info() -> sqlx::mysql::MySqlTypeInfo {
+        <str as sqlx::Type<sqlx::MySql>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::mysql::MySqlTypeInfo) -> bool {
+        <str as sqlx::Type<sqlx::MySql>>::compatible(ty)
+    }
+}
+
+impl<'de> sqlx::Decode<'de, sqlx::MySql> for EventDeliveryStatus {
+    fn decode(value: sqlx::mysql::MySqlValueRef<'de>) -> Result<Self, sqlx::error::BoxDynError> {
+        let literal = <&str as sqlx::Decode<sqlx::MySql>>::decode(value)?;
+        Ok(match literal {
+            "pending" => Self::Pending,
+            "published" => Self::Published,
+            "failed" => Self::Failed,
+            other => {
+                return Err(format!("未知字面量 `{other}`（词表 EventDeliveryStatus）").into());
+            }
+        })
+    }
+}
+
+impl sqlx::Encode<'_, sqlx::MySql> for EventDeliveryStatus {
+    fn encode_by_ref(
+        &self,
+        buf: &mut Vec<u8>,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <&str as sqlx::Encode<sqlx::MySql>>::encode(self.as_str(), buf)
+    }
 }
 
 /// 已入队待投递的事件行（`domain_event` 读模型）。
