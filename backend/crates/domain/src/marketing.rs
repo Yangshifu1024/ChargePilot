@@ -8,112 +8,74 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
 use serde::{Deserialize, Serialize};
 
-/// coupon.status 列的券模板启停状态（active/disabled）。
-/// 与 ActivityStatus 取值串相同但分属 coupon 与 coupon_activity_rule 两表，
-/// 语义不同，不得合并；与 GrantStatus 也不是同一词表。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CouponStatus(pub String);
+use crate::wordlist::wordlist_enum;
 
-impl CouponStatus {
-    pub const ACTIVE: &'static str = "active";
-    pub const DISABLED: &'static str = "disabled";
-
-    pub fn known(&self) -> bool {
-        matches!(self.0.as_str(), Self::ACTIVE | Self::DISABLED)
+wordlist_enum!(
+    /// coupon.status 列的券模板启停状态（两值）。与
+    /// [`ActivityStatus`] 取值串相同但分属 coupon 与 coupon_activity_rule
+    /// 两表，语义不同，不合并；与 [`GrantStatus`] 也不是同一词表。
+    CouponStatus: {
+        Active = "active",
+        Disabled = "disabled",
     }
-}
+);
 
-/// coupon_activity_rule.status 列的活动规则启停状态（active/disabled）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ActivityStatus(pub String);
-
-impl ActivityStatus {
-    pub const ACTIVE: &'static str = "active";
-    pub const DISABLED: &'static str = "disabled";
-
-    pub fn known(&self) -> bool {
-        matches!(self.0.as_str(), Self::ACTIVE | Self::DISABLED)
+wordlist_enum!(
+    /// coupon_activity_rule.status 列的活动规则启停状态（两值）。
+    ActivityStatus: {
+        Active = "active",
+        Disabled = "disabled",
     }
-}
+);
 
-/// coupon.discount_type 列的优惠计算类型（amount/percentage/time_free）。
-/// 三种类型的优惠金额列互斥：amount 读 discount_value_cents、
-/// percentage 读 discount_percent、time_free 读 free_minutes。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DiscountType(pub String);
-
-impl DiscountType {
-    pub const AMOUNT: &'static str = "amount";
-    pub const PERCENTAGE: &'static str = "percentage";
-    pub const TIME_FREE: &'static str = "time_free";
-
-    pub fn known(&self) -> bool {
-        matches!(
-            self.0.as_str(),
-            Self::AMOUNT | Self::PERCENTAGE | Self::TIME_FREE
-        )
+wordlist_enum!(
+    /// coupon.discount_type 列的优惠计算类型（三值）。三种类型的优惠金额
+    /// 列互斥：amount 读 discount_value_cents、percentage 读 discount_percent、
+    /// time_free 读 free_minutes；优惠计算按本枚举 match 穷尽分派。
+    DiscountType: {
+        Amount = "amount",
+        Percentage = "percentage",
+        TimeFree = "time_free",
     }
-}
+);
 
-/// coupon_activity_rule.trigger_type 列的活动触发类型
-/// （first_recharge/invite_reward/threshold_redeem/holiday）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TriggerType(pub String);
-
-impl TriggerType {
-    pub const FIRST_RECHARGE: &'static str = "first_recharge";
-    pub const INVITE_REWARD: &'static str = "invite_reward";
-    pub const THRESHOLD_REDEEM: &'static str = "threshold_redeem";
-    pub const HOLIDAY: &'static str = "holiday";
-
-    pub fn known(&self) -> bool {
-        matches!(
-            self.0.as_str(),
-            Self::FIRST_RECHARGE | Self::INVITE_REWARD | Self::THRESHOLD_REDEEM | Self::HOLIDAY
-        )
+wordlist_enum!(
+    /// coupon_activity_rule.trigger_type 列的活动触发类型（四值；
+    /// 对照表裁决由 TriggerType 更名，消除泛名歧义）。
+    ActivityTriggerType: {
+        FirstRecharge = "first_recharge",
+        InviteReward = "invite_reward",
+        ThresholdRedeem = "threshold_redeem",
+        Holiday = "holiday",
     }
-}
+);
 
-/// coupon_grant.status 列的券状态（unused/used/expired）。
-/// 与 coupon.status（模板启停）词表不同，不得互换。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GrantStatus(pub String);
-
-impl GrantStatus {
-    pub const UNUSED: &'static str = "unused";
-    pub const USED: &'static str = "used";
-    pub const EXPIRED: &'static str = "expired";
-
-    pub fn valid(&self) -> bool {
-        matches!(self.0.as_str(), Self::UNUSED | Self::USED | Self::EXPIRED)
+wordlist_enum!(
+    /// coupon_grant.status 列的券状态（三值）。与 coupon.status（模板启停）
+    /// 词表不同，不互换。
+    GrantStatus: {
+        Unused = "unused",
+        Used = "used",
+        Expired = "expired",
     }
-}
+);
 
-/// coupon_grant.grant_source 列的发放来源
-/// （register/activity/invite/manual/invite_reward）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GrantSource(pub String);
-
-impl GrantSource {
-    pub const REGISTER: &'static str = "register";
-    pub const ACTIVITY: &'static str = "activity";
-    pub const INVITE: &'static str = "invite";
-    pub const MANUAL: &'static str = "manual";
-    pub const INVITE_REWARD: &'static str = "invite_reward";
-
-    pub fn valid(&self) -> bool {
-        matches!(
-            self.0.as_str(),
-            Self::REGISTER | Self::ACTIVITY | Self::INVITE | Self::MANUAL | Self::INVITE_REWARD
-        )
+wordlist_enum!(
+    /// coupon_grant.grant_source 列的发放来源（五值）。
+    GrantSource: {
+        Register = "register",
+        Activity = "activity",
+        Invite = "invite",
+        Manual = "manual",
+        InviteReward = "invite_reward",
     }
-}
+);
 
 /// 优惠计算输入：发放券关联的模板规则（旧版 CouponGrant 的优惠字段）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GrantRule {
-    /// 优惠类型（DiscountType）。
-    pub discount_type: String,
+    /// 优惠类型（词表枚举，优惠计算 match 穷尽分派）。
+    pub discount_type: DiscountType,
     /// 使用门槛，分。
     pub min_charge_cents: i64,
     /// amount 型减免分值；其他类型为 None。
@@ -153,8 +115,8 @@ pub fn discount_for(grant: &GrantRule, total_cents: i64) -> Result<i64, Discount
     if total_cents <= 0 || grant.min_charge_cents > total_cents {
         return Err(DiscountError::Threshold);
     }
-    let discount = match grant.discount_type.as_str() {
-        DiscountType::AMOUNT => {
+    let discount = match grant.discount_type {
+        DiscountType::Amount => {
             let Some(amount) = grant.discount_value_cents else {
                 return Err(DiscountError::NotFound);
             };
@@ -163,7 +125,7 @@ pub fn discount_for(grant: &GrantRule, total_cents: i64) -> Result<i64, Discount
             }
             amount
         }
-        DiscountType::PERCENTAGE => {
+        DiscountType::Percentage => {
             let Some(percent) = grant.discount_percent else {
                 return Err(DiscountError::NotFound);
             };
@@ -181,13 +143,12 @@ pub fn discount_for(grant: &GrantRule, total_cents: i64) -> Result<i64, Discount
             };
             total_cents - keep
         }
-        DiscountType::TIME_FREE => {
+        DiscountType::TimeFree => {
             if grant.free_minutes == 0 {
                 return Err(DiscountError::NotFound);
             }
             grant.free_minutes as i64 * 60 * SERVICE_RATE_PER_MINUTE
         }
-        _ => return Err(DiscountError::NotFound),
     };
     Ok(discount.clamp(0, total_cents))
 }
@@ -206,8 +167,8 @@ impl ToI64Round for Decimal {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CouponTemplate {
     pub template_id: u64,
-    /// 模板状态（CouponStatus）；仅 active 可发放。
-    pub status: String,
+    /// 模板状态（词表枚举）；仅 active 可发放。
+    pub status: CouponStatus,
     /// 发放总量上限，0 表示不限量。
     pub total_quota: u32,
     /// 每人发放上限，必须大于 0。
@@ -233,7 +194,7 @@ pub fn check_grantable(
     coupon: &CouponTemplate,
     usage: CouponUsage,
 ) -> Result<(), DiscountError> {
-    if coupon.status != CouponStatus::ACTIVE {
+    if coupon.status != CouponStatus::Active {
         return Err(DiscountError::NotFound);
     }
     if coupon.start_at.is_some_and(|t| now < t) {
@@ -290,14 +251,14 @@ mod tests {
     use super::*;
 
     fn rule(
-        kind: &str,
+        kind: DiscountType,
         min: i64,
         value: Option<i64>,
         percent: Option<f64>,
         free: u32,
     ) -> GrantRule {
         GrantRule {
-            discount_type: kind.into(),
+            discount_type: kind,
             min_charge_cents: min,
             discount_value_cents: value,
             discount_percent: percent,
@@ -308,71 +269,85 @@ mod tests {
     #[test]
     fn amount_discount_basics() {
         assert_eq!(
-            discount_for(&rule("amount", 100, Some(50), None, 0), 99),
+            discount_for(&rule(DiscountType::Amount, 100, Some(50), None, 0), 99),
             Err(DiscountError::Threshold)
         );
         assert_eq!(
-            discount_for(&rule("amount", 100, Some(50), None, 0), 100).unwrap(),
+            discount_for(&rule(DiscountType::Amount, 100, Some(50), None, 0), 100).unwrap(),
             50
         );
         assert_eq!(
-            discount_for(&rule("amount", 0, Some(50), None, 0), 100).unwrap(),
+            discount_for(&rule(DiscountType::Amount, 0, Some(50), None, 0), 100).unwrap(),
             50
         );
         assert_eq!(
-            discount_for(&rule("amount", 0, Some(120), None, 0), 100).unwrap(),
+            discount_for(&rule(DiscountType::Amount, 0, Some(120), None, 0), 100).unwrap(),
             100,
             "减免封顶为原价"
         );
-        assert!(discount_for(&rule("amount", 0, Some(0), None, 0), 100).is_err());
-        assert!(discount_for(&rule("amount", 0, None, None, 0), 100).is_err());
+        assert!(discount_for(&rule(DiscountType::Amount, 0, Some(0), None, 0), 100).is_err());
+        assert!(discount_for(&rule(DiscountType::Amount, 0, None, None, 0), 100).is_err());
     }
 
     #[test]
     fn percentage_discount_rounding() {
         // 50% → 应付 50 → 优惠 50。
         assert_eq!(
-            discount_for(&rule("percentage", 0, None, Some(50.0), 0), 100).unwrap(),
+            discount_for(&rule(DiscountType::Percentage, 0, None, Some(50.0), 0), 100).unwrap(),
             50
         );
         // 50.5% → 应付 50.5 四舍五入 51 → 优惠 49（half away from zero）。
         assert_eq!(
-            discount_for(&rule("percentage", 0, None, Some(50.5), 0), 100).unwrap(),
+            discount_for(&rule(DiscountType::Percentage, 0, None, Some(50.5), 0), 100).unwrap(),
             49
         );
         // 33.33% of 1000 → 应付 333.3 → 333 → 优惠 667。
         assert_eq!(
-            discount_for(&rule("percentage", 0, None, Some(33.33), 0), 1000).unwrap(),
+            discount_for(
+                &rule(DiscountType::Percentage, 0, None, Some(33.33), 0),
+                1000
+            )
+            .unwrap(),
             667
         );
         // 0.01% of 99 → 应付 0.0099 → 0 → 优惠 99。
         assert_eq!(
-            discount_for(&rule("percentage", 0, None, Some(0.01), 0), 99).unwrap(),
+            discount_for(&rule(DiscountType::Percentage, 0, None, Some(0.01), 0), 99).unwrap(),
             99
         );
-        assert!(discount_for(&rule("percentage", 0, None, Some(0.0), 0), 100).is_err());
-        assert!(discount_for(&rule("percentage", 0, None, Some(100.0), 0), 100).is_err());
-        assert!(discount_for(&rule("percentage", 0, None, Some(150.0), 0), 100).is_err());
+        assert!(discount_for(&rule(DiscountType::Percentage, 0, None, Some(0.0), 0), 100).is_err());
+        assert!(
+            discount_for(
+                &rule(DiscountType::Percentage, 0, None, Some(100.0), 0),
+                100
+            )
+            .is_err()
+        );
+        assert!(
+            discount_for(
+                &rule(DiscountType::Percentage, 0, None, Some(150.0), 0),
+                100
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn time_free_and_unknown() {
         // 时长券固定零费率：优惠恒 0（仍要过门槛）。
         assert_eq!(
-            discount_for(&rule("time_free", 10, None, None, 30), 100).unwrap(),
+            discount_for(&rule(DiscountType::TimeFree, 10, None, None, 30), 100).unwrap(),
             0
         );
-        assert!(discount_for(&rule("time_free", 10, None, None, 0), 100).is_err());
+        assert!(discount_for(&rule(DiscountType::TimeFree, 10, None, None, 0), 100).is_err());
+        // 旧版「未知类型返回 NotFound」由词表穷尽承接：match 无兜底分支，
+        // 未知字面量在 DB 解码（parse）即被拒绝，编译器保证新增类型必处理。
         assert_eq!(
-            discount_for(&rule("cashback", 0, Some(10), None, 0), 100),
-            Err(DiscountError::NotFound)
-        );
-        assert_eq!(
-            discount_for(&rule("time_free", 10, None, None, 30), 9),
+            discount_for(&rule(DiscountType::TimeFree, 10, None, None, 30), 9),
             Err(DiscountError::Threshold)
         );
         assert_eq!(
-            discount_for(&rule("amount", 0, Some(10), None, 0), 0),
+            discount_for(&rule(DiscountType::Amount, 0, Some(10), None, 0), 0),
             Err(DiscountError::Threshold)
         );
     }
@@ -381,7 +356,7 @@ mod tests {
     fn grant_rules() {
         let tpl = CouponTemplate {
             template_id: 1,
-            status: "active".into(),
+            status: CouponStatus::Active,
             total_quota: 2,
             per_user_quota: 1,
             valid_hours: 24,
@@ -423,7 +398,7 @@ mod tests {
             .is_err()
         );
         let disabled = CouponTemplate {
-            status: "disabled".into(),
+            status: CouponStatus::Disabled,
             ..tpl.clone()
         };
         assert!(
@@ -503,13 +478,12 @@ pub struct ActivityRejected;
 pub fn normalize_activity(
     rule: &ActivityRuleInput,
     now: chrono::DateTime<Utc>,
-) -> Result<(DateTime<Utc>, DateTime<Utc>, String), ActivityRejected> {
+) -> Result<(DateTime<Utc>, DateTime<Utc>, ActivityStatus), ActivityRejected> {
     if rule.name.is_empty() || rule.name.chars().count() > MAX_ACTIVITY_NAME_LENGTH {
         return Err(ActivityRejected);
     }
-    if !TriggerType(rule.trigger_type.clone()).known() {
-        return Err(ActivityRejected);
-    }
+    let trigger_type =
+        ActivityTriggerType::parse(rule.trigger_type.as_str()).map_err(|_| ActivityRejected)?;
     if rule.coupon_id == 0 {
         return Err(ActivityRejected);
     }
@@ -528,30 +502,28 @@ pub fn normalize_activity(
     if rule.threshold_cents < 0 || rule.max_grants < 0 || rule.per_user_limit < 0 {
         return Err(ActivityRejected);
     }
-    match rule.trigger_type.as_str() {
-        TriggerType::THRESHOLD_REDEEM => {
+    match trigger_type {
+        ActivityTriggerType::ThresholdRedeem => {
             if rule.threshold_cents <= 0 {
                 return Err(ActivityRejected);
             }
         }
-        TriggerType::INVITE_REWARD => match rule.inviter_coupon_id {
+        ActivityTriggerType::InviteReward => match rule.inviter_coupon_id {
             Some(id) if id != 0 => {}
             _ => return Err(ActivityRejected),
         },
-        _ => {
+        // 首充与节假日活动不设置门槛（旧版兜底语义，枚举穷尽后显式列出）。
+        ActivityTriggerType::FirstRecharge | ActivityTriggerType::Holiday => {
             if rule.threshold_cents != 0 {
                 return Err(ActivityRejected);
             }
         }
     }
     let status = if rule.status.is_empty() {
-        ActivityStatus::ACTIVE.to_string()
+        ActivityStatus::Active
     } else {
-        rule.status.clone()
+        ActivityStatus::parse(rule.status.as_str()).map_err(|_| ActivityRejected)?
     };
-    if !ActivityStatus(status.clone()).known() {
-        return Err(ActivityRejected);
-    }
     Ok((start, end, status))
 }
 
@@ -588,7 +560,7 @@ pub fn per_user_allowance(per_user_limit: i32) -> i64 {
 /// 邀请资格：仅对邀请奖励检查非空邀请人和禁止自邀，其他触发不受限制
 /// （旧版 InviteEligible）。
 pub fn invite_eligible(trigger_type: &str, inviter_id: u64, user_id: u64) -> bool {
-    if trigger_type != TriggerType::INVITE_REWARD {
+    if ActivityTriggerType::parse(trigger_type) != Ok(ActivityTriggerType::InviteReward) {
         return true;
     }
     inviter_id != 0 && inviter_id != user_id
@@ -615,10 +587,10 @@ pub fn activity_event_id(rule_id: u64, user_id: u64, event_key: &str, scope: &[&
 /// 触发类型到发放来源：邀请奖励归 invite_reward，其余活动归 activity
 /// （旧版 grantSourceFor；触发类型与发放来源同值不同义，经此函数转换）。
 pub fn grant_source_for(trigger_type: &str) -> &'static str {
-    if trigger_type == TriggerType::INVITE_REWARD {
-        GrantSource::INVITE_REWARD
+    if ActivityTriggerType::parse(trigger_type) == Ok(ActivityTriggerType::InviteReward) {
+        GrantSource::InviteReward.as_str()
     } else {
-        GrantSource::ACTIVITY
+        GrantSource::Activity.as_str()
     }
 }
 
@@ -656,7 +628,7 @@ mod activity_tests {
         let now = Utc::now();
         // 合法：默认 status=active。
         let (s, e, st) = normalize_activity(&base_rule(), now).unwrap();
-        assert_eq!(st, "active");
+        assert_eq!(st, ActivityStatus::Active);
         assert!(s < e);
         // 满减门槛必须为正。
         let mut r = base_rule();
@@ -735,5 +707,71 @@ mod activity_tests {
         // 事件键前缀。
         assert_eq!(activity_event_key_for_recharge("R1"), "recharge:R1");
         assert_eq!(activity_event_key_for_order("C1"), "order:C1");
+    }
+}
+
+#[cfg(test)]
+mod wordlist_tests {
+    use super::*;
+
+    /// 字面量对照（票 12 硬规则）：serde 输出与 DB ENUM 字面量逐字节一致。
+    #[test]
+    fn db_literals_match_serde() {
+        use serde_json::to_string as json;
+        let coupon = [
+            (CouponStatus::Active, "active"),
+            (CouponStatus::Disabled, "disabled"),
+        ];
+        for (v, s) in coupon {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
+        let activity = [
+            (ActivityStatus::Active, "active"),
+            (ActivityStatus::Disabled, "disabled"),
+        ];
+        for (v, s) in activity {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
+        let dtype = [
+            (DiscountType::Amount, "amount"),
+            (DiscountType::Percentage, "percentage"),
+            (DiscountType::TimeFree, "time_free"),
+        ];
+        for (v, s) in dtype {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
+        let trigger = [
+            (ActivityTriggerType::FirstRecharge, "first_recharge"),
+            (ActivityTriggerType::InviteReward, "invite_reward"),
+            (ActivityTriggerType::ThresholdRedeem, "threshold_redeem"),
+            (ActivityTriggerType::Holiday, "holiday"),
+        ];
+        for (v, s) in trigger {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
+        let grant = [
+            (GrantStatus::Unused, "unused"),
+            (GrantStatus::Used, "used"),
+            (GrantStatus::Expired, "expired"),
+        ];
+        for (v, s) in grant {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
+        let source = [
+            (GrantSource::Register, "register"),
+            (GrantSource::Activity, "activity"),
+            (GrantSource::Invite, "invite"),
+            (GrantSource::Manual, "manual"),
+            (GrantSource::InviteReward, "invite_reward"),
+        ];
+        for (v, s) in source {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(json(&v).unwrap(), format!("\"{s}\""));
+        }
     }
 }

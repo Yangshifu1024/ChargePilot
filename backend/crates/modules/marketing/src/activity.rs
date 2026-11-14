@@ -8,8 +8,8 @@
 
 use crate::coupon::CouponError;
 use chargepilot_domain::marketing::{
-    GrantReceipt, GrantSource, GrantStatus, activity_event_id, activity_grant_expiry,
-    grant_source_for, invite_eligible, per_user_allowance,
+    ActivityTriggerType, CouponStatus, GrantReceipt, GrantSource, GrantStatus, activity_event_id,
+    activity_grant_expiry, grant_source_for, invite_eligible, per_user_allowance,
 };
 use chargepilot_mod_ops::{Profile, repo as ops_repo};
 use chrono::{DateTime, Utc};
@@ -18,8 +18,8 @@ use sqlx::{Acquire, MySqlConnection, MySqlPool};
 /// 事件触发的发放请求（旧版 ActivityEvent）。
 #[derive(Debug, Clone)]
 pub struct ActivityEvent {
-    /// 触发类型（coupon_activity_rule.trigger_type）。
-    pub trigger_type: String,
+    /// 触发类型（coupon_activity_rule.trigger_type 词表）。
+    pub trigger_type: ActivityTriggerType,
     /// 受益用户。
     pub user_id: u64,
     /// 充值请求号或订单号生成的稳定事件键。
@@ -68,7 +68,7 @@ struct ActivityCouponRow {
     #[allow(dead_code)]
     id: u64,
     /// coupon.status：券模板启停（与规则 status 同名不同表不同义）。
-    status: String,
+    status: CouponStatus,
     valid_hours: u32,
     start_at: Option<DateTime<Utc>>,
     end_at: Option<DateTime<Utc>>,
@@ -89,7 +89,7 @@ type RuleTup = (
 
 type CouponTup = (
     u64,
-    String,
+    CouponStatus,
     u32,
     Option<DateTime<Utc>>,
     Option<DateTime<Utc>>,
@@ -102,7 +102,7 @@ async fn candidate_rule_ids(
     event: &ActivityEvent,
 ) -> Result<Vec<u64>, CouponError> {
     let has_threshold =
-        event.trigger_type == chargepilot_domain::marketing::TriggerType::THRESHOLD_REDEEM;
+        event.trigger_type == chargepilot_domain::marketing::ActivityTriggerType::ThresholdRedeem;
     let sql = format!(
         "SELECT `id` FROM `coupon_activity_rule` WHERE `trigger_type` = ? AND `status` = 'active' \
          AND `deleted_at` IS NULL AND `start_at` <= ? AND `end_at` > ?{} ORDER BY `id`",
@@ -113,7 +113,7 @@ async fn candidate_rule_ids(
         }
     );
     let mut q = sqlx::query_scalar::<_, u64>(&sql)
-        .bind(&event.trigger_type)
+        .bind(event.trigger_type)
         .bind(event.now)
         .bind(event.now);
     if has_threshold {
@@ -133,7 +133,7 @@ async fn lock_rules(
     }
     let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let has_threshold =
-        event.trigger_type == chargepilot_domain::marketing::TriggerType::THRESHOLD_REDEEM;
+        event.trigger_type == chargepilot_domain::marketing::ActivityTriggerType::ThresholdRedeem;
     let sql = format!(
         "SELECT `id`, `trigger_type`, `coupon_id`, `inviter_coupon_id`, `threshold_cents`, \
          `max_grants`, `per_user_limit`, `status`, `start_at`, `end_at` \
@@ -150,7 +150,7 @@ async fn lock_rules(
     for id in ids {
         q = q.bind(*id as i64);
     }
-    q = q.bind(&event.trigger_type).bind(event.now).bind(event.now);
+    q = q.bind(event.trigger_type).bind(event.now).bind(event.now);
     if has_threshold {
         q = q.bind(event.amount_cents);
     }
@@ -222,7 +222,7 @@ async fn lock_coupons(
 
 /// 模板状态与有效时间检查（旧版 usableActivityCoupon）；缺失模板不可用。
 fn usable_coupon(coupon: &ActivityCouponRow, now: DateTime<Utc>) -> bool {
-    coupon.status == chargepilot_domain::marketing::CouponStatus::ACTIVE
+    coupon.status == CouponStatus::Active
         && coupon.start_at.is_none_or(|s| now >= s)
         && coupon.end_at.is_none_or(|e| now < e)
 }
@@ -347,7 +347,7 @@ async fn save_grant(
     .bind(coupon_id as i64)
     .bind(user_id as i64)
     .bind(source)
-    .bind(GrantStatus::UNUSED)
+    .bind(GrantStatus::Unused)
     .bind(expires_at)
     .bind(event_id)
     .execute(&mut *c)
@@ -461,7 +461,8 @@ async fn grant_from_rule(
         }
         out.coupon_id = receipt.coupon_id;
         out.already_granted = true;
-        if rule.trigger_type == chargepilot_domain::marketing::TriggerType::INVITE_REWARD
+        if chargepilot_domain::marketing::ActivityTriggerType::parse(rule.trigger_type.as_str())
+            == Ok(chargepilot_domain::marketing::ActivityTriggerType::InviteReward)
             && event.inviter_id != 0
         {
             let inviter_event_id =
@@ -477,7 +478,9 @@ async fn grant_from_rule(
     if !usable_coupon(coupon, event.now) {
         return Ok(None);
     }
-    if rule.trigger_type == chargepilot_domain::marketing::TriggerType::INVITE_REWARD {
+    if chargepilot_domain::marketing::ActivityTriggerType::parse(rule.trigger_type.as_str())
+        == Ok(chargepilot_domain::marketing::ActivityTriggerType::InviteReward)
+    {
         if !invite_eligible(&rule.trigger_type, event.inviter_id, event.user_id) {
             return Ok(None);
         }
@@ -512,7 +515,8 @@ async fn grant_from_rule(
         return Ok(Some(out));
     }
     // 邀请人奖励：券不可用或份数用尽只跳过邀请人部分，受益人券保持发放。
-    if rule.trigger_type == chargepilot_domain::marketing::TriggerType::INVITE_REWARD
+    if chargepilot_domain::marketing::ActivityTriggerType::parse(rule.trigger_type.as_str())
+        == Ok(chargepilot_domain::marketing::ActivityTriggerType::InviteReward)
         && let Some(inviter_coupon_id) = rule.inviter_coupon_id.filter(|v| *v > 0)
     {
         let Some(inviter_coupon) = coupons.get(&inviter_coupon_id) else {
@@ -532,7 +536,7 @@ async fn grant_from_rule(
             c,
             inviter_coupon_id,
             event.inviter_id,
-            GrantSource::INVITE_REWARD,
+            GrantSource::InviteReward.as_str(),
             expires_at,
             &inviter_event_id,
             false,
@@ -617,9 +621,7 @@ pub async fn list_activity_rules(
     if chargepilot_domain::page::PageRequest::user(page, page_size).is_err() {
         return Err(CouponError::Input("分页或活动状态无效".into()));
     }
-    if !status.is_empty()
-        && !chargepilot_domain::marketing::ActivityStatus(status.to_string()).known()
-    {
+    if !status.is_empty() && chargepilot_domain::marketing::ActivityStatus::parse(status).is_err() {
         return Err(CouponError::Input("分页或活动状态无效".into()));
     }
     let mut conn = pool.acquire().await?;
@@ -755,13 +757,13 @@ pub async fn create_activity_rule(
     .bind(input.threshold_cents)
     .bind(input.max_grants)
     .bind(input.per_user_limit)
-    .bind(&status)
+    .bind(status)
     .bind(start_at)
     .bind(end_at)
     .execute(&mut *c)
     .await?;
     let id = result.last_insert_id();
-    let after = audit_after(&input, &status, start_at, end_at);
+    let after = audit_after(&input, status.as_str(), start_at, end_at);
     ops_repo::append_audit_tx(
         &mut *c,
         actor,
@@ -832,7 +834,7 @@ pub async fn update_activity_rule(
     .bind(input.threshold_cents)
     .bind(input.max_grants)
     .bind(input.per_user_limit)
-    .bind(&status)
+    .bind(status)
     .bind(start_at)
     .bind(end_at)
     .bind(id as i64)
@@ -842,7 +844,7 @@ pub async fn update_activity_rule(
         return Err(CouponError::NotFound);
     }
     let before_json = serde_json::json!({"name": before_name, "trigger_type": before_trigger});
-    let after = audit_after(&input, &status, start_at, end_at);
+    let after = audit_after(&input, status.as_str(), start_at, end_at);
     ops_repo::append_audit_tx(
         &mut *c,
         actor,
@@ -864,7 +866,14 @@ pub async fn update_activity_rule(
 fn normalize_or_input(
     input: &chargepilot_domain::marketing::ActivityRuleInput,
     now: DateTime<Utc>,
-) -> Result<(DateTime<Utc>, DateTime<Utc>, String), CouponError> {
+) -> Result<
+    (
+        DateTime<Utc>,
+        DateTime<Utc>,
+        chargepilot_domain::marketing::ActivityStatus,
+    ),
+    CouponError,
+> {
     chargepilot_domain::marketing::normalize_activity(input, now).map_err(|_| {
         CouponError::Input(
             "活动规则无效：名称不能为空，门槛为非负分，窗口须为 RFC3339 且结束晚于开始，满减须设门槛，邀请有奖须设邀请人券"
@@ -911,19 +920,14 @@ async fn require_activity_coupons(
         "SELECT `id`, `status` FROM `coupon` WHERE `id` IN ({placeholders}) \
          AND `deleted_at` IS NULL ORDER BY `id` FOR SHARE"
     );
-    let mut q = sqlx::query_as::<_, (u64, String)>(&sql);
+    let mut q = sqlx::query_as::<_, (u64, CouponStatus)>(&sql);
     for id in &ids {
         q = q.bind(*id as i64);
     }
     let rows = q.fetch_all(&mut *c).await?;
     let usable: std::collections::HashMap<u64, bool> = rows
         .into_iter()
-        .map(|(id, status)| {
-            (
-                id,
-                status == chargepilot_domain::marketing::CouponStatus::ACTIVE,
-            )
-        })
+        .map(|(id, status)| (id, status == CouponStatus::Active))
         .collect();
     if !usable.get(&coupon_id).copied().unwrap_or(false) {
         return Err(CouponError::Input("活动券不存在或已停用".into()));

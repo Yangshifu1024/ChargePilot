@@ -4,7 +4,8 @@
 
 use crate::artifact;
 use crate::registry::{ExportSpec, export_resource, export_resource_names, scope_filter};
-use chargepilot_domain::operations::{self, DataScope, ExportFileFormat, ExportStatus};
+use chargepilot_domain::export::{ExportFileFormat, ExportStatus};
+use chargepilot_domain::operations::{self, DataScope};
 use chargepilot_mod_ops::{Profile, repo as ops_repo, scope as ops_scope};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -75,7 +76,7 @@ pub struct CreateInput {
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateResult {
     pub task_no: String,
-    pub status: String,
+    pub status: chargepilot_domain::export::ExportStatus,
     pub row_count: u32,
     pub expires_at: Option<String>,
     /// 非空表示已持久失败，HTTP 返回 failed 与公开提示。
@@ -97,7 +98,7 @@ pub struct ExportTaskRow {
     pub task_no: String,
     pub resource: String,
     pub file_format: String,
-    pub status: String,
+    pub status: chargepilot_domain::export::ExportStatus,
     pub requested_by: u64,
     pub filter_json: Option<String>,
     pub row_count: u32,
@@ -112,7 +113,7 @@ pub(crate) type TaskTup = (
     String,
     String,
     String,
-    String,
+    chargepilot_domain::export::ExportStatus,
     u64,
     Option<String>,
     u32,
@@ -282,8 +283,8 @@ pub async fn list_resources(
     Ok(ResourcesResult {
         items,
         formats: vec![
-            ExportFileFormat::CSV.to_string(),
-            ExportFileFormat::XLSX.to_string(),
+            ExportFileFormat::Csv.as_str().to_owned(),
+            ExportFileFormat::Xlsx.as_str().to_owned(),
         ],
         max_rows: config.max_rows() as u32,
     })
@@ -300,7 +301,7 @@ pub async fn list_tasks(
     if chargepilot_domain::page::PageRequest::admin(page, page_size).is_err() {
         return Err(ExportError::Input("分页参数无效".into()));
     }
-    if !status.is_empty() && !ExportStatus(status.to_string()).known() {
+    if !status.is_empty() && ExportStatus::parse(status).is_err() {
         return Err(ExportError::Input("关键词过长或状态无效".into()));
     }
     let mut conn = pool.acquire().await?;
@@ -368,11 +369,11 @@ fn validate(input: &CreateInput) -> Result<(ExportSpec, String), ExportError> {
         return Err(ExportError::Input("不支持的导出资源".into()));
     };
     let format = if input.format.is_empty() {
-        ExportFileFormat::CSV.to_string()
+        ExportFileFormat::Csv.as_str().to_owned()
     } else {
         input.format.clone()
     };
-    if !ExportFileFormat(format.clone()).known() {
+    if ExportFileFormat::parse(&format).is_err() {
         return Err(ExportError::Input("导出格式无效".into()));
     }
     if input.resource == "bills" && !operations::valid_export_period(&input.filter) {
@@ -488,7 +489,7 @@ pub async fn create_export(
         )
         .await?;
     }
-    let needs_generate = row.status == ExportStatus::PENDING || row.status == ExportStatus::RUNNING;
+    let needs_generate = row.status == ExportStatus::Pending || row.status == ExportStatus::Running;
     tx.commit().await?;
 
     if needs_generate && let Err(e) = generate(pool, &task_no, &p, config).await {
@@ -496,7 +497,7 @@ pub async fn create_export(
         // （旧版 generationFailure 语义）。
         if matches!(e, ExportError::Storage(_)) {
             let row = find_by_no(pool, &task_no).await?;
-            let failed = row.status == ExportStatus::FAILED;
+            let failed = row.status == ExportStatus::Failed;
             return Ok(CreateResult {
                 task_no,
                 status: row.status,
@@ -583,13 +584,13 @@ async fn generate_inner(
     if row.requested_by != p.id {
         return Err(ExportError::Forbidden("只能生成自己创建的导出文件".into()));
     }
-    if row.status == ExportStatus::COMPLETED
-        || row.status == ExportStatus::FAILED
-        || row.status == ExportStatus::EXPIRED
+    if row.status == ExportStatus::Completed
+        || row.status == ExportStatus::Failed
+        || row.status == ExportStatus::Expired
     {
         return Ok(());
     }
-    if row.status != ExportStatus::PENDING && row.status != ExportStatus::RUNNING {
+    if row.status != ExportStatus::Pending && row.status != ExportStatus::Running {
         return Err(ExportError::Conflict);
     }
     let Some(spec) = export_resource(&row.resource) else {
@@ -655,7 +656,7 @@ async fn generate_inner(
          `completed_at` = ?, `error_msg` = NULL \
          WHERE `task_no` = ? AND `status` IN ('pending','running')",
     )
-    .bind(ExportStatus::COMPLETED)
+    .bind(ExportStatus::Completed)
     .bind(records.len() as u32)
     .bind(format!("{root}/{rel_path}"))
     .bind(now)
@@ -697,9 +698,9 @@ async fn settle_failure(
     if row.requested_by != actor_id {
         return Ok(false);
     }
-    if row.status == ExportStatus::COMPLETED
-        || row.status == ExportStatus::EXPIRED
-        || row.status == ExportStatus::FAILED
+    if row.status == ExportStatus::Completed
+        || row.status == ExportStatus::Expired
+        || row.status == ExportStatus::Failed
     {
         return Ok(false);
     }
@@ -710,7 +711,7 @@ async fn settle_failure(
         "UPDATE `export_task` SET `status` = ?, `error_msg` = ? \
          WHERE `task_no` = ? AND `status` IN ('pending','running')",
     )
-    .bind(ExportStatus::FAILED)
+    .bind(ExportStatus::Failed)
     .bind(reason)
     .bind(task_no)
     .execute(&mut *c)
@@ -848,13 +849,13 @@ pub async fn download(
             "当前数据范围无权下载该财务导出".into(),
         ));
     }
-    if row.status == ExportStatus::EXPIRED {
+    if row.status == ExportStatus::Expired {
         return Err(ExportError::Download {
             message: "导出文件已过期，请重新导出".into(),
             expired: true,
         });
     }
-    if row.status != ExportStatus::COMPLETED {
+    if row.status != ExportStatus::Completed {
         return Err(ExportError::Download {
             message: "导出尚未完成".into(),
             expired: false,
@@ -910,7 +911,7 @@ pub async fn download(
             expired: false,
         },
     })?;
-    let mime = if row.file_format == ExportFileFormat::XLSX {
+    let mime = if row.file_format == ExportFileFormat::Xlsx.as_str() {
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     } else {
         "text/csv; charset=utf-8"

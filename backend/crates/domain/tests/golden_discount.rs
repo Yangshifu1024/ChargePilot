@@ -9,7 +9,7 @@
 //! 生成器即删），本测试只读快照。覆盖：三种优惠类型、阈值边界、
 //! percentage 小数取整边界、减免封顶与参数缺失。
 
-use chargepilot_domain::marketing::{DiscountError, GrantRule, discount_for};
+use chargepilot_domain::marketing::{DiscountError, DiscountType, GrantRule, discount_for};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -26,15 +26,18 @@ struct GrantIn {
     free_minutes: u32,
 }
 
-fn grant_of(input: &Value) -> GrantRule {
+/// 未知折扣类型（如黄金样本中的 cashback）在新范式下的等价行为：
+/// 旧版 match 兜底返回 NotFound，新版在词表 parse 即拒绝——同一错误类别。
+fn parse_of(input: &Value) -> Result<GrantRule, DiscountError> {
     let g: GrantIn = serde_json::from_value(input["grant"].clone()).expect("输入合法");
-    GrantRule {
-        discount_type: g.kind,
+    let discount_type = DiscountType::parse(&g.kind).map_err(|_| DiscountError::NotFound)?;
+    Ok(GrantRule {
+        discount_type,
         min_charge_cents: g.min_charge,
         discount_value_cents: g.amount,
         discount_percent: g.percent,
         free_minutes: g.free_minutes,
-    }
+    })
 }
 
 fn want_err_of(want: &str) -> DiscountError {
@@ -59,8 +62,20 @@ fn discount_golden_matches_legacy() {
     for case in cases {
         let id = case["id"].as_str().unwrap();
         let input = &case["input"];
-        let grant = grant_of(input);
         let total = input["total"].as_i64().unwrap();
+        let grant = match parse_of(input) {
+            Ok(g) => g,
+            Err(e) => {
+                // 未知类型：新旧行为等价为 NotFound，按样本预期断言错误类别。
+                assert_eq!(
+                    e,
+                    want_err_of(case["want_err"].as_str().unwrap_or("未知类型")),
+                    "{id}: 未知类型错误类别不一致"
+                );
+                checked += 1;
+                continue;
+            }
+        };
         match discount_for(&grant, total) {
             Ok(got) => {
                 let want = case["want"].as_i64().unwrap_or_else(|| {

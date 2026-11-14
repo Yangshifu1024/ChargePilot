@@ -33,15 +33,15 @@ pub fn file_names(
     cleanup: bool,
 ) -> Result<(String, String), FileNameRejected> {
     let format = if format.is_empty() {
-        operations::ExportFileFormat::CSV
+        chargepilot_domain::export::ExportFileFormat::Csv.as_str()
     } else {
         format
     };
     if !valid_task_no(task_no) {
         return Err(FileNameRejected);
     }
-    let known = operations::ExportFileFormat(format.to_string()).known();
-    if !known && !(cleanup && format == operations::ExportFileFormat::LEGACY_PDF) {
+    let known = chargepilot_domain::export::ExportFileFormat::parse(format).is_ok();
+    if !known && !(cleanup && format == chargepilot_domain::export::LEGACY_PDF) {
         return Err(FileNameRejected);
     }
     Ok((
@@ -174,8 +174,8 @@ pub fn publish(
         lines.push(line);
     }
 
-    let content: Vec<u8> = match format {
-        operations::ExportFileFormat::XLSX => encode_xlsx(&headers, &lines)?,
+    let content: Vec<u8> = match chargepilot_domain::export::ExportFileFormat::parse(format) {
+        Ok(chargepilot_domain::export::ExportFileFormat::Xlsx) => encode_xlsx(&headers, &lines)?,
         _ => encode_csv(&headers, &lines),
     };
     let mut hasher = Sha256::new();

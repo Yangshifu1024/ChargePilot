@@ -119,41 +119,6 @@ impl FieldMask {
     }
 }
 
-/// export_task.status 列的导出任务状态词表（五值）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExportStatus(pub String);
-
-impl ExportStatus {
-    pub const PENDING: &'static str = "pending";
-    pub const RUNNING: &'static str = "running";
-    pub const COMPLETED: &'static str = "completed";
-    pub const FAILED: &'static str = "failed";
-    pub const EXPIRED: &'static str = "expired";
-
-    pub fn known(&self) -> bool {
-        matches!(
-            self.0.as_str(),
-            Self::PENDING | Self::RUNNING | Self::COMPLETED | Self::FAILED | Self::EXPIRED
-        )
-    }
-}
-
-/// export_task.file_format 列的导出文件格式词表（csv/xlsx 两值；
-/// 历史 pdf 只为清理识别保留，不计入合法集合）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExportFileFormat(pub String);
-
-impl ExportFileFormat {
-    pub const CSV: &'static str = "csv";
-    pub const XLSX: &'static str = "xlsx";
-    /// 历史遗留 PDF：仅清理路径识别，受理与下载一律拒绝。
-    pub const LEGACY_PDF: &'static str = "pdf";
-
-    pub fn known(&self) -> bool {
-        matches!(self.0.as_str(), Self::CSV | Self::XLSX)
-    }
-}
-
 /// 导出允许的最大时间跨度（30 天）。
 pub const MAX_EXPORT_PERIOD: chrono::Duration = chrono::Duration::hours(30 * 24);
 
@@ -275,11 +240,11 @@ mod tests {
 
     #[test]
     fn vocabularies() {
-        assert!(ExportStatus("completed".into()).known());
-        assert!(!ExportStatus("done".into()).known());
-        assert!(ExportFileFormat("xlsx".into()).known());
+        assert!(crate::export::ExportStatus::parse("completed").is_ok());
+        assert!(crate::export::ExportStatus::parse("done").is_err());
+        assert!(crate::export::ExportFileFormat::parse("xlsx").is_ok());
         assert!(
-            !ExportFileFormat("pdf".into()).known(),
+            crate::export::ExportFileFormat::parse("pdf").is_err(),
             "历史 PDF 不在合法集合"
         );
         assert!(AdminScopeType::parse("station").is_ok());

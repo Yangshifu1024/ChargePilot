@@ -396,7 +396,7 @@ async fn activity_rule_and_grant_idempotency() {
     // 2. 门槛发放：5000 分命中 → 发 1 张；重放同事件键 already；不同事件键被单人上限挡。
     let now = chrono::Utc::now();
     let ev = ActivityEvent {
-        trigger_type: "threshold_redeem".into(),
+        trigger_type: chargepilot_domain::marketing::ActivityTriggerType::ThresholdRedeem,
         user_id: uid_a,
         event_key: chargepilot_domain::marketing::activity_event_key_for_recharge(&format!(
             "R-{tag}-1"
@@ -598,7 +598,7 @@ async fn activity_rule_and_grant_idempotency() {
     let invite_rule_id = body["data"]["id"].as_u64().unwrap();
     // 未建立用户的邀请（C 邀请 D，C 无充值/订单）→ 整条跳过。
     let ev_invite_bad = ActivityEvent {
-        trigger_type: "invite_reward".into(),
+        trigger_type: chargepilot_domain::marketing::ActivityTriggerType::InviteReward,
         user_id: uid_d,
         event_key: chargepilot_domain::marketing::activity_event_key_for_order(&format!(
             "C-{tag}-bad"
@@ -616,7 +616,7 @@ async fn activity_rule_and_grant_idempotency() {
     );
     // B（已建立）邀请 D → 双方发券。
     let ev_invite = ActivityEvent {
-        trigger_type: "invite_reward".into(),
+        trigger_type: chargepilot_domain::marketing::ActivityTriggerType::InviteReward,
         user_id: uid_d,
         event_key: chargepilot_domain::marketing::activity_event_key_for_order(&format!(
             "C-{tag}-1"

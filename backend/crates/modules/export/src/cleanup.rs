@@ -4,7 +4,7 @@
 
 use crate::artifact;
 use crate::service::{ExportError, TASK_COLUMNS, TaskTup, task_from};
-use chargepilot_domain::operations::ExportStatus;
+use chargepilot_domain::export::ExportStatus;
 use sqlx::{Acquire, MySqlConnection, MySqlPool};
 use std::path::Path;
 
@@ -21,7 +21,7 @@ pub(crate) async fn expire_task(
 ) -> Result<(), ExportError> {
     artifact::remove_artifacts(Path::new(export_dir), task_no, format)?;
     sqlx::query("UPDATE `export_task` SET `status` = ? WHERE `task_no` = ?")
-        .bind(ExportStatus::EXPIRED)
+        .bind(ExportStatus::Expired)
         .bind(task_no)
         .execute(&mut *c)
         .await?;
@@ -56,7 +56,7 @@ pub async fn cleanup_expired(pool: &MySqlPool, export_dir: &str) -> Result<usize
             continue;
         };
         let row = task_from(row_tup);
-        if row.status != ExportStatus::COMPLETED && row.status != ExportStatus::FAILED {
+        if row.status != ExportStatus::Completed && row.status != ExportStatus::Failed {
             tx.commit().await?;
             continue;
         }

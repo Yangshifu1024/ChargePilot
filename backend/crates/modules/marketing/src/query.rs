@@ -155,11 +155,7 @@ pub async fn mine(
     if user_id == 0 || chargepilot_domain::page::PageRequest::user(page, page_size).is_err() {
         return Err(CouponQueryError::Input("分页或用户编号无效".into()));
     }
-    if !status.is_empty()
-        && status != GrantStatus::UNUSED
-        && status != GrantStatus::USED
-        && status != GrantStatus::EXPIRED
-    {
+    if !status.is_empty() && chargepilot_domain::marketing::GrantStatus::parse(status).is_err() {
         return Err(CouponQueryError::Input("优惠券状态无效".into()));
     }
     let rows: Vec<GrantTup> = sqlx::query_as(
@@ -178,15 +174,15 @@ pub async fn mine(
     for t in rows {
         let mut item = grant_from(t);
         // 未用但已到期 → 展示 expired（旧版状态派生）。
-        let derived = if item.status == GrantStatus::UNUSED && item.expires_at <= now {
-            GrantStatus::EXPIRED.to_string()
+        let derived = if item.status == GrantStatus::Unused.as_str() && item.expires_at <= now {
+            GrantStatus::Expired.as_str().to_owned()
         } else {
             item.status.clone()
         };
         if !status.is_empty() && derived != status {
             continue;
         }
-        item.usable = derived == GrantStatus::UNUSED && item.expires_at > now;
+        item.usable = derived == GrantStatus::Unused.as_str() && item.expires_at > now;
         item.status = derived;
         if only_usable && !item.usable {
             continue;

@@ -205,13 +205,17 @@ fn valid_discount(
     discount_percent: Option<f64>,
     free_minutes: Option<u32>,
 ) -> bool {
-    match discount_type {
-        chargepilot_domain::marketing::DiscountType::AMOUNT => {
+    let parsed = match chargepilot_domain::marketing::DiscountType::parse(discount_type) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    match parsed {
+        chargepilot_domain::marketing::DiscountType::Amount => {
             matches!(discount_value_cents, Some(v) if v > 0)
                 && discount_percent.is_none()
                 && free_minutes.is_none()
         }
-        chargepilot_domain::marketing::DiscountType::PERCENTAGE => {
+        chargepilot_domain::marketing::DiscountType::Percentage => {
             let Some(p) = discount_percent else {
                 return false;
             };
@@ -227,12 +231,11 @@ fn valid_discount(
                 d.round_dp_with_strategy(2, rust_decimal::RoundingStrategy::MidpointAwayFromZero);
             rounded == d && discount_value_cents.is_none() && free_minutes.is_none()
         }
-        chargepilot_domain::marketing::DiscountType::TIME_FREE => {
+        chargepilot_domain::marketing::DiscountType::TimeFree => {
             matches!(free_minutes, Some(m) if m > 0 && m <= 1440)
                 && discount_percent.is_none()
                 && discount_value_cents.is_none()
         }
-        _ => false,
     }
 }
 
@@ -329,7 +332,9 @@ pub async fn create_coupon(
     let id = result.last_insert_id();
     let mut row = in_row;
     row.id = id;
-    row.status = chargepilot_domain::marketing::CouponStatus::ACTIVE.into();
+    row.status = chargepilot_domain::marketing::CouponStatus::Active
+        .as_str()
+        .to_owned();
     let after = serde_json::to_value(&row).unwrap_or(serde_json::Value::Null);
     ops_repo::append_audit_tx(
         &mut *c,
@@ -363,11 +368,7 @@ pub async fn update_coupon(
     }
     if id == 0
         || !valid_text(&update.name, 128)
-        || !matches!(
-            update.status.as_str(),
-            chargepilot_domain::marketing::CouponStatus::ACTIVE
-                | chargepilot_domain::marketing::CouponStatus::DISABLED
-        )
+        || chargepilot_domain::marketing::CouponStatus::parse(update.status.as_str()).is_err()
     {
         return Err(CouponError::Input("名称或状态无效".into()));
     }
@@ -531,7 +532,9 @@ pub async fn grant_in_tx_with_audit(
     // 准入：用户 active + 模板启用/时间有效/额度未满（旧版 CheckGrantable）。
     let template = chargepilot_domain::marketing::CouponTemplate {
         template_id: coupon.id,
-        status: coupon.status.clone(),
+        // 行读取经 DB 词表严格解码，视图 String 此处回 parse（非法即输入错误）。
+        status: chargepilot_domain::marketing::CouponStatus::parse(&coupon.status)
+            .map_err(|_| CouponError::Input("优惠券状态无效".into()))?,
         total_quota: coupon.total_quota,
         per_user_quota: coupon.per_user_quota,
         valid_hours: coupon.valid_hours,
@@ -717,7 +720,7 @@ impl From<sqlx::Error> for CouponRedeemError {
 pub struct GrantWithRule {
     pub grant_id: u64,
     pub coupon_id: u64,
-    pub status: String,
+    pub status: chargepilot_domain::marketing::GrantStatus,
     pub expires_at: DateTime<Utc>,
     pub used_payment_order_id: Option<u64>,
     pub discount_type: String,
@@ -730,7 +733,7 @@ pub struct GrantWithRule {
 type GrantTup = (
     u64,
     u64,
-    String,
+    chargepilot_domain::marketing::GrantStatus,
     DateTime<Utc>,
     Option<u64>,
     String,
@@ -815,14 +818,17 @@ async fn load_grant(
 }
 
 /// 发放行的优惠计算输入（domain GrantRule）。
-fn grant_rule(g: &GrantWithRule) -> chargepilot_domain::marketing::GrantRule {
-    chargepilot_domain::marketing::GrantRule {
-        discount_type: g.discount_type.clone(),
+fn grant_rule(
+    g: &GrantWithRule,
+) -> Result<chargepilot_domain::marketing::GrantRule, CouponRedeemError> {
+    Ok(chargepilot_domain::marketing::GrantRule {
+        discount_type: chargepilot_domain::marketing::DiscountType::parse(&g.discount_type)
+            .map_err(|_| CouponRedeemError::NotFound)?,
         min_charge_cents: g.min_charge_cents,
         discount_value_cents: g.discount_value_cents,
         discount_percent: g.discount_percent,
         free_minutes: g.free_minutes,
-    }
+    })
 }
 
 /// 计算本人未用、未到期券对原价的优惠，单位分，不核销券（旧版 Quote）。
@@ -838,11 +844,11 @@ pub async fn quote(
     let Some(grant) = load_grant(&mut *c, user_id, grant_id, false).await? else {
         return Err(CouponRedeemError::NotFound);
     };
-    if grant.status != GrantStatus::UNUSED || grant.expires_at <= Utc::now() {
+    if grant.status != GrantStatus::Unused || grant.expires_at <= Utc::now() {
         return Err(CouponRedeemError::Exhausted);
     }
     tx.commit().await?;
-    chargepilot_domain::marketing::discount_for(&grant_rule(&grant), total_cents).map_err(|e| {
+    chargepilot_domain::marketing::discount_for(&grant_rule(&grant)?, total_cents).map_err(|e| {
         match e {
             chargepilot_domain::marketing::DiscountError::Threshold => CouponRedeemError::Threshold,
             chargepilot_domain::marketing::DiscountError::NotFound => CouponRedeemError::NotFound,
@@ -903,7 +909,7 @@ pub async fn redeem_in_tx(
         return Err(CouponRedeemError::NotFound);
     };
     // 已用：仅同一支付的同额核销视为重放成功。
-    if grant.status == GrantStatus::USED {
+    if grant.status == GrantStatus::Used {
         if grant.used_payment_order_id != Some(payment_order_id) {
             return Err(CouponRedeemError::Exhausted);
         }
@@ -918,15 +924,15 @@ pub async fn redeem_in_tx(
         }
         return Ok(());
     }
-    if grant.status != GrantStatus::UNUSED || grant.expires_at <= Utc::now() {
+    if grant.status != GrantStatus::Unused || grant.expires_at <= Utc::now() {
         return Err(CouponRedeemError::Exhausted);
     }
     // 冻结优惠必须与当前规则计算一致。
-    let discount = chargepilot_domain::marketing::discount_for(&grant_rule(&grant), total_cents)
+    let discount = chargepilot_domain::marketing::discount_for(&grant_rule(&grant)?, total_cents)
         .map_err(|e| match e {
-            chargepilot_domain::marketing::DiscountError::Threshold => CouponRedeemError::Threshold,
-            chargepilot_domain::marketing::DiscountError::NotFound => CouponRedeemError::NotFound,
-        })?;
+        chargepilot_domain::marketing::DiscountError::Threshold => CouponRedeemError::Threshold,
+        chargepilot_domain::marketing::DiscountError::NotFound => CouponRedeemError::NotFound,
+    })?;
     if discount != discount_cents {
         return Err(CouponRedeemError::Mismatch);
     }
@@ -935,12 +941,12 @@ pub async fn redeem_in_tx(
         "UPDATE `coupon_grant` SET `status` = ?, `used_payment_order_id` = ?, `used_at` = ? \
          WHERE `id` = ? AND `user_id` = ? AND `status` = ?",
     )
-    .bind(GrantStatus::USED)
+    .bind(GrantStatus::Used)
     .bind(payment_order_id as i64)
     .bind(Utc::now())
     .bind(grant_id as i64)
     .bind(user_id as i64)
-    .bind(GrantStatus::UNUSED)
+    .bind(GrantStatus::Unused)
     .execute(&mut *c)
     .await?
     .rows_affected();
