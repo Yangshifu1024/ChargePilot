@@ -53,7 +53,7 @@ sequenceDiagram
     C->>C: locate_pending_start<br/>(定位最近 sent 命令 + 组装回执输入)
     C->>C: apply_start_receipt 事务<br/>(幂等核对 + 状态必须 paid)
     C->>O: mark_charging_tx(订单 charging) + 端口占用确认
-    Note over D,U: 充电中:心跳遥测 → 批量落库与聚合;<br/>C 端轮询 /charge/ongoing/snapshot 读 SnapshotStore
+    Note over D,U: 充电中:心跳遥测 → 批量落库与聚合,<br/>C 端轮询 /charge/ongoing/snapshot 读 SnapshotStore
     U->>C: 用户停止(StopService,条件注册路由)
     C->>G: B9 停止帧(停止命令 pending → sent)
     D->>G: BA 停止应答

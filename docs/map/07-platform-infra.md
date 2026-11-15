@@ -28,10 +28,10 @@ platform 不依赖任何业务模块;**任何模块不得绕过它直读环境�
 
 ```mermaid
 stateDiagram-v2
-    [*] --> pending: 业务事务内 enqueue::in_tx<br/>(事件与业务写入同事务提交)
-    pending --> published: runtime 投递成功<br/>(1s 轮询按 EventKind 路由)
-    pending --> pending: 失败退避重排<br/>(间隔 2^retry 秒,retry 封顶 8)
-    pending --> dead: 重试耗尽(死信停投;<br/>业务侧由各域兜底扫描推滞者)
+    [*] --> pending: 业务事务内 enqueue in_tx(事件与业务写入同事务提交)
+    pending --> published: runtime 投递成功(1s 轮询按 EventKind 路由)
+    pending --> pending: 失败退避重排(间隔 2 的 retry 次方秒,封顶 8)
+    pending --> dead: 重试耗尽(死信停投,业务侧由各域兜底扫描推滞者)
     published --> [*]
 ```
 

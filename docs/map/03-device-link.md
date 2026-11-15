@@ -22,11 +22,11 @@ sequenceDiagram
     A->>S: record(Event)<br/>(持久化成功后才回 ACK 帧)
     alt 心跳 / 遥测(A4 等)
         S->>SN: 内存快照先更新(毫秒级,只承载显示与估算)
-        S->>T: 有界缓冲(200ms 或 500 条批量;满丢最旧明细 ADR 005)
+        S->>T: 有界缓冲(200ms 或 500 条批量,满丢最旧明细 ADR 005)
         T->>T: 批量落 telemetry + 15min/小时聚合
     else 业务事件(B8/BA/BB/B6/C0/B4)
         S->>E: device_event + domain_event 同事务落库
-        E->>DE: 按 EventKind 路由(1s 轮询;失败退避 2^retry 秒)
+        E->>DE: 按 EventKind 路由(1s 轮询,失败退避 2^retry 秒)
         DE->>DM: B8/BA/BB→charging 回执原语<br/>B6→card::SwipeService<br/>C0→device::alert 告警<br/>B4→平台侧补单
     end
 ```

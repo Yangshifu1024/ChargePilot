@@ -27,7 +27,7 @@ sequenceDiagram
     actor ADM as 后台(customer_finance)
 
     U->>H: POST /user/wallet/recharge(条件注册:checkout)
-    H->>W: 充值申请事务<br/>(幂等建单;锁序 用户→钱包→请求)
+    H->>W: 充值申请事务<br/>(幂等建单,锁序 用户→钱包→请求)
     W->>P: RechargeBridge(RechargePayments 唯一生产实现)
     Note over W,CH: 预支付只在事务提交后发起(外部调用不出事务)
     P->>CH: 渠道预支付(PayProvider)
