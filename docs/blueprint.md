@@ -93,6 +93,7 @@ modules/<域>/src/
 ```
 
 - **粒度指引**：域 crate src 总量 < 约 800 行可平铺 `service.rs + repo.rs`；超过则按子域分文件。不强制每层独立 crate——层是 crate 内的目录。
+- **域职责注记（order，2026-11-15 评审定案）**：order 写侧为跨域编排者（payment 创建、charging 回执、settlement 退款）提供存储原语，生命周期推进的证据链（读状态→构证据→条件 UPDATE）封装在原语内部（`mark_charging_tx` 范式）；order 自身 service/ 只承载 feedback 用例——写侧不设编排层是有意形态，评审不应以「缺 service 层」为由重提。
 - **SQL 归属是硬规则**：`sqlx::query`/`QueryBuilder` 只允许出现在 `repo/`（或平铺形态的 `repo.rs`）与 gateway-runtime 的运行时存储内。审计方法：`grep -rn "sqlx::query" crates/modules/<域>/src/service/` 必须为空。
 - 迁移策略见第八章批次 3。
 

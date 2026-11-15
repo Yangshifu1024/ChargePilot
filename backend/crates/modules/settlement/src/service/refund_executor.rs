@@ -118,19 +118,9 @@ async fn execute_one(
     // 行不存在或状态非 refunding 时不迁移不更新——保留旧版条件 UPDATE 静默
     // 0 行语义（后续事件照常登记，与原行为一致）。
     if biz_type == BizType::Charge {
-        let order_status = repo::order_status_tx(&mut *c, biz_id).await?;
-        let refunding = order_status
-            .and_then(|st| {
-                chargepilot_domain::charging::state::evidence_of(
-                    chargepilot_domain::charging::state::OrderId(biz_id),
-                    st,
-                )
-            })
-            .and_then(chargepilot_domain::charging::state::StateEvidence::into_refunding);
-        if refunding.is_some() {
-            // 证据链：refunding → refunded（迁移 5）。
-            repo::mark_order_refunded_tx(&mut *c, biz_id, payment_order_id).await?;
-        }
+        // 订单 refunding → refunded：证据链归 order 域原语（证据缺失或条件
+        // 0 行静默返回，保留旧版语义）。
+        chargepilot_mod_order::advance_refunded_tx(&mut *c, biz_id, payment_order_id).await?;
         let event_id = format!("RF{refund_id:020}");
         chargepilot_mod_order::append_event_in_tx(
             &mut *c,

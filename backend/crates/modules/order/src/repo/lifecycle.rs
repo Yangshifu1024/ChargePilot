@@ -375,3 +375,43 @@ pub async fn release_port_tx(
     .rows_affected();
     Ok(n == 1)
 }
+
+/// 退款完成收尾：refunding → refunded（迁移 5，旧版 SetStatusRefunded 语义）。
+/// 证据链封装在原语内部（[`mark_charging_tx`] 范式）：行不存在或状态非
+/// refunding 时静默返回 false（保留旧版条件 UPDATE 静默 0 行语义，调用方
+/// 不重复判定）；`payment_order_id` 参与条件谓词防跨单误推进。
+pub async fn advance_refunded_tx(
+    tx: &mut MySqlConnection,
+    charge_order_id: u64,
+    payment_order_id: u64,
+) -> Result<bool, OrderError> {
+    let status: Option<ChargeOrderStatus> =
+        sqlx::query_scalar("SELECT `status` FROM `charge_order` WHERE `id` = ?")
+            .bind(charge_order_id as i64)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let refunding = status
+        .and_then(|st| {
+            chargepilot_domain::charging::state::evidence_of(
+                chargepilot_domain::charging::state::OrderId(charge_order_id),
+                st,
+            )
+        })
+        .and_then(chargepilot_domain::charging::state::StateEvidence::into_refunding);
+    if refunding.is_none() {
+        return Ok(false);
+    }
+    // 证据链：refunding → refunded（迁移 5）。
+    let n = sqlx::query(
+        "UPDATE `charge_order` SET `status` = ? \
+         WHERE `id` = ? AND `status` = ? AND `payment_order_id` = ?",
+    )
+    .bind(ChargeOrderStatus::Refunded)
+    .bind(charge_order_id as i64)
+    .bind(ChargeOrderStatus::Refunding)
+    .bind(payment_order_id as i64)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    Ok(n == 1)
+}

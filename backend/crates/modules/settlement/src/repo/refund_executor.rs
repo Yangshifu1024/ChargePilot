@@ -93,34 +93,6 @@ pub async fn complete_refund_tx(
 }
 
 /// 订单行内状态（证据链分派）。
-pub async fn order_status_tx(
-    c: &mut MySqlConnection,
-    order_id: u64,
-) -> Result<Option<chargepilot_domain::order::ChargeOrderStatus>, sqlx::Error> {
-    sqlx::query_scalar("SELECT `status` FROM `charge_order` WHERE `id` = ?")
-        .bind(order_id as i64)
-        .fetch_optional(&mut *c)
-        .await
-}
-
-/// 订单 refunding → refunded（条件更新；0 行为静默旧语义）。
-pub async fn mark_order_refunded_tx(
-    c: &mut MySqlConnection,
-    order_id: u64,
-    payment_order_id: u64,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE `charge_order` SET `status` = ? \
-         WHERE `id` = ? AND `status` = ? AND `payment_order_id` = ?",
-    )
-    .bind(chargepilot_domain::order::ChargeOrderStatus::Refunded)
-    .bind(order_id as i64)
-    .bind(chargepilot_domain::order::ChargeOrderStatus::Refunding)
-    .bind(payment_order_id as i64)
-    .execute(&mut *c)
-    .await?;
-    Ok(())
-}
 
 /// 渠道明确拒绝的退款失败登记（新事务；主事务已回滚）。
 pub async fn fail_refund(
