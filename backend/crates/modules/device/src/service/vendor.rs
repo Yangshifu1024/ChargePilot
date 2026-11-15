@@ -1,12 +1,13 @@
-//! 厂商管理：单体内直接读写 vendor 表（旧版经 central→gateway HTTP 代理，
-//! 单体后代理塌缩为进程内调用；约束照搬：编码不可变、有设备时协议不可改、仅支持 dc589+TCP）。
+//! 厂商管理用例：直接读写 vendor 表（约束：编码不可变、有设备时协议不可改、
+//! 仅支持 dc589+TCP）。SQL 在 repo/vendor.rs。
 
-use super::{DeviceError, VendorResult};
+use crate::repo::vendor;
+use crate::{DeviceError, VendorResult};
 use chargepilot_domain::device::{VendorProtocol, VendorStatus};
 use chargepilot_mod_ops::Profile;
 use chargepilot_mod_ops::repo;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::MySqlPool;
 
 #[derive(Debug, sqlx::FromRow, serde::Serialize)]
@@ -47,31 +48,11 @@ impl VendorInput {
 }
 
 pub async fn list(pool: &MySqlPool, only_enabled: bool) -> VendorResult<Vec<Vendor>> {
-    let (filter, only): (&str, Option<VendorStatus>) = if only_enabled {
-        ("AND `status` = ?", Some(VendorStatus::Enabled))
-    } else {
-        ("", None)
-    };
-    let sql = format!(
-        "SELECT `id`, `vendor_code`, `vendor_name`, `adapter_class`, `protocol`, `status` \
-         FROM `vendor` WHERE `deleted_at` IS NULL {filter} ORDER BY `id`"
-    );
-    let mut q = sqlx::query_as::<_, Vendor>(&sql);
-    if let Some(status) = only {
-        q = q.bind(status);
-    }
-    q.fetch_all(pool).await.map_err(DeviceError::from)
+    vendor::vendor_list(pool, only_enabled).await
 }
 
 pub async fn get(pool: &MySqlPool, id: u64) -> VendorResult<Vendor> {
-    sqlx::query_as::<_, Vendor>(
-        "SELECT `id`, `vendor_code`, `vendor_name`, `adapter_class`, `protocol`, `status` \
-         FROM `vendor` WHERE `id` = ? AND `deleted_at` IS NULL LIMIT 1",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?
-    .ok_or(DeviceError::NotFound)
+    vendor::vendor_by_id(pool, id).await
 }
 
 pub async fn create(
@@ -100,16 +81,15 @@ pub async fn create(
         return Err(DeviceError::Forbidden);
     }
     let id = allocator.next_id().await.map_err(DeviceError::from)?;
-    sqlx::query(
-        "INSERT INTO `vendor` (`id`, `vendor_code`, `vendor_name`, `adapter_class`, `protocol`, `status`) VALUES (?, ?, ?, ?, ?, ?)",
+    vendor::insert_vendor_tx(
+        &mut tx,
+        id,
+        input.vendor_code.trim(),
+        input.vendor_name.trim(),
+        &input.adapter_class,
+        &input.protocol,
+        &input.status,
     )
-    .bind(id)
-    .bind(input.vendor_code.trim())
-    .bind(input.vendor_name.trim())
-    .bind(&input.adapter_class)
-    .bind(&input.protocol)
-    .bind(&input.status)
-    .execute(&mut *tx)
     .await
     .map_err(|e| unique_conflict(e, "厂商编码已存在"))?;
     let after = json!({"id": id, "vendor_code": input.vendor_code, "status": input.status});
@@ -150,21 +130,12 @@ pub async fn update(
     {
         return Err(DeviceError::Forbidden);
     }
-    let existing = sqlx::query_as::<_, (u64, String, String, String)>(
-        "SELECT `id`, `vendor_code`, `adapter_class`, `protocol` FROM `vendor` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
-    )
-    .bind(id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or(DeviceError::NotFound)?;
-    // 编码不可变；已有设备时 adapter/protocol 不可改（旧版语义）
+    let existing = vendor::lock_vendor_tx(&mut tx, id)
+        .await?
+        .ok_or(DeviceError::NotFound)?;
+    // 编码不可变；已有设备时 adapter/protocol 不可改
     if input.adapter_class != existing.2 || input.protocol != existing.3 {
-        let has_devices: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM `device_meta` WHERE `vendor_id` = ? AND `deleted_at` IS NULL",
-        )
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
+        let has_devices = vendor::device_meta_count(&mut tx, id).await?;
         if has_devices > 0 {
             return Err(DeviceError::Conflict(
                 "厂商已接入设备，不能变更协议或适配器".into(),
@@ -176,19 +147,16 @@ pub async fn update(
             ));
         }
     }
-    // 首次启用写 enabled_at
-    sqlx::query(
-        "UPDATE `vendor` SET `vendor_name` = ?, `adapter_class` = ?, `protocol` = ?, `status` = ?, \
-         `enabled_at` = IF(? = ? AND `enabled_at` IS NULL, UTC_TIMESTAMP(3), `enabled_at`) WHERE `id` = ?",
+    vendor::update_vendor_tx(
+        &mut tx,
+        id,
+        input.vendor_name.trim(),
+        &input.adapter_class,
+        VendorProtocol::parse(input.protocol.as_str())
+            .map_err(|_| DeviceError::Input("协议无效".into()))?,
+        VendorStatus::parse(input.status.as_str())
+            .map_err(|_| DeviceError::Input("状态无效".into()))?,
     )
-    .bind(input.vendor_name.trim())
-    .bind(&input.adapter_class)
-    .bind(VendorProtocol::parse(input.protocol.as_str()).map_err(|_| DeviceError::Input("协议无效".into()))?)
-    .bind(VendorStatus::parse(input.status.as_str()).map_err(|_| DeviceError::Input("状态无效".into()))?)
-    .bind(VendorStatus::parse(input.status.as_str()).map_err(|_| DeviceError::Input("状态无效".into()))?)
-    .bind(VendorStatus::Enabled)
-    .bind(id)
-    .execute(&mut *tx)
     .await?;
     let after = json!({"id": id, "vendor_name": input.vendor_name, "status": input.status});
     repo::append_audit_tx(
@@ -216,5 +184,3 @@ fn unique_conflict(e: sqlx::Error, msg: &str) -> DeviceError {
     }
     DeviceError::Storage(e.into())
 }
-
-use serde_json::Value;

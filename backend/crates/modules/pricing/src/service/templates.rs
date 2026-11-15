@@ -1,6 +1,7 @@
-//! 计费模板 CRUD：单事务「锁模板行 → 版本核对 → 写入 → 审计」，更新版本 +1（旧版语义）。
+//! 计费模板 CRUD 用例：单事务「锁模板行 → 版本核对 → 写入 → 审计」，更新版本 +1。
 
-use crate::{PricingError, PricingResult};
+use crate::repo::templates;
+use crate::{PricingResult, error::PricingError};
 use chargepilot_domain::charging::scheme::{Scheme, Spec};
 use chargepilot_mod_ops::Profile;
 use chargepilot_mod_ops::repo;
@@ -8,25 +9,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::MySqlPool;
 
-#[derive(Debug, sqlx::FromRow, serde::Serialize)]
-pub struct TemplateRow {
-    pub id: u64,
-    pub name: String,
-    pub remark: String,
-    pub spec: serde_json::Value,
-    pub status: String,
-    pub version: u64,
-}
-
-/// 列表：spec 解析失败的历史模板静默跳过（旧版语义），返回 {id, name, remark, scheme, version, status}。
+/// 列表：spec 解析失败的历史模板静默跳过，返回 {id, name, remark, scheme, version, status}。
 pub async fn list_templates(pool: &MySqlPool) -> PricingResult<Vec<serde_json::Value>> {
-    let rows = sqlx::query_as::<_, TemplateRow>(
-        "SELECT `id`, `name`, `remark`, `spec_json` AS `spec`, `status`, `version` \
-         FROM `pricing_template` WHERE `deleted_at` IS NULL AND `status` = ? ORDER BY `id` DESC",
-    )
-    .bind(chargepilot_domain::pricing::PricingTemplateStatus::Active)
-    .fetch_all(pool)
-    .await?;
+    let rows = templates::list_active_rows(pool).await?;
     Ok(rows
         .into_iter()
         .filter_map(|r| {
@@ -48,7 +33,7 @@ pub struct SchemeInput {
     pub expected_version: Option<u64>,
 }
 
-/// 创建模板（spec_json 存 Spec 包装，与旧版结构一致）。
+/// 创建模板（spec_json 存 Spec 包装）。
 pub async fn create_template(
     pool: &MySqlPool,
     actor: &Profile,
@@ -76,16 +61,14 @@ pub async fn create_template(
     {
         return Err(PricingError::Forbidden);
     }
-    sqlx::query(
-        "INSERT INTO `pricing_template` (`id`, `name`, `remark`, `spec_json`, `display_json`, `status`, `version`) VALUES (?, ?, ?, ?, ?, ?, 1)",
+    templates::insert_template_tx(
+        &mut tx,
+        id,
+        &scheme.name,
+        &scheme.remark,
+        &serde_json::to_value(&spec)?,
+        &serde_json::to_value(&scheme.display)?,
     )
-    .bind(id)
-    .bind(&scheme.name)
-    .bind(&scheme.remark)
-    .bind(serde_json::to_value(&spec)?)
-    .bind(serde_json::to_value(&scheme.display)?)
-    .bind(chargepilot_domain::pricing::PricingTemplateStatus::Active)
-    .execute(&mut *tx)
     .await?;
     let after = json!({"id": id, "name": scheme.name, "version": 1});
     repo::append_audit_tx(
@@ -105,7 +88,7 @@ pub async fn create_template(
     Ok((id, 1))
 }
 
-/// 更新模板：FOR UPDATE 锁行 → expected_version 核对 → 写入并 version+1（旧版语义）。
+/// 更新模板：FOR UPDATE 锁行 → expected_version 核对 → 写入并 version+1。
 pub async fn update_template(
     pool: &MySqlPool,
     actor: &Profile,
@@ -131,13 +114,9 @@ pub async fn update_template(
     {
         return Err(PricingError::Forbidden);
     }
-    let (current_version, before_spec): (u64, Option<serde_json::Value>) = sqlx::query_as(
-        "SELECT `version`, `spec_json` FROM `pricing_template` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
-    )
-    .bind(template_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or(PricingError::NotFound)?;
+    let (current_version, before_spec) = templates::lock_template_tx(&mut tx, template_id)
+        .await?
+        .ok_or(PricingError::NotFound)?;
     if current_version != expected {
         return Err(PricingError::VersionConflict);
     }
@@ -146,15 +125,14 @@ pub async fn update_template(
         extra: serde_json::Map::new(),
     };
     let new_version = current_version + 1;
-    sqlx::query(
-        "UPDATE `pricing_template` SET `name` = ?, `remark` = ?, `spec_json` = ?, `version` = ? WHERE `id` = ?",
+    templates::update_template_tx(
+        &mut tx,
+        template_id,
+        &scheme.name,
+        &scheme.remark,
+        &serde_json::to_value(&spec).map_err(PricingError::from)?,
+        new_version,
     )
-    .bind(&scheme.name)
-    .bind(&scheme.remark)
-    .bind(serde_json::to_value(&spec).map_err(PricingError::from)?)
-    .bind(new_version)
-    .bind(template_id)
-    .execute(&mut *tx)
     .await?;
     let after = json!({"id": template_id, "name": scheme.name, "version": new_version});
     repo::append_audit_tx(
@@ -174,8 +152,8 @@ pub async fn update_template(
     Ok((template_id, new_version))
 }
 
-/// 状态切换 / 软删（DELETE 固定写 disabled+deleted_at，旧版语义）。
-/// 状态切换参数即旧版契约字段，不引入参数对象。
+/// 状态切换 / 软删（DELETE 固定写 disabled+deleted_at）。
+/// 状态切换参数即现有契约字段，不引入参数对象。
 #[allow(clippy::too_many_arguments)]
 pub async fn set_template_status(
     pool: &MySqlPool,
@@ -197,32 +175,20 @@ pub async fn set_template_status(
     {
         return Err(PricingError::Forbidden);
     }
-    let (current_version, _): (u64, Option<serde_json::Value>) = sqlx::query_as(
-        "SELECT `version`, `spec_json` FROM `pricing_template` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
-    )
-    .bind(template_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or(PricingError::NotFound)?;
+    let (current_version, _) = templates::lock_template_tx(&mut tx, template_id)
+        .await?
+        .ok_or(PricingError::NotFound)?;
     if current_version != expected_version {
         return Err(PricingError::VersionConflict);
     }
     if delete {
-        sqlx::query("UPDATE `pricing_template` SET `status` = ?, `deleted_at` = UTC_TIMESTAMP(3) WHERE `id` = ?")
-            .bind(chargepilot_domain::pricing::PricingTemplateStatus::Disabled)
-            .bind(template_id)
-            .execute(&mut *tx)
-            .await?;
+        templates::delete_template_tx(&mut tx, template_id).await?;
     } else {
         let s = status.ok_or_else(|| PricingError::InvalidScheme("状态无效".into()))?;
         if s != "active" && s != "disabled" {
             return Err(PricingError::InvalidScheme("状态无效".into()));
         }
-        sqlx::query("UPDATE `pricing_template` SET `status` = ? WHERE `id` = ?")
-            .bind(s)
-            .bind(template_id)
-            .execute(&mut *tx)
-            .await?;
+        templates::set_status_tx(&mut tx, template_id, s).await?;
     }
     let after = json!({"id": template_id, "deleted": delete});
     repo::append_audit_tx(

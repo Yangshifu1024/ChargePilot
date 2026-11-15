@@ -3,7 +3,7 @@
 //! 按站点和设备号读取唯一未删除设备的已冻结协议标签，映射协议支持的
 //! 计费模式、时长上限与上报能力。不能用型号、遥测或客户端声明代替协议。
 
-use super::DeviceError;
+use crate::DeviceError;
 use serde_json::{Value, json};
 use sqlx::MySqlPool;
 

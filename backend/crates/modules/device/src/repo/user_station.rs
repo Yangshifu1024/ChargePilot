@@ -1,6 +1,6 @@
 //! C 端站点查询（无需登录）：附近站点（球面余弦距离）与站点详情（设备心跳在线）。
 
-use super::{DeviceError, StationResult};
+use crate::{DeviceError, StationResult};
 use chargepilot_domain::device::{DeviceMetaStatus, StationStatus};
 use serde::Serialize;
 use sqlx::MySqlPool;

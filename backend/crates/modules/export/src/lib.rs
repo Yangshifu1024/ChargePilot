@@ -12,14 +12,14 @@
 pub use error::{ArtifactError, ExportError};
 
 pub mod artifact;
-pub mod cleanup;
 pub mod error;
 pub mod registry;
+pub mod repo;
 pub mod service;
 
-pub use cleanup::cleanup_expired;
 pub use registry::{ExportColumn, ExportSpec, export_resource, export_resource_names};
-pub use service::{
+pub use service::cleanup::cleanup_expired;
+pub use service::tasks::{
     CreateInput, CreateResult, DownloadFile, ExportConfig, ExportTaskRow, ResourcesResult,
     create_export, detail, download, list_resources, list_tasks,
 };
