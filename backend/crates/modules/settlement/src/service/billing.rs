@@ -1,43 +1,29 @@
 //! 计费批次（旧版 BillingService.Run + BillingOrders.Apply 的单体对应物）。
 //! 领取 pending 任务 → 读订单/快照/计量 → domain 结算（批 1 差分验证的
 //! settle_session）→ 资金同事务：费用回执幂等、订单费用列、余款退款登记、
-//! 事件出站；计量/快照无效转人工，存储错误退避重试。
+//! 事件出站；计量/快照无效转人工，存储错误退避重试。SQL 在 repo/billing.rs。
 
+use crate::repo::{billing as repo, set_read_committed};
 use chargepilot_domain::charging::actual::{ActualMeter, EndMeter};
 use chargepilot_domain::charging::settle::settle_session;
 use chargepilot_domain::charging::spec::BillingError;
-use chargepilot_domain::money::{BizType, ExecutionPolicy, PaymentOrderStatus, RefundStatus};
+use chargepilot_domain::money::PaymentOrderStatus;
 use sqlx::{Acquire, MySqlPool};
 
-use chargepilot_domain::settlement::{
-    BillingJobStatus as JobStatus, ManualFeeReviewStatus, MeterReviewStatus,
-};
+use chargepilot_domain::settlement::BillingJobStatus as JobStatus;
 
 /// 领取到期的 pending 计费任务（SKIP LOCKED 批次，旧版 Due）。
 pub async fn due_jobs(pool: &MySqlPool, limit: u32) -> anyhow::Result<Vec<u64>> {
-    let ids: Vec<(u64,)> = sqlx::query_as(
-        "SELECT `charge_order_id` FROM `charge_billing_job` \
-         WHERE `status` = ? AND `next_attempt_at` <= UTC_TIMESTAMP(3) \
-         ORDER BY `charge_order_id` LIMIT ? FOR UPDATE SKIP LOCKED",
-    )
-    .bind(JobStatus::Pending)
-    .bind(limit as i64)
-    .fetch_all(pool)
-    .await?;
-    Ok(ids.into_iter().map(|(id,)| id).collect())
+    Ok(repo::due_billing_jobs(pool, limit).await?)
 }
 
 /// 处理单个计费任务；返回 Ok(true) 表示结算完成，Ok(false) 表示转人工或退避。
+#[allow(clippy::too_many_lines)]
 pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Result<bool> {
     // 读取阶段（无事务）：订单 + 快照 + 结束计量。
-    let order: Option<(String, u64, Option<u64>)> = sqlx::query_as(
-        "SELECT `order_no`, `user_id`, `payment_order_id` FROM `charge_order` \
-         WHERE `id` = ? AND `status` = 'completed' AND `deleted_at` IS NULL",
-    )
-    .bind(charge_order_id as i64)
-    .fetch_optional(pool)
-    .await?;
-    let Some((order_no, user_id, payment_order_id)) = order else {
+    let Some((order_no, user_id, payment_order_id)) =
+        repo::completed_order_facts(pool, charge_order_id).await?
+    else {
         // 订单不在 completed（异常回滚等）：任务转人工，避免空转。
         defer_to_manual_review(pool, charge_order_id, "订单不在已完成状态", 0, None).await?;
         return Ok(false);
@@ -46,26 +32,13 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         defer_to_manual_review(pool, charge_order_id, "订单缺少支付关联", 0, None).await?;
         return Ok(false);
     };
-    // 快照 rule（spec 为选中套餐的引擎规格）。
-    let snapshot_json: Option<String> = sqlx::query_scalar(
-        "SELECT CAST(`pricing_snapshot` AS CHAR) FROM `charge_order_pricing` WHERE `charge_order_id` = ?",
-    )
-    .bind(charge_order_id as i64)
-    .fetch_optional(pool)
-    .await?;
-    let Some(snapshot_json) = snapshot_json else {
+    let Some(snapshot_json) = repo::order_snapshot(pool, charge_order_id).await? else {
         defer_to_manual_review(pool, charge_order_id, "订单缺少计费快照", 0, None).await?;
         return Ok(false);
     };
     let snapshot: chargepilot_mod_payment::checkout::PricingSnapshot =
         serde_json::from_str(&snapshot_json).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let meter_json: Option<String> = sqlx::query_scalar(
-        "SELECT CAST(`meter_json` AS CHAR) FROM `charge_end_receipt` WHERE `charge_order_id` = ?",
-    )
-    .bind(charge_order_id as i64)
-    .fetch_optional(pool)
-    .await?;
-    let Some(meter_json) = meter_json else {
+    let Some(meter_json) = repo::end_meter_json(pool, charge_order_id).await? else {
         defer_to_manual_review(pool, charge_order_id, "订单缺少结束计量", 0, None).await?;
         return Ok(false);
     };
@@ -73,16 +46,9 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         serde_json::from_str(&meter_json).map_err(|e| anyhow::anyhow!(e.to_string()))?;
     // 融合已批准的计量修正（旧版 readBillingSource）：原始计量未变时替换分段；
     // 已变（新回执等）则视为无效，交由下方结算校验转人工。
-    let approved: Option<(String, String)> = sqlx::query_as(
-        "SELECT CAST(`original_json` AS CHAR), CAST(`corrected_json` AS CHAR) \
-         FROM `charge_meter_review` \
-         WHERE `charge_order_id` = ? AND `status` = ? ORDER BY `id` DESC LIMIT 1",
-    )
-    .bind(charge_order_id as i64)
-    .bind(MeterReviewStatus::Approved)
-    .fetch_optional(pool)
-    .await?;
-    if let Some((original_json, corrected_json)) = approved {
+    if let Some((original_json, corrected_json)) =
+        repo::approved_meter_review(pool, charge_order_id).await?
+    {
         let original: serde_json::Value =
             serde_json::from_str(&original_json).map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let corrected: serde_json::Value =
@@ -98,13 +64,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
 
     // 人工最终金额优先（仪表审核后的兜底出口；旧版 FinalFee 语义）：
     // 登记后金额直接入账，仍受预付封顶与回执幂等保护。
-    let manual: Option<(i64, i64, String)> = sqlx::query_as(
-        "SELECT `electric_cents`, `service_cents`, CAST(`request_id` AS CHAR) \
-         FROM `charge_manual_settlement` WHERE `charge_order_id` = ?",
-    )
-    .bind(charge_order_id as i64)
-    .fetch_optional(pool)
-    .await?;
+    let manual = repo::manual_settlement(pool, charge_order_id).await?;
     let settlement = if let Some((electric, service, _request)) = manual {
         chargepilot_domain::charging::settle::Settlement {
             electric_cents: electric,
@@ -162,22 +122,14 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
 
     // 资金事务：费用回执幂等 → 订单费用列 → 余款退款登记 → 事件 → 任务 done。
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await?;
+    set_read_committed(&mut conn).await?;
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
 
     // 支付单锁定并核对（旧版 Apply 的核心核对集合）。
-    let payment: Option<(PaymentOrderStatus, i64, i64, u64)> = sqlx::query_as(
-        "SELECT `status`, `paid_cents`, `refunded_cents`, `id` FROM `payment_order` \
-         WHERE `id` = ? AND `biz_type` = ? AND `deleted_at` IS NULL FOR UPDATE",
-    )
-    .bind(payment_order_id as i64)
-    .bind(BizType::Charge)
-    .fetch_optional(&mut *c)
-    .await?;
-    let Some((pay_status, paid_cents, refunded_cents, pay_id)) = payment else {
+    let Some((pay_status, paid_cents, refunded_cents, pay_id)) =
+        repo::lock_pay_order_tx(&mut *c, payment_order_id).await?
+    else {
         tx.rollback().await?;
         defer_to_manual_review(pool, charge_order_id, "支付单缺失或类型不符", 0, None).await?;
         return Ok(false);
@@ -196,30 +148,15 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
 
     // 费用回执幂等：已入账则仅完成任务（旧版 previous.RowsAffected > 0 分支）。
     let calculation_no = calculation_number(&order_no, charge_order_id);
-    let existing: Option<(String,)> = sqlx::query_as(
-        "SELECT CAST(`result_json` AS CHAR) FROM `charge_fee_receipt` WHERE `charge_order_id` = ? FOR UPDATE",
-    )
-    .bind(charge_order_id as i64)
-    .fetch_optional(&mut *c)
-    .await?;
-    if existing.is_some() {
-        sqlx::query("UPDATE `charge_billing_job` SET `status` = ?, `last_error` = NULL WHERE `charge_order_id` = ?")
-            .bind(JobStatus::Done)
-            .bind(charge_order_id as i64)
-            .execute(&mut *c)
-            .await?;
+    if repo::find_fee_receipt_tx(&mut *c, charge_order_id)
+        .await?
+        .is_some()
+    {
+        repo::mark_job_done_tx(&mut *c, charge_order_id).await?;
         // 回执已存在的重放同样关闭待核实工单（幂等重入路径）。
-        sqlx::query(
-            "UPDATE `manual_fee_review` SET `status` = ?, `resolved_at` = UTC_TIMESTAMP(3) \
-             WHERE `charge_order_id` = ? AND `status` = ?",
-        )
-        .bind(ManualFeeReviewStatus::Resolved)
-        .bind(charge_order_id as i64)
-        .bind(ManualFeeReviewStatus::Pending)
-        .execute(&mut *c)
-        .await?;
+        repo::resolve_manual_review_tx(&mut *c, charge_order_id).await?;
         // 账单签发接线：重放路径同事务幂等补签（uk_order 复用，已有账单零写入）。
-        crate::bill::issue_bill_in_tx(c, charge_order_id).await?;
+        crate::service::bill::issue_bill_in_tx(c, charge_order_id).await?;
         tx.commit().await?;
         return Ok(true);
     }
@@ -227,14 +164,11 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     // 金额模式封顶：结算总额不得超过预付可退余额（超出部分即缺口，不追缴）。
     let total = settlement.total_cents.min(paid_cents - refunded_cents);
     let shortfall = settlement.total_cents - total;
-    sqlx::query(
-        "INSERT INTO `charge_fee_receipt` (`charge_order_id`, `calculation_no`, `result_json`, `shortfall_cents`) \
-         VALUES (?, ?, CAST(? AS JSON), ?)",
-    )
-    .bind(charge_order_id as i64)
-    .bind(&calculation_no)
-    .bind(
-        serde_json::json!({
+    repo::insert_fee_receipt_tx(
+        &mut *c,
+        charge_order_id,
+        &calculation_no,
+        &serde_json::json!({
             "charge_order_id": charge_order_id,
             "order_no": order_no,
             "electric_cents": settlement.electric_cents,
@@ -245,61 +179,39 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
             "estimated": settlement.estimated,
         })
         .to_string(),
+        shortfall,
     )
-    .bind(shortfall)
-    .execute(&mut *c)
     .await?;
     // 订单费用列（旧版 SetSettledFeeInTx）。
-    sqlx::query(
-        "UPDATE `charge_order` SET `electric_cents` = ?, `service_cents` = ?, `total_cents` = ? \
-         WHERE `id` = ?",
+    repo::set_order_fee_tx(
+        &mut *c,
+        settlement.electric_cents,
+        settlement.service_cents,
+        total,
+        charge_order_id,
     )
-    .bind(settlement.electric_cents)
-    .bind(settlement.service_cents)
-    .bind(total)
-    .bind(charge_order_id as i64)
-    .execute(&mut *c)
     .await?;
 
     // 余款：实付 - 实费 - 已退 - 在途（当前读，避免高估可退）。
-    let reserved: i64 = sqlx::query_scalar(
-        "SELECT CAST(COALESCE(SUM(`refund_cents`), 0) AS SIGNED) FROM `refund_record` \
-         WHERE `payment_order_id` = ? AND `status` IN (?, ?) AND `deleted_at` IS NULL FOR UPDATE",
-    )
-    .bind(pay_id as i64)
-    .bind(RefundStatus::Pending)
-    .bind(RefundStatus::Processing)
-    .fetch_one(&mut *c)
-    .await?;
+    let reserved = repo::reserved_refund_sum_tx(&mut *c, pay_id).await?;
     let surplus = paid_cents - total - refunded_cents - reserved;
     let mut refund_no = String::new();
     if surplus > 0 {
         refund_no = format!("FEE-R{charge_order_id:020}");
-        sqlx::query(
-            "INSERT INTO `refund_record` (`refund_no`, `payment_order_id`, `user_id`, `biz_type`, \
-             `biz_id`, `refund_cents`, `reason`, `status`, `execution_policy`, `created_month`) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        repo::insert_surplus_refund_tx(
+            &mut *c,
+            &refund_no,
+            pay_id,
+            user_id,
+            charge_order_id,
+            surplus,
+            chargepilot_mod_order::month_start_of(chrono::Utc::now()),
         )
-        .bind(&refund_no)
-        .bind(pay_id as i64)
-        .bind(user_id as i64)
-        .bind(BizType::Charge)
-        .bind(charge_order_id as i64)
-        .bind(surplus)
-        .bind("实际计费后的预付差额")
-        .bind(RefundStatus::Pending)
-        .bind(ExecutionPolicy::Automatic)
-        .bind(chargepilot_mod_order::month_start_of(chrono::Utc::now()))
-        .execute(&mut *c)
         .await?;
         // 订单进入退款中（渠道退款成功后置 refunded）。证据链（票 14）：
         // 读取行内状态分派证据，completed → refunding（迁移 4）；行不存在或
         // 状态非 completed 时不迁移不更新——保留旧版条件 UPDATE 静默 0 行语义。
-        let order_status: Option<chargepilot_domain::order::ChargeOrderStatus> =
-            sqlx::query_scalar("SELECT `status` FROM `charge_order` WHERE `id` = ?")
-                .bind(charge_order_id as i64)
-                .fetch_optional(&mut *c)
-                .await?;
+        let order_status = repo::order_status_tx(&mut *c, charge_order_id).await?;
         let completed = order_status
             .and_then(|st| {
                 chargepilot_domain::charging::state::evidence_of(
@@ -308,15 +220,9 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
                 )
             })
             .and_then(chargepilot_domain::charging::state::StateEvidence::into_completed);
-        if let Some(evidence) = completed {
+        if completed.is_some() {
             // 证据链：completed → refunding（迁移 4）。
-            let _refunding = evidence.request_channel_refund();
-            sqlx::query("UPDATE `charge_order` SET `status` = ? WHERE `id` = ? AND `status` = ?")
-                .bind(chargepilot_domain::order::ChargeOrderStatus::Refunding)
-                .bind(charge_order_id as i64)
-                .bind(chargepilot_domain::order::ChargeOrderStatus::Completed)
-                .execute(&mut *c)
-                .await?;
+            repo::mark_order_refunding_tx(&mut *c, charge_order_id).await?;
         }
     }
     // 订单事件 + 出站事件（结算完成信号）。
@@ -355,25 +261,13 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     )
     .await
     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    sqlx::query("UPDATE `charge_billing_job` SET `status` = ?, `last_error` = NULL WHERE `charge_order_id` = ?")
-        .bind(JobStatus::Done)
-        .bind(charge_order_id as i64)
-        .execute(&mut *c)
-        .await?;
+    repo::mark_job_done_tx(&mut *c, charge_order_id).await?;
     // 人工核实后的订单成功入账：关闭待核实工单（旧版 fee_calculation_repo
     // 的 pending→resolved 同事务推进）。
-    sqlx::query(
-        "UPDATE `manual_fee_review` SET `status` = ?, `resolved_at` = UTC_TIMESTAMP(3) \
-         WHERE `charge_order_id` = ? AND `status` = ?",
-    )
-    .bind(ManualFeeReviewStatus::Resolved)
-    .bind(charge_order_id as i64)
-    .bind(ManualFeeReviewStatus::Pending)
-    .execute(&mut *c)
-    .await?;
+    repo::resolve_manual_review_tx(&mut *c, charge_order_id).await?;
     // 账单签发接线：费用入账与账单同一事务落地（旧版生产链路的账单缺口由
     // Missing 补偿循环兜底，此处直接消除缺口；total<=0 时签发内部返回 None 跳过）。
-    crate::bill::issue_bill_in_tx(c, charge_order_id).await?;
+    crate::service::bill::issue_bill_in_tx(c, charge_order_id).await?;
     tx.commit().await?;
     Ok(true)
 }
@@ -388,12 +282,7 @@ pub async fn defer_to_manual_review(
     energy_wh: u64,
     source_json: Option<&str>,
 ) -> anyhow::Result<()> {
-    let order_no: Option<String> =
-        sqlx::query_scalar("SELECT `order_no` FROM `charge_order` WHERE `id` = ?")
-            .bind(charge_order_id as i64)
-            .fetch_optional(pool)
-            .await?;
-    let Some(order_no) = order_no else {
+    let Some(order_no) = repo::order_no_of(pool, charge_order_id).await? else {
         // 订单行缺失（异常清理）：无工单可挂，仅推进任务避免空转。
         return defer_job(pool, charge_order_id, JobStatus::ManualReview, reason).await;
     };
@@ -401,34 +290,19 @@ pub async fn defer_to_manual_review(
     let month = chrono::Utc::now().format("%Y-%m").to_string();
     // 项目事务惯例：先 SET 隔离级别再 begin（事务中 SET 会报错）。
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await?;
+    set_read_committed(&mut conn).await?;
     let mut tx = conn.begin().await?;
-    sqlx::query(
-        "INSERT INTO `manual_fee_review` \
-         (`charge_order_id`, `order_no`, `reason`, `energy_wh`, `created_month`, `source_json`) \
-         VALUES (?, ?, ?, ?, ?, CAST(? AS JSON)) \
-         ON DUPLICATE KEY UPDATE `charge_order_id` = `charge_order_id`",
+    repo::upsert_manual_review_tx(
+        &mut tx,
+        charge_order_id,
+        &order_no,
+        reason,
+        energy_wh,
+        &month,
+        source_json,
     )
-    .bind(charge_order_id as i64)
-    .bind(&order_no)
-    .bind(reason)
-    .bind(energy_wh as i64)
-    .bind(month.to_string())
-    .bind(source_json)
-    .execute(&mut *tx)
     .await?;
-    sqlx::query(
-        "UPDATE `charge_billing_job` SET `status` = ?, `last_error` = ? \
-         WHERE `charge_order_id` = ? AND `status` = ?",
-    )
-    .bind(JobStatus::ManualReview)
-    .bind(reason)
-    .bind(charge_order_id as i64)
-    .bind(JobStatus::Pending)
-    .execute(&mut *tx)
-    .await?;
+    repo::defer_job_status_tx(&mut tx, JobStatus::ManualReview, reason, charge_order_id).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -442,25 +316,9 @@ pub async fn defer_job(
     error: &str,
 ) -> anyhow::Result<()> {
     if status == JobStatus::Pending {
-        // 退避：attempts+1，下次尝试按次数指数延迟（1<<n 分钟，上限 60）。
-        sqlx::query(
-            "UPDATE `charge_billing_job` SET `attempts` = `attempts` + 1, \
-             `next_attempt_at` = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL LEAST(POW(2, `attempts`), 60) MINUTE), \
-             `last_error` = ? WHERE `charge_order_id` = ? AND `status` = ?",
-        )
-        .bind(error)
-        .bind(charge_order_id as i64)
-        .bind(JobStatus::Pending)
-        .execute(pool)
-        .await?;
+        repo::backoff_job(pool, error, charge_order_id).await?;
     } else {
-        sqlx::query("UPDATE `charge_billing_job` SET `status` = ?, `last_error` = ? WHERE `charge_order_id` = ? AND `status` = ?")
-            .bind(status)
-            .bind(error)
-            .bind(charge_order_id as i64)
-            .bind(JobStatus::Pending)
-            .execute(pool)
-            .await?;
+        repo::defer_job_status(pool, status, error, charge_order_id).await?;
     }
     Ok(())
 }

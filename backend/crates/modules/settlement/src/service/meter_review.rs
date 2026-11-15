@@ -2,8 +2,9 @@
 //! 计费任务 manual_review 后的两条人工出口：
 //! 1. 修正计量分段（双人审核，批准后重排队计费重算）；
 //! 2. 直接登记最终金额（合计不超过套餐价格，重排队按人工金额入账）。
-//!    权限与审计由 HTTP 层负责；首审人实时权限由调用方传入。
+//!    权限与审计由 HTTP 层负责；首审人实时权限由调用方传入。SQL 在 repo/meter_review.rs。
 
+use crate::repo::{billing as billing_repo, meter_review as repo, set_read_committed};
 use chargepilot_domain::charging::actual::price_actual;
 use chargepilot_domain::charging::actual::{ActualMeter, EndMeter, Rule};
 use chargepilot_domain::settlement::{BillingJobStatus, MeterReviewStatus};
@@ -49,76 +50,14 @@ pub struct ManualFeeReviewRow {
     pub reviews: Vec<MeterReviewRow>,
 }
 
-/// 原始行抓取（json 列以字符串读出后解析，避免列类型映射歧义）。
-#[derive(Debug, sqlx::FromRow)]
-struct ManualFeeReviewRawRow {
-    charge_order_id: u64,
-    order_no: String,
-    reason: String,
-    status: String,
-    source_json: Option<String>,
-    created_at: String,
-}
-
-/// 核实记录原始行（original/corrected 为 json 文本，转出时解析为对象）。
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct MeterReviewRawRow {
-    id: u64,
-    request_id: String,
-    charge_order_id: u64,
-    original_json: String,
-    corrected_json: String,
-    reason: String,
-    status: MeterReviewStatus,
-    first_reviewer_id: u64,
-    second_reviewer_id: Option<u64>,
-    reject_reason: Option<String>,
-    created_at: String,
-    reviewed_at: Option<String>,
-}
-
-impl MeterReviewRawRow {
-    /// 转成输出行；json 文本解析失败按 null 处理，不阻断整页。
-    fn into_row(self) -> MeterReviewRow {
-        MeterReviewRow {
-            id: self.id,
-            request_id: self.request_id,
-            charge_order_id: self.charge_order_id,
-            original: serde_json::from_str(&self.original_json).unwrap_or(serde_json::Value::Null),
-            corrected: serde_json::from_str(&self.corrected_json)
-                .unwrap_or(serde_json::Value::Null),
-            reason: self.reason,
-            status: self.status,
-            first_reviewer_id: self.first_reviewer_id,
-            second_reviewer_id: self.second_reviewer_id,
-            reject_reason: self.reject_reason,
-            created_at: self.created_at,
-            reviewed_at: self.reviewed_at,
-        }
-    }
-}
-
-/// 核实记录行的统一投影列（json 列 CAST AS CHAR，时间对齐旧版 RFC3339 形状）。
-const METER_REVIEW_COLUMNS: &str = "`id`, CAST(`request_id` AS CHAR) AS `request_id`, \
-     `charge_order_id`, CAST(`original_json` AS CHAR) AS `original_json`, \
-     CAST(`corrected_json` AS CHAR) AS `corrected_json`, \
-     CAST(`reason` AS CHAR) AS `reason`, CAST(`status` AS CHAR) AS `status`, \
-     `first_reviewer_id`, `second_reviewer_id`, \
-     CAST(`reject_reason` AS CHAR) AS `reject_reason`, \
-     DATE_FORMAT(`created_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `created_at`, \
-     DATE_FORMAT(`reviewed_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `reviewed_at`";
-
 /// 读取单条核实记录（旧版 propose HTTP 返回完整行的查询来源）。
 pub async fn get_meter_review_row(
     db: &MySqlPool,
     id: u64,
 ) -> Result<Option<MeterReviewRow>, anyhow::Error> {
-    let sql = format!("SELECT {METER_REVIEW_COLUMNS} FROM `charge_meter_review` WHERE `id` = ?");
-    let row: Option<MeterReviewRawRow> = sqlx::query_as(&sql)
-        .bind(id as i64)
-        .fetch_optional(db)
-        .await?;
-    Ok(row.map(MeterReviewRawRow::into_row))
+    Ok(repo::get_meter_review_row(db, id)
+        .await?
+        .map(repo::MeterReviewRawRow::into_row))
 }
 
 /// 按状态、订单号关键词分页倒序读取人工定价工单，并回填每单全部核实记录
@@ -131,41 +70,10 @@ pub async fn list_manual_fee_reviews(
     page: u32,
     size: u32,
 ) -> Result<(Vec<ManualFeeReviewRow>, i64), anyhow::Error> {
-    let mut where_clauses: Vec<String> = Vec::new();
-    let mut binds: Vec<String> = Vec::new();
-    if !status.is_empty() {
-        where_clauses.push("`status` = ?".to_string());
-        binds.push(status.to_string());
-    }
-    if !keyword.is_empty() {
-        where_clauses.push("`order_no` LIKE ? ESCAPE '!'".to_string());
-        binds.push(like_pattern(keyword));
-    }
-    let where_sql = if where_clauses.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", where_clauses.join(" AND "))
-    };
-    let count_sql = format!("SELECT COUNT(*) FROM `manual_fee_review` {where_sql}");
-    let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql);
-    for b in &binds {
-        count_query = count_query.bind(b);
-    }
-    let total = count_query.fetch_one(db).await?;
+    let (where_sql, binds) = repo::manual_review_filters(status, keyword);
+    let total = repo::manual_review_count(db, &where_sql, &binds).await?;
     let offset = (page.max(1) as i64 - 1) * size.max(1) as i64;
-    let list_sql = format!(
-        "SELECT `charge_order_id`, CAST(`order_no` AS CHAR) AS `order_no`, \
-                CAST(`reason` AS CHAR) AS `reason`, CAST(`status` AS CHAR) AS `status`, \
-                CAST(`source_json` AS CHAR) AS `source_json`, \
-                DATE_FORMAT(`created_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `created_at` \
-         FROM `manual_fee_review` {where_sql} ORDER BY `id` DESC LIMIT ? OFFSET ?"
-    );
-    let mut list_query = sqlx::query_as::<_, ManualFeeReviewRawRow>(&list_sql);
-    for b in &binds {
-        list_query = list_query.bind(b);
-    }
-    list_query = list_query.bind(size.max(1)).bind(offset);
-    let raws = list_query.fetch_all(db).await?;
+    let raws = repo::manual_review_rows(db, &where_sql, &binds, offset, size.max(1) as i64).await?;
     // 本页订单 ID 批量取核实记录（空页不查询），按订单分组、ID 倒序。
     let mut rows: Vec<ManualFeeReviewRow> = raws
         .into_iter()
@@ -184,19 +92,10 @@ pub async fn list_manual_fee_reviews(
         .collect();
     let order_ids: Vec<u64> = rows.iter().map(|r| r.charge_order_id).collect();
     if !order_ids.is_empty() {
-        let mut qb = sqlx::QueryBuilder::new(format!(
-            "SELECT {METER_REVIEW_COLUMNS} FROM `charge_meter_review` \
-             WHERE `charge_order_id` IN ("
-        ));
-        let mut separated = qb.separated(", ");
-        for oid in &order_ids {
-            separated.push_bind(*oid as i64);
-        }
-        qb.push(") ORDER BY `id` DESC");
-        let reviews: Vec<MeterReviewRawRow> = qb.build_query_as().fetch_all(db).await?;
+        let reviews = repo::reviews_for_orders(db, &order_ids).await?;
         let mut grouped: std::collections::HashMap<u64, Vec<MeterReviewRow>> =
             std::collections::HashMap::new();
-        for review in reviews.into_iter().map(MeterReviewRawRow::into_row) {
+        for review in reviews.into_iter().map(repo::MeterReviewRawRow::into_row) {
             grouped
                 .entry(review.charge_order_id)
                 .or_default()
@@ -219,17 +118,6 @@ fn decimalize_user_id(mut v: serde_json::Value) -> serde_json::Value {
     v
 }
 
-/// 关键词 LIKE 转义（旧版 dbutil.LikePattern：转义 ! % _，用 ! 作逃逸符）。
-fn like_pattern(value: &str) -> String {
-    format!(
-        "%{}%",
-        value
-            .replace('!', "!!")
-            .replace('%', "!%")
-            .replace('_', "!_")
-    )
-}
-
 /// 修正提案的计量分段输入（有单位与分段约束，不补造计量）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MeterSegmentInput {
@@ -240,25 +128,13 @@ pub struct MeterSegmentInput {
 }
 
 /// 原始计费源：快照 + 结束计量（旧版 readOriginalBillingSource 的对应部分）。
+/// 快照与计量读取复用计费批次的 repo 原语。
 async fn read_billing_source(
     c: &mut sqlx::MySqlConnection,
     charge_order_id: u64,
 ) -> Result<(PricingSnapshot, EndMeter), ReviewError> {
-    let snapshot_json: Option<String> = sqlx::query_scalar(
-        "SELECT CAST(`pricing_snapshot` AS CHAR) FROM `charge_order_pricing` \
-         WHERE `charge_order_id` = ?",
-    )
-    .bind(charge_order_id as i64)
-    .fetch_optional(&mut *c)
-    .await
-    .map_err(ReviewError::from)?;
-    let meter_json: Option<String> = sqlx::query_scalar(
-        "SELECT CAST(`meter_json` AS CHAR) FROM `charge_end_receipt` WHERE `charge_order_id` = ?",
-    )
-    .bind(charge_order_id as i64)
-    .fetch_optional(&mut *c)
-    .await
-    .map_err(ReviewError::from)?;
+    let snapshot_json = billing_repo::order_snapshot_tx(c, charge_order_id).await?;
+    let meter_json = billing_repo::end_meter_json_tx(c, charge_order_id).await?;
     let (Some(snapshot_json), Some(meter_json)) = (snapshot_json, meter_json) else {
         return Err(ReviewError::NotFound);
     };
@@ -298,30 +174,16 @@ pub async fn propose_meter_review(
         return Err(ReviewError::Conflict);
     }
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await?;
+    set_read_committed(&mut conn).await?;
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
-    // 锁定计费任务（顺序化人工出口）。
-    let job: Option<BillingJobStatus> = sqlx::query_scalar(
-        "SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ? FOR UPDATE",
-    )
-    .bind(charge_order_id as i64)
-    .fetch_optional(&mut *c)
-    .await?;
-    let Some(job_status) = job else {
+    let Some(job_status) = repo::lock_job_status_tx(&mut *c, charge_order_id).await? else {
         return Err(ReviewError::NotFound);
     };
     // 同 request_id 重放：内容一致复用首次记录。
-    let prior: Option<(u64, u64, String, String)> = sqlx::query_as(
-        "SELECT `id`, `charge_order_id`, `reason`, CAST(`corrected_json` AS CHAR) AS `corrected_json` \
-         FROM `charge_meter_review` WHERE CAST(`request_id` AS CHAR) = ? FOR UPDATE",
-    )
-    .bind(request_id)
-    .fetch_optional(&mut *c)
-    .await?;
-    if let Some((review_id, prior_order, prior_reason, prior_corrected)) = prior {
+    if let Some((review_id, prior_order, prior_reason, prior_corrected)) =
+        repo::find_prior_review_tx(&mut *c, request_id).await?
+    {
         let consistent = prior_order == charge_order_id
             && prior_reason == reason
             && segments_match_json(&prior_corrected, segments);
@@ -335,16 +197,7 @@ pub async fn propose_meter_review(
         return Err(ReviewError::Conflict);
     }
     // 活跃提案（awaiting_second/approved）存在时拒绝。
-    let active: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM `charge_meter_review` \
-         WHERE `charge_order_id` = ? AND `status` IN (?, ?)",
-    )
-    .bind(charge_order_id as i64)
-    .bind(MeterReviewStatus::AwaitingSecond)
-    .bind(MeterReviewStatus::Approved)
-    .fetch_one(&mut *c)
-    .await?;
-    if active != 0 {
+    if repo::active_review_count_tx(&mut *c, charge_order_id).await? != 0 {
         return Err(ReviewError::Conflict);
     }
     // 原始源 + 修正分段的价格校验（不写回快照；批准重排队后由计费批次消费）。
@@ -377,23 +230,17 @@ pub async fn propose_meter_review(
     let corrected_json = serde_json::json!({
         "meter": corrected,
     });
-    sqlx::query(
-        "INSERT INTO `charge_meter_review` (`request_id`, `charge_order_id`, `original_json`, \
-         `corrected_json`, `reason`, `status`, `first_reviewer_id`) \
-         VALUES (?, ?, CAST(? AS JSON), CAST(? AS JSON), ?, ?, ?)",
+    repo::insert_review_tx(
+        &mut *c,
+        request_id,
+        charge_order_id,
+        &original_json.to_string(),
+        &corrected_json.to_string(),
+        reason,
+        actor_id,
     )
-    .bind(request_id)
-    .bind(charge_order_id as i64)
-    .bind(original_json.to_string())
-    .bind(corrected_json.to_string())
-    .bind(reason)
-    .bind(MeterReviewStatus::AwaitingSecond)
-    .bind(actor_id as i64)
-    .execute(&mut *c)
     .await?;
-    let review_id: u64 = sqlx::query_scalar("SELECT LAST_INSERT_ID()")
-        .fetch_one(&mut *c)
-        .await?;
+    let review_id = repo::last_insert_id_tx(&mut *c).await?;
     // 首次提交审计（旧版 AuditChange{Action:"propose", Target:"meter_review", After:in}）。
     if let Some(audit) = audit {
         let after = serde_json::json!({
@@ -441,6 +288,7 @@ fn segments_match_json(corrected_json: &str, segments: &[MeterSegmentInput]) -> 
 /// 批准核对原始源未变且修正可计价，重排队计费（generation+1）；驳回记录依据。
 /// 首次决定时在事务内写审计（重放不写，旧版 Decide 分支语义）。
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)]
 pub async fn review_meter(
     pool: &MySqlPool,
     audit: Option<&AuditView<'_>>,
@@ -452,31 +300,14 @@ pub async fn review_meter(
     first_reviewer_permitted: Option<bool>,
 ) -> Result<(), ReviewError> {
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await?;
+    set_read_committed(&mut conn).await?;
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
-    let job: Option<BillingJobStatus> = sqlx::query_scalar(
-        "SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ? FOR UPDATE",
-    )
-    .bind(charge_order_id as i64)
-    .fetch_optional(&mut *c)
-    .await?;
-    let Some(job_status) = job else {
+    let Some(job_status) = repo::lock_job_status_tx(&mut *c, charge_order_id).await? else {
         return Err(ReviewError::NotFound);
     };
-    // 审前行快照（旧版 FindMeterReview + Before=review 的审计语义）。
-    let before_sql = format!(
-        "SELECT {METER_REVIEW_COLUMNS} FROM `charge_meter_review` \
-         WHERE `id` = ? AND `charge_order_id` = ? FOR UPDATE"
-    );
-    let before_row: Option<MeterReviewRawRow> = sqlx::query_as(&before_sql)
-        .bind(review_id as i64)
-        .bind(charge_order_id as i64)
-        .fetch_optional(&mut *c)
-        .await?;
-    let Some(before_raw) = before_row else {
+    let Some(before_raw) = repo::lock_review_row_tx(&mut *c, review_id, charge_order_id).await?
+    else {
         return Err(ReviewError::NotFound);
     };
     let corrected_json = before_raw.corrected_json.clone();
@@ -547,38 +378,14 @@ pub async fn review_meter(
         }
     }
     if approve {
-        sqlx::query(
-            "UPDATE `charge_meter_review` SET `status` = ?, `second_reviewer_id` = ?, \
-             `reviewed_at` = UTC_TIMESTAMP(3) WHERE `id` = ?",
-        )
-        .bind(MeterReviewStatus::Approved)
-        .bind(actor_id as i64)
-        .bind(review_id as i64)
-        .execute(&mut *c)
-        .await?;
+        repo::approve_review_tx(&mut *c, review_id, actor_id).await?;
         // 重排队计费：修正分段参与重算（generation 递增防旧派发覆盖）。
-        sqlx::query(
-            "UPDATE `charge_billing_job` SET `status` = ?, `generation` = `generation` + 1, \
-             `next_attempt_at` = UTC_TIMESTAMP(3), `last_error` = NULL WHERE `charge_order_id` = ?",
-        )
-        .bind(BillingJobStatus::Pending)
-        .bind(charge_order_id as i64)
-        .execute(&mut *c)
-        .await?;
+        repo::requeue_job_tx(&mut *c, charge_order_id).await?;
     } else {
         if reason.trim().is_empty() {
             return Err(ReviewError::Conflict);
         }
-        sqlx::query(
-            "UPDATE `charge_meter_review` SET `status` = ?, `second_reviewer_id` = ?, \
-             `reviewed_at` = UTC_TIMESTAMP(3), `reject_reason` = ? WHERE `id` = ?",
-        )
-        .bind(MeterReviewStatus::Rejected)
-        .bind(actor_id as i64)
-        .bind(reason)
-        .bind(review_id as i64)
-        .execute(&mut *c)
-        .await?;
+        repo::reject_review_tx(&mut *c, review_id, actor_id, reason).await?;
     }
     // 首次决定审计（旧版 AuditChange{Action:"decide", Target:"meter_review", Before:review, After:in}）。
     if let Some(audit) = audit {
@@ -631,31 +438,15 @@ pub async fn resolve_manual_amount(
         return Err(ReviewError::Conflict);
     }
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await?;
+    set_read_committed(&mut conn).await?;
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
-    let job: Option<BillingJobStatus> = sqlx::query_scalar(
-        "SELECT `status` FROM `charge_billing_job` WHERE `charge_order_id` = ? FOR UPDATE",
-    )
-    .bind(charge_order_id as i64)
-    .fetch_optional(&mut *c)
-    .await?;
-    let Some(job_status) = job else {
+    let Some(job_status) = repo::lock_job_status_tx(&mut *c, charge_order_id).await? else {
         return Err(ReviewError::NotFound);
     };
-    let prior: Option<(u64, String, i64, i64, String)> = sqlx::query_as(
-        "SELECT `charge_order_id`, CAST(`request_id` AS CHAR) AS `request_id`, \
-                `electric_cents`, `service_cents`, `reason` \
-         FROM `charge_manual_settlement` \
-         WHERE `charge_order_id` = ? OR `request_id` = ? FOR UPDATE",
-    )
-    .bind(charge_order_id as i64)
-    .bind(request_id)
-    .fetch_optional(&mut *c)
-    .await?;
-    if let Some((p_order, p_request, p_electric, p_service, p_reason)) = prior {
+    if let Some((p_order, p_request, p_electric, p_service, p_reason)) =
+        repo::find_prior_settlement_tx(&mut *c, charge_order_id, request_id).await?
+    {
         if p_order != charge_order_id
             || p_request != request_id
             || p_electric != electric_cents
@@ -671,14 +462,8 @@ pub async fn resolve_manual_amount(
         return Err(ReviewError::Conflict);
     }
     // 合计不超过套餐价格（快照 offer）。
-    let snapshot_json: Option<String> = sqlx::query_scalar(
-        "SELECT CAST(`pricing_snapshot` AS CHAR) FROM `charge_order_pricing` \
-         WHERE `charge_order_id` = ?",
-    )
-    .bind(charge_order_id as i64)
-    .fetch_optional(&mut *c)
-    .await?;
-    let Some(snapshot_json) = snapshot_json else {
+    let Some(snapshot_json) = billing_repo::order_snapshot_tx(&mut *c, charge_order_id).await?
+    else {
         return Err(ReviewError::NotFound);
     };
     let snapshot: PricingSnapshot =
@@ -686,17 +471,15 @@ pub async fn resolve_manual_amount(
     if electric_cents + service_cents > snapshot.offer.price_cents {
         return Err(ReviewError::Conflict);
     }
-    sqlx::query(
-        "INSERT INTO `charge_manual_settlement` (`charge_order_id`, `request_id`, `actor_id`, \
-         `electric_cents`, `service_cents`, `reason`) VALUES (?, ?, ?, ?, ?, ?)",
+    repo::insert_manual_settlement_tx(
+        &mut *c,
+        charge_order_id,
+        request_id,
+        actor_id,
+        electric_cents,
+        service_cents,
+        reason,
     )
-    .bind(charge_order_id as i64)
-    .bind(request_id)
-    .bind(actor_id as i64)
-    .bind(electric_cents)
-    .bind(service_cents)
-    .bind(reason)
-    .execute(&mut *c)
     .await?;
     chargepilot_mod_order::append_event_in_tx(
         &mut *c,
@@ -709,14 +492,7 @@ pub async fn resolve_manual_amount(
     )
     .await
     .map_err(|e| ReviewError::Storage(e.to_string()))?;
-    sqlx::query(
-        "UPDATE `charge_billing_job` SET `status` = ?, `generation` = `generation` + 1, \
-         `last_error` = NULL, `next_attempt_at` = UTC_TIMESTAMP(3) WHERE `charge_order_id` = ?",
-    )
-    .bind(BillingJobStatus::Pending)
-    .bind(charge_order_id as i64)
-    .execute(&mut *c)
-    .await?;
+    repo::requeue_job_tx(&mut *c, charge_order_id).await?;
     // 首次登记审计（旧版 AuditChange{Action:"resolve_amount", Target:"manual_settlement", After:in}）。
     if let Some(audit) = audit {
         let after = serde_json::json!({

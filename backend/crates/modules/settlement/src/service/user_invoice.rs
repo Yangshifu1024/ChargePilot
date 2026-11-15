@@ -2,10 +2,12 @@
 //! 的单体对应物）。开票额来自费用回执，客户端只提交票种及抬头等内容，不决定
 //! 金额；一单只允许一份申请（uk_invoice_active），同号同内容重放幂等复用。
 //! 可开票状态与计费任务共用同一判定：completed / refunding / refunded。
+//! SQL 在 repo/user_invoice.rs。
 
 use crate::error::UserInvoiceError;
+use crate::repo::{set_read_committed, user_invoice as repo};
 use chargepilot_domain::money::BizType;
-use chargepilot_domain::settlement::{InvoiceRequestReviewStatus, InvoiceType};
+use chargepilot_domain::settlement::InvoiceType;
 use serde_json::json;
 use sqlx::{Acquire, MySqlPool};
 
@@ -63,6 +65,7 @@ fn is_uuid(s: &str) -> bool {
 
 /// 核对本人订单和结算回执后申请发票。校验在服务层完整重做（旧版 Create
 /// 同样全量校验 ErrInvoiceInput），HTTP 层的前置校验只负责提前给出更细文案。
+#[allow(clippy::too_many_lines)]
 pub async fn apply_invoice(
     pool: &MySqlPool,
     user_id: u64,
@@ -85,31 +88,21 @@ pub async fn apply_invoice(
         return Err(UserInvoiceError::InvalidInput);
     }
     // 本人订单：订单号 + 用户双条件（旧版 FindInvoiceableOrder）。
-    let order: Option<(u64, String)> = sqlx::query_as(
-        "SELECT `id`, CAST(`status` AS CHAR) FROM `charge_order` \
-         WHERE `order_no` = ? AND `user_id` = ? AND `deleted_at` IS NULL",
-    )
-    .bind(&input.order_no)
-    .bind(user_id as i64)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| UserInvoiceError::OrderLookup(e.to_string()))?;
-    let Some((order_id, status)) = order else {
+    let Some((order_id, status)) = repo::find_user_order(pool, &input.order_no, user_id)
+        .await
+        .map_err(|e| UserInvoiceError::OrderLookup(e.to_string()))?
+    else {
         return Err(UserInvoiceError::OrderNotFound);
     };
     if !invoiceable_status(&status) {
         return Err(UserInvoiceError::Unfinished);
     }
     // 费用回执：金额不由客户端决定（旧版 LoadInvoiceFee + Fees）。
-    let total: Option<(i64,)> = sqlx::query_as(
-        "SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(`result_json`, '$.total_cents')) AS SIGNED) \
-         FROM `charge_fee_receipt` WHERE `charge_order_id` = ?",
-    )
-    .bind(order_id as i64)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| UserInvoiceError::Storage(e.to_string()))?;
-    let Some((total,)) = total else {
+    let Some((total,)) = repo::fee_total(pool, order_id)
+        .await
+        .map_err(|e| UserInvoiceError::Storage(e.to_string()))
+        .map(|opt: Option<i64>| opt.map(|t| (t,)))?
+    else {
         return Err(UserInvoiceError::Unbilled);
     };
     if total <= 0 {
@@ -119,53 +112,22 @@ pub async fn apply_invoice(
 
     // 项目事务惯例：先 SET 隔离级别再 begin（事务中 SET 会报错）。
     let mut conn = pool.acquire().await.map_err(storage_err)?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await
-        .map_err(storage_err)?;
+    set_read_committed(&mut conn).await.map_err(storage_err)?;
     let mut tx = conn.begin().await.map_err(storage_err)?;
     let c = tx.acquire().await.map_err(storage_err)?;
-    // 锁定本人订单并复查状态（旧版 LockInvoiceSourceInTx：防同单不同请求号
-    // 并发重复申请；归属不符按读取故障处理，正常请求不会触发）。
-    let locked: Option<(String,)> = sqlx::query_as(
-        "SELECT CAST(`status` AS CHAR) FROM `charge_order` \
-         WHERE `id` = ? AND `user_id` = ? FOR UPDATE",
-    )
-    .bind(order_id as i64)
-    .bind(user_id as i64)
-    .fetch_optional(&mut *c)
-    .await
-    .map_err(storage_err)?;
-    let Some((locked_status,)) = locked else {
+    let Some(locked_status) = repo::lock_order_status_tx(&mut *c, order_id, user_id)
+        .await
+        .map_err(storage_err)?
+    else {
         return Err(UserInvoiceError::OrderLookup("订单锁定读取失败".into()));
     };
     if !invoiceable_status(&locked_status) {
         return Err(UserInvoiceError::Unfinished);
     }
     // 幂等重放：同发票号必须复用相同身份和内容（旧版 ApplyInvoice 前半）。
-    // 发票幂等投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
-    type InvoiceExistingRow = (
-        u64,
-        String,
-        BizType,
-        String,
-        i64,
-        InvoiceType,
-        String,
-        String,
-        String,
-    );
-    let existing: Option<InvoiceExistingRow> = sqlx::query_as(
-        "SELECT `id`, CAST(`user_id` AS CHAR), `biz_type`, \
-             CAST(`biz_id` AS CHAR), `total_cents`, CAST(`invoice_type` AS CHAR), \
-             CAST(`title` AS CHAR), COALESCE(CAST(`tax_no` AS CHAR), ''), \
-             COALESCE(CAST(`email` AS CHAR), '') \
-             FROM `invoice_request` WHERE `invoice_no` = ?",
-    )
-    .bind(&invoice_no)
-    .fetch_optional(&mut *c)
-    .await
-    .map_err(storage_err)?;
+    let existing = repo::find_existing_invoice_tx(&mut *c, &invoice_no)
+        .await
+        .map_err(storage_err)?;
     let id = match existing {
         Some((
             id,
@@ -193,45 +155,29 @@ pub async fn apply_invoice(
         }
         None => {
             // 一单一申请：已有未删除申请即冲突（旧版 Count 分支）。
-            let duplicate: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM `invoice_request` \
-                 WHERE `biz_type` = ? AND `biz_id` = ? AND `deleted_at` IS NULL",
-            )
-            .bind(BizType::Charge)
-            .bind(order_id as i64)
-            .fetch_one(&mut *c)
-            .await
-            .map_err(storage_err)?;
+            let duplicate = repo::active_invoice_count_tx(&mut *c, order_id)
+                .await
+                .map_err(storage_err)?;
             if duplicate > 0 {
                 return Err(UserInvoiceError::Duplicate);
             }
-            let result = sqlx::query(
-                "INSERT INTO `invoice_request` \
-                 (`invoice_no`, `user_id`, `biz_type`, `biz_id`, `total_cents`, \
-                  `invoice_type`, `title`, `tax_no`, `email`, `review_status`) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            let result = repo::insert_invoice_tx(
+                &mut *c,
+                &invoice_no,
+                user_id,
+                order_id,
+                total,
+                invoice_type_value,
+                title,
+                input.tax_no.trim(),
+                input.email.trim(),
             )
-            .bind(&invoice_no)
-            .bind(user_id as i64)
-            .bind(BizType::Charge)
-            .bind(order_id as i64)
-            .bind(total)
-            .bind(invoice_type_value)
-            .bind(title)
-            .bind(input.tax_no.trim())
-            .bind(input.email.trim())
-            .bind(InvoiceRequestReviewStatus::Pending)
-            .execute(&mut *c)
             .await;
             // 并发撞 uk_invoice_active（biz_type, biz_id）与计数兜底同义。
             match result {
-                Ok(_) => {
-                    let id: u64 = sqlx::query_scalar("SELECT LAST_INSERT_ID()")
-                        .fetch_one(&mut *c)
-                        .await
-                        .map_err(storage_err)?;
-                    id
-                }
+                Ok(_) => repo::last_insert_id_tx(&mut *c)
+                    .await
+                    .map_err(storage_err)?,
                 Err(e) => return Err(duplicate_or_storage(e)),
             }
         }
@@ -253,43 +199,13 @@ pub async fn list_user_invoices(
     page: u32,
     page_size: u32,
 ) -> anyhow::Result<(Vec<serde_json::Value>, i64)> {
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM `invoice_request` WHERE `user_id` = ? AND `deleted_at` IS NULL",
+    let total = repo::user_invoice_count(pool, user_id).await?;
+    let rows = repo::user_invoice_rows(
+        pool,
+        user_id,
+        (page.max(1) as i64 - 1) * page_size as i64,
+        page_size as i64,
     )
-    .bind(user_id as i64)
-    .fetch_one(pool)
-    .await?;
-    // 发票列表投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
-    type InvoiceListRow = (
-        String,         // CAST(id AS CHAR)
-        String,         // invoice_no
-        String,         // biz_type
-        String,         // biz_id CHAR
-        i64,            // total_cents
-        String,         // invoice_type
-        String,         // title
-        Option<String>, // tax_no
-        Option<String>, // email
-        String,         // review_status
-        Option<String>, // reject_reason
-        Option<String>, // invoice_url
-        String,         // created_at
-    );
-    let rows: Vec<InvoiceListRow> = sqlx::query_as(
-        "SELECT CAST(`id` AS CHAR), CAST(`invoice_no` AS CHAR), CAST(`biz_type` AS CHAR), \
-         CAST(`biz_id` AS CHAR), `total_cents`, CAST(`invoice_type` AS CHAR), \
-         CAST(`title` AS CHAR), CAST(`tax_no` AS CHAR), CAST(`email` AS CHAR), \
-         CAST(`review_status` AS CHAR), CAST(`reject_reason` AS CHAR), \
-         CAST(`invoice_url` AS CHAR), \
-         DATE_FORMAT(`created_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') \
-         FROM `invoice_request` \
-         WHERE `user_id` = ? AND `deleted_at` IS NULL \
-         ORDER BY `id` DESC LIMIT ?, ?",
-    )
-    .bind(user_id as i64)
-    .bind((page.max(1) as i64 - 1) * page_size as i64)
-    .bind(page_size as i64)
-    .fetch_all(pool)
     .await?;
     let items = rows
         .into_iter()

@@ -5,18 +5,20 @@
 //! 等（docs/design/schema.md）。计费入口复用 domain 的 settle_session（批 1
 //! 差分验证）；退款执行器在 simulation 通道直接成功，真实渠道随批 6 接入。
 //! 锁序：计费为 订单→支付单→退款在途；执行器为 退款记录→支付单→（钱包）。
+//!
+//! 组织（蓝图第五章）：service/ 业务用例，repo/ 表访问；既有顶级模块路径
+//! （bill/billing/recorder 等）经 re-export 保持。
 
 pub use error::{InvoiceAdminError, RefundAdminError, ReviewError, UserInvoiceError};
 
-pub mod bill;
-pub mod billing;
 pub mod error;
-pub mod invoice_admin;
-pub mod meter_review;
-pub mod recorder;
-pub mod refund_admin;
-pub mod refund_executor;
-pub mod user_invoice;
+pub mod repo;
+pub mod service;
+
+pub use repo::recorder;
+pub use service::{
+    bill, billing, invoice_admin, meter_review, refund_admin, refund_executor, user_invoice,
+};
 
 /// 审计上下文视图：由 HTTP 层传入，写事务内审计时使用（旧版 ops.AuditContext）。
 /// 模块内函数以 `Option<&AuditView>` 接收；None 表示调用方不写审计（模块级测试）。

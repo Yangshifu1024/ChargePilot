@@ -1,54 +1,17 @@
 //! 人工退款：登记、双人审核与重试（旧版 refund_review_repo.go + refund.go 的
 //! 资金核心）。权限校验与审计由 HTTP 层负责，本模块只做资金语义：
 //! 锁序 支付 → 退款；审核通过后转 automatic 由退款执行器接手。
-//! 已结束充电必须先有费用回执，不能抢在计费之前退款。
+//! 已结束充电必须先有费用回执，不能抢在计费之前退款。SQL 在 repo/refund_admin.rs。
 
-use chargepilot_domain::money::{
-    BizType, ExecutionPolicy, PayMethod, PaymentOrderStatus, RefundStatus,
-};
+use crate::repo::{refund_admin as repo, set_read_committed};
+use chargepilot_domain::money::{ExecutionPolicy, PayMethod, PaymentOrderStatus, RefundStatus};
 use chargepilot_domain::order::ChargeOrderStatus;
-use serde::Serialize;
 use sqlx::{Acquire, MySqlPool};
 
 use crate::AuditView;
 use crate::error::RefundAdminError;
 
-/// 退款列表行（旧版 GORM map 投影定形：refund_record 全列 + refund_review 右表列；
-/// 有审核记录时 created_at 取审核记录创建时间，与旧版右表覆盖行为一致）。
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
-pub struct RefundAdminRow {
-    pub id: u64,
-    pub refund_no: String,
-    pub payment_order_id: u64,
-    pub user_id: u64,
-    pub biz_type: String,
-    pub biz_id: u64,
-    pub refund_cents: i64,
-    pub reason: Option<String>,
-    pub status: String,
-    pub retry_count: u32,
-    pub wechat_refund_id: Option<String>,
-    pub claimed_by: Option<u64>,
-    pub claimed_at: Option<String>,
-    pub completed_at: Option<String>,
-    pub failure_reason: Option<String>,
-    pub created_month: String,
-    pub created_at: String,
-    pub updated_at: String,
-    pub deleted_at: Option<String>,
-    pub deleted_by: Option<u64>,
-    pub execution_policy: String,
-    pub next_attempt_at: String,
-    /// 以下为 refund_review 列（无审核记录时全为 null）。
-    pub refund_record_id: Option<u64>,
-    /// 首审快照原文（旧版输出为 JSON 文本字符串，不内嵌对象）。
-    pub snapshot_json: Option<String>,
-    pub first_signer: Option<u64>,
-    pub first_comment: Option<String>,
-    pub second_signer: Option<u64>,
-    pub second_comment: Option<String>,
-    pub approved_at: Option<String>,
-}
+pub use crate::repo::refund_admin::RefundAdminRow;
 
 /// 分页倒序读取未删除退款及最近人工复核（旧版 ListRefunds）。
 /// status / refund_no 为空表示不筛选；status 由调用方按白名单校验。
@@ -59,60 +22,10 @@ pub async fn list_refunds(
     page: u32,
     size: u32,
 ) -> Result<(Vec<RefundAdminRow>, i64), anyhow::Error> {
-    let mut where_clauses: Vec<String> = vec!["r.`deleted_at` IS NULL".to_string()];
-    let mut binds: Vec<String> = Vec::new();
-    if !status.is_empty() {
-        where_clauses.push("CAST(r.`status` AS CHAR) = ?".to_string());
-        binds.push(status.to_string());
-    }
-    if !refund_no.is_empty() {
-        where_clauses.push("CAST(r.`refund_no` AS CHAR) = ?".to_string());
-        binds.push(refund_no.to_string());
-    }
-    let where_sql = where_clauses.join(" AND ");
-    let count_sql = format!(
-        "SELECT COUNT(*) FROM `refund_record` r \
-         LEFT JOIN `refund_review` v ON v.`refund_record_id` = r.`id` WHERE {where_sql}"
-    );
-    let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql);
-    for b in &binds {
-        count_query = count_query.bind(b);
-    }
-    let total = count_query.fetch_one(db).await?;
+    let (where_sql, binds) = repo::refund_filters(status, refund_no);
+    let total = repo::refund_count(db, &where_sql, &binds).await?;
     let offset = (page.max(1) as i64 - 1) * size.max(1) as i64;
-    let list_sql = format!(
-        "SELECT r.`id`, CAST(r.`refund_no` AS CHAR) AS `refund_no`, \
-                r.`payment_order_id`, r.`user_id`, \
-                CAST(r.`biz_type` AS CHAR) AS `biz_type`, r.`biz_id`, \
-                r.`refund_cents`, CAST(r.`reason` AS CHAR) AS `reason`, \
-                CAST(r.`status` AS CHAR) AS `status`, r.`retry_count`, \
-                CAST(r.`wechat_refund_id` AS CHAR) AS `wechat_refund_id`, \
-                r.`claimed_by`, \
-                DATE_FORMAT(r.`claimed_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `claimed_at`, \
-                DATE_FORMAT(r.`completed_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `completed_at`, \
-                CAST(r.`failure_reason` AS CHAR) AS `failure_reason`, \
-                DATE_FORMAT(r.`created_month`, '%Y-%m-%dT00:00:00+00:00') AS `created_month`, \
-                DATE_FORMAT(COALESCE(v.`created_at`, r.`created_at`), '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `created_at`, \
-                DATE_FORMAT(r.`updated_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `updated_at`, \
-                DATE_FORMAT(r.`deleted_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `deleted_at`, \
-                r.`deleted_by`, \
-                CAST(r.`execution_policy` AS CHAR) AS `execution_policy`, \
-                DATE_FORMAT(r.`next_attempt_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `next_attempt_at`, \
-                v.`refund_record_id`, \
-                CAST(v.`snapshot_json` AS CHAR) AS `snapshot_json`, \
-                v.`first_signer`, CAST(v.`first_comment` AS CHAR) AS `first_comment`, \
-                v.`second_signer`, CAST(v.`second_comment` AS CHAR) AS `second_comment`, \
-                DATE_FORMAT(v.`approved_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `approved_at` \
-         FROM `refund_record` r \
-         LEFT JOIN `refund_review` v ON v.`refund_record_id` = r.`id` \
-         WHERE {where_sql} ORDER BY r.`id` DESC LIMIT ? OFFSET ?"
-    );
-    let mut list_query = sqlx::query_as::<_, RefundAdminRow>(&list_sql);
-    for b in &binds {
-        list_query = list_query.bind(b);
-    }
-    list_query = list_query.bind(size.max(1)).bind(offset);
-    let rows = list_query.fetch_all(db).await?;
+    let rows = repo::refund_rows(db, &where_sql, &binds, offset, size.max(1) as i64).await?;
     Ok((rows, total))
 }
 
@@ -127,6 +40,7 @@ fn manual_refund_no(request_id: &str) -> String {
 /// 登记人工退款；同 request_id 同内容重放返回首次退款号（created=false），
 /// 内容不同返回冲突。金额不得超过可退余额；已结束充电须已有费用回执。
 /// 首次登记时在事务内写审计（重放不写，旧版 created 分支语义）。
+#[allow(clippy::too_many_lines)]
 pub async fn request_manual_refund(
     pool: &MySqlPool,
     audit: Option<&AuditView<'_>>,
@@ -147,42 +61,25 @@ pub async fn request_manual_refund(
     .to_string();
 
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await?;
+    set_read_committed(&mut conn).await?;
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
 
     // 订单 + 支付锁（支付 → 退款锁序）。
-    let order: Option<(u64, u64, ChargeOrderStatus, i64)> = sqlx::query_as(
-        "SELECT `payment_order_id`, `user_id`, `status`, `started_at` IS NOT NULL \
-         FROM `charge_order` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
-    )
-    .bind(order_id as i64)
-    .fetch_optional(&mut *c)
-    .await?;
-    let Some((payment_order_id, order_user_id, order_status, has_started)) = order else {
+    let Some((payment_order_id, order_user_id, order_status, has_started)) =
+        repo::lock_refund_order_tx(&mut *c, order_id).await?
+    else {
         return Err(RefundAdminError::NotFound);
     };
-    let payment: Option<(u64, i64, i64, PaymentOrderStatus, PayMethod)> = sqlx::query_as(
-        "SELECT `id`, `paid_cents`, `refunded_cents`, `status`, `pay_method` \
-         FROM `payment_order` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
-    )
-    .bind(payment_order_id as i64)
-    .fetch_optional(&mut *c)
-    .await?;
-    let Some((pay_id, paid_cents, refunded_cents, pay_status, pay_method)) = payment else {
+    let Some((pay_id, paid_cents, refunded_cents, pay_status, pay_method)) =
+        repo::lock_pay_facts_tx(&mut *c, payment_order_id).await?
+    else {
         return Err(RefundAdminError::NotFound);
     };
     // 锁定读请求记录：重放比对首次快照（支付行锁不刷新旧快照）。
-    let prior: Option<(String, String)> = sqlx::query_as(
-        "SELECT CAST(`payload_json` AS CHAR) AS `payload_json`, CAST(`refund_no` AS CHAR) AS `refund_no` \
-         FROM `manual_refund_request` WHERE CAST(`request_id` AS CHAR) = ? FOR UPDATE",
-    )
-    .bind(request_id)
-    .fetch_optional(&mut *c)
-    .await?;
-    if let Some((prior_payload, prior_no)) = prior {
+    if let Some((prior_payload, prior_no)) =
+        repo::lock_manual_request_tx(&mut *c, request_id).await?
+    {
         // json 列存储会规范化文本，按语义（Value）比较而非逐字。
         let same = serde_json::from_str::<serde_json::Value>(&prior_payload)
             .ok()
@@ -218,58 +115,28 @@ pub async fn request_manual_refund(
             order_status.as_str(),
             "completed" | "refunding" | "refunded"
         )
+        && !repo::fee_receipt_exists_tx(&mut *c, order_id).await?
     {
-        let receipt: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM `charge_fee_receipt` WHERE `charge_order_id` = ?")
-                .bind(order_id as i64)
-                .fetch_optional(&mut *c)
-                .await?;
-        if receipt.is_none() {
-            return Err(RefundAdminError::NotSettled);
-        }
+        return Err(RefundAdminError::NotSettled);
     }
     // 待退聚合（当前读，纳入锁等待期间提交的预占）。
-    let pending: i64 = sqlx::query_scalar(
-        "SELECT CAST(COALESCE(SUM(`refund_cents`), 0) AS SIGNED) FROM `refund_record` \
-         WHERE `payment_order_id` = ? AND `status` IN (?, ?) AND `deleted_at` IS NULL FOR UPDATE",
-    )
-    .bind(pay_id as i64)
-    .bind(RefundStatus::Pending)
-    .bind(RefundStatus::Processing)
-    .fetch_one(&mut *c)
-    .await?;
+    let pending = repo::pending_refund_sum_tx(&mut *c, pay_id).await?;
     if pending > paid_cents - refunded_cents - amount_cents {
         return Err(RefundAdminError::Conflict);
     }
-    sqlx::query(
-        "INSERT INTO `refund_record` (`refund_no`, `payment_order_id`, `user_id`, `biz_type`, \
-         `biz_id`, `refund_cents`, `reason`, `status`, `execution_policy`, `next_attempt_at`, \
-         `created_month`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(3), ?)",
+    repo::insert_manual_refund_tx(
+        &mut *c,
+        &refund_no,
+        pay_id,
+        order_user_id,
+        order_id,
+        amount_cents,
+        reason,
+        chargepilot_mod_order::month_start_of(chrono::Utc::now()),
     )
-    .bind(&refund_no)
-    .bind(pay_id as i64)
-    .bind(order_user_id as i64)
-    .bind(BizType::Charge)
-    .bind(order_id as i64)
-    .bind(amount_cents)
-    .bind(reason)
-    .bind(RefundStatus::Pending)
-    .bind(ExecutionPolicy::ManualReview)
-    .bind(chargepilot_mod_order::month_start_of(chrono::Utc::now()))
-    .execute(&mut *c)
     .await?;
-    sqlx::query(
-        "INSERT INTO `manual_refund_request` (`request_id`, `payload_json`, `refund_no`) \
-         VALUES (?, ?, ?)",
-    )
-    .bind(request_id)
-    .bind(&payload)
-    .bind(&refund_no)
-    .execute(&mut *c)
-    .await?;
-    let record_id: u64 = sqlx::query_scalar("SELECT LAST_INSERT_ID()")
-        .fetch_one(&mut *c)
-        .await?;
+    repo::insert_manual_request_tx(&mut *c, request_id, &payload, &refund_no).await?;
+    let record_id = repo::last_insert_id_tx(&mut *c).await?;
     // 首次登记审计（旧版 AuditChange{Action:"request", Target:"refund", After:in, RequestID}）。
     if let Some(audit) = audit {
         let after = serde_json::json!({
@@ -312,6 +179,7 @@ pub enum ReviewOutcome {
 /// 首审人权限（由调用方传入实时查询结果）后转 automatic。
 /// 决定落库时在事务内写审计（驳回与双审通过都写，旧版 service 层语义）。
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)]
 pub async fn review_manual_refund(
     pool: &MySqlPool,
     audit: Option<&AuditView<'_>>,
@@ -323,42 +191,23 @@ pub async fn review_manual_refund(
     first_signer_permitted: Option<bool>,
 ) -> Result<ReviewOutcome, RefundAdminError> {
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await?;
+    set_read_committed(&mut conn).await?;
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
 
-    let record: Option<(u64, u64, u64, i64, BizType, u64)> = sqlx::query_as(
-        "SELECT `id`, `payment_order_id`, `user_id`, `refund_cents`, `biz_type`, `biz_id` \
-         FROM `refund_record` WHERE CAST(`refund_no` AS CHAR) = ? AND `deleted_at` IS NULL",
-    )
-    .bind(refund_no)
-    .fetch_optional(&mut *c)
-    .await?;
-    let Some((record_id, payment_order_id, user_id, refund_cents, biz_type, biz_id)) = record
+    let Some((record_id, payment_order_id, user_id, refund_cents, biz_type, biz_id)) =
+        repo::find_refund_record_tx(&mut *c, refund_no).await?
     else {
         return Err(RefundAdminError::NotFound);
     };
     // 支付 → 退款锁序。
-    let payment: Option<(u64, i64, i64, PaymentOrderStatus, PayMethod)> = sqlx::query_as(
-        "SELECT `id`, `paid_cents`, `refunded_cents`, `status`, `pay_method` \
-         FROM `payment_order` WHERE `id` = ? FOR UPDATE",
-    )
-    .bind(payment_order_id as i64)
-    .fetch_optional(&mut *c)
-    .await?;
-    let Some((pay_id, paid_cents, refunded_cents, _pay_status, pay_method)) = payment else {
+    let Some((pay_id, paid_cents, refunded_cents, _pay_status, pay_method)) =
+        repo::lock_pay_facts_tx(&mut *c, payment_order_id).await?
+    else {
         return Err(RefundAdminError::NotFound);
     };
     let _ = pay_id;
-    let state: Option<(RefundStatus, ExecutionPolicy)> = sqlx::query_as(
-        "SELECT `status`, `execution_policy` FROM `refund_record` WHERE `id` = ? FOR UPDATE",
-    )
-    .bind(record_id as i64)
-    .fetch_optional(&mut *c)
-    .await?;
-    let Some((status, policy)) = state else {
+    let Some((status, policy)) = repo::lock_refund_state_tx(&mut *c, record_id).await? else {
         return Err(RefundAdminError::NotFound);
     };
     if status != RefundStatus::Pending || policy != ExecutionPolicy::ManualReview {
@@ -366,21 +215,8 @@ pub async fn review_manual_refund(
     }
     // 驳回：单人即可，写拒绝记录。
     if !approve {
-        sqlx::query(
-            "INSERT INTO `refund_rejection` (`refund_record_id`, `actor_id`, `reason`) \
-             VALUES (?, ?, ?)",
-        )
-        .bind(record_id as i64)
-        .bind(actor_id as i64)
-        .bind(reason)
-        .execute(&mut *c)
-        .await?;
-        sqlx::query("UPDATE `refund_record` SET `status` = ?, `failure_reason` = ? WHERE `id` = ?")
-            .bind(RefundStatus::Rejected)
-            .bind(reason)
-            .bind(record_id as i64)
-            .execute(&mut *c)
-            .await?;
+        repo::insert_rejection_tx(&mut *c, record_id, actor_id, reason).await?;
+        repo::mark_refund_rejected_tx(&mut *c, record_id, reason).await?;
         write_refund_audit(
             &mut tx,
             audit,
@@ -401,14 +237,10 @@ pub async fn review_manual_refund(
         return Err(RefundAdminError::Conflict);
     }
     // 升级前已申请的人工退款同样不能在费用确认前批准。
-    if biz_type == BizType::Charge {
-        let (order_started, order_status): (i64, ChargeOrderStatus) = sqlx::query_as(
-            "SELECT `started_at` IS NOT NULL, `status` FROM `charge_order` WHERE `id` = ?",
-        )
-        .bind(biz_id as i64)
-        .fetch_one(&mut *c)
-        .await
-        .map_err(|_| RefundAdminError::Conflict)?;
+    if biz_type == chargepilot_domain::money::BizType::Charge {
+        let (order_started, order_status) = repo::order_started_status_tx(&mut *c, biz_id)
+            .await
+            .map_err(|_| RefundAdminError::Conflict)?;
         if order_started != 0
             && matches!(
                 order_status,
@@ -416,16 +248,9 @@ pub async fn review_manual_refund(
                     | ChargeOrderStatus::Refunding
                     | ChargeOrderStatus::Refunded
             )
+            && !repo::fee_receipt_exists_tx(&mut *c, biz_id).await?
         {
-            let receipt: Option<i64> = sqlx::query_scalar(
-                "SELECT 1 FROM `charge_fee_receipt` WHERE `charge_order_id` = ?",
-            )
-            .bind(biz_id as i64)
-            .fetch_optional(&mut *c)
-            .await?;
-            if receipt.is_none() {
-                return Err(RefundAdminError::NotSettled);
-            }
+            return Err(RefundAdminError::NotSettled);
         }
     }
     let snapshot = serde_json::json!({
@@ -433,26 +258,12 @@ pub async fn review_manual_refund(
         "biz_type": biz_type, "biz_id": biz_id, "refund_cents": refund_cents,
     })
     .to_string();
-    let existing: Option<(String, u64, Option<u64>)> = sqlx::query_as(
-        "SELECT CAST(`snapshot_json` AS CHAR) AS `snapshot_json`, `first_signer`, `second_signer` \
-         FROM `refund_review` WHERE `refund_record_id` = ? FOR UPDATE",
-    )
-    .bind(record_id as i64)
-    .fetch_optional(&mut *c)
-    .await?;
+    let existing = repo::lock_review_tx(&mut *c, record_id).await?;
     let outcome = match existing {
         None => {
             // 首审：保存快照与首审人，等待第二审。
-            sqlx::query(
-                "INSERT INTO `refund_review` (`refund_record_id`, `snapshot_json`, \
-                 `first_signer`, `first_comment`) VALUES (?, ?, ?, ?)",
-            )
-            .bind(record_id as i64)
-            .bind(&snapshot)
-            .bind(actor_id as i64)
-            .bind(approve_comment)
-            .execute(&mut *c)
-            .await?;
+            repo::insert_first_review_tx(&mut *c, record_id, &snapshot, actor_id, approve_comment)
+                .await?;
             ReviewOutcome::AwaitingSecond
         }
         Some((stored_snapshot, first_signer, second_signer)) => {
@@ -485,24 +296,9 @@ pub async fn review_manual_refund(
             if !permitted {
                 return Err(RefundAdminError::Conflict);
             }
-            sqlx::query(
-                "UPDATE `refund_review` SET `second_signer` = ?, `second_comment` = ?, \
-                 `approved_at` = UTC_TIMESTAMP(3) WHERE `refund_record_id` = ?",
-            )
-            .bind(actor_id as i64)
-            .bind(approve_comment)
-            .bind(record_id as i64)
-            .execute(&mut *c)
-            .await?;
+            repo::approve_second_review_tx(&mut *c, record_id, actor_id, approve_comment).await?;
             // 转 automatic 并立即排队：批 5 退款执行器接手渠道执行。
-            sqlx::query(
-                "UPDATE `refund_record` SET `execution_policy` = ?, \
-                 `next_attempt_at` = UTC_TIMESTAMP(3) WHERE `id` = ?",
-            )
-            .bind(ExecutionPolicy::Automatic)
-            .bind(record_id as i64)
-            .execute(&mut *c)
-            .await?;
+            repo::promote_to_automatic_tx(&mut *c, record_id).await?;
             ReviewOutcome::Approved
         }
     };
@@ -558,29 +354,18 @@ pub async fn retry_refund(
     reason: &str,
 ) -> Result<u64, RefundAdminError> {
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await?;
+    set_read_committed(&mut conn).await?;
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
-    let record: Option<(u64, ExecutionPolicy, RefundStatus)> = sqlx::query_as(
-        "SELECT `id`, `execution_policy`, `status` FROM `refund_record` \
-         WHERE CAST(`refund_no` AS CHAR) = ? AND `deleted_at` IS NULL FOR UPDATE",
-    )
-    .bind(refund_no)
-    .fetch_optional(&mut *c)
-    .await?;
-    let Some((record_id, policy, status)) = record else {
+    let Some((record_id, policy, status)) = repo::lock_retry_record_tx(&mut *c, refund_no).await?
+    else {
         return Err(RefundAdminError::NotFound);
     };
     let unsettled = matches!(status, RefundStatus::Pending | RefundStatus::Processing);
     if policy != ExecutionPolicy::Automatic || !unsettled {
         return Err(RefundAdminError::Conflict);
     }
-    sqlx::query("UPDATE `refund_record` SET `next_attempt_at` = UTC_TIMESTAMP(3) WHERE `id` = ?")
-        .bind(record_id as i64)
-        .execute(&mut *c)
-        .await?;
+    repo::reset_next_attempt_tx(&mut *c, record_id).await?;
     // 重试审计（旧版 AuditChange{Action:"retry", Target:"refund", After:in}）。
     if let Some(audit) = audit {
         let after = serde_json::json!({ "reason": reason });
