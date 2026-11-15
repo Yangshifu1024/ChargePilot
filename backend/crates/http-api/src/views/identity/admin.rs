@@ -34,24 +34,6 @@ fn bad_request(message: &str, rid: &str) -> Response {
     ops_error(OpsError::Input(message.to_string()), rid)
 }
 
-/// 解析通用分页参数（旧版 ReadPaging 语义）：page 缺省 1、合法 1–1000000，
-/// page_size 缺省 20、合法 1–100；空值取缺省，其余非法分别报固定文案。
-fn read_paging(q: &HashMap<String, String>, rid: &str) -> Result<(u32, u32), Response> {
-    let parse = |name: &str, fallback: u32, max: u32, message: &str| -> Result<u32, Response> {
-        match q.get(name).map(String::as_str) {
-            None | Some("") => Ok(fallback),
-            Some(raw) => raw
-                .parse::<u32>()
-                .ok()
-                .filter(|v| (1..=max).contains(v))
-                .ok_or_else(|| bad_request(message, rid)),
-        }
-    };
-    let page = parse("page", 1, 1_000_000, "分页参数无效")?;
-    let page_size = parse("page_size", 20, 100, "分页参数无效：page_size 为 1–100")?;
-    Ok((page, page_size))
-}
-
 /// 路径 ID 必须为正整数（旧版 AdminPathID）。
 fn path_id(raw: &str, rid: &str) -> Result<u64, Response> {
     raw.parse::<u64>()
@@ -78,16 +60,13 @@ async fn list_users(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
     headers: HeaderMap,
+    crate::params::AdminPaging { page, page_size }: crate::params::AdminPaging,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     let rid = rid_of(&headers);
     if let Some(resp) = deny(&guard, "user.read", &rid) {
         return resp;
     }
-    let (page, page_size) = match read_paging(&q, &rid) {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
     let keyword = q.get("keyword").map(|s| s.trim()).unwrap_or("");
     if keyword.chars().count() > 128 {
         return bad_request("关键词过长或状态无效", &rid);

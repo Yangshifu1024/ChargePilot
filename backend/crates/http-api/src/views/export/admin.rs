@@ -1,6 +1,7 @@
 //! 导出域后台门面（票 18 冷区批：原 admin_export.rs 归位）。
 
 use crate::guard::AdminGuard;
+use crate::params::AdminPaging;
 use crate::state::ApiDeps;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
@@ -75,8 +76,6 @@ fn export_error(e: ExportError, rid: &str) -> Response {
 
 #[derive(Deserialize)]
 struct TaskListQuery {
-    page: Option<i64>,
-    page_size: Option<i64>,
     status: Option<String>,
 }
 
@@ -84,6 +83,7 @@ async fn list_tasks(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
     headers: HeaderMap,
+    AdminPaging { page, page_size }: AdminPaging,
     Query(q): Query<TaskListQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
@@ -91,15 +91,15 @@ async fn list_tasks(
         &deps.db,
         &guard.profile,
         q.status.as_deref().unwrap_or(""),
-        q.page.unwrap_or(1).max(1),
-        q.page_size.unwrap_or(20).clamp(1, 100),
+        page.into(),
+        page_size.into(),
     )
     .await
     {
         Ok((items, total)) => httpx::ok(
             json!({"items": items, "total": total,
-                   "page": q.page.unwrap_or(1).max(1),
-                   "page_size": q.page_size.unwrap_or(20).clamp(1, 100)}),
+                   "page": page,
+                   "page_size": page_size}),
             &rid,
         ),
         Err(e) => export_error(e, &rid),

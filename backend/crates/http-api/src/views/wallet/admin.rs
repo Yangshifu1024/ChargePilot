@@ -6,6 +6,7 @@
 
 use crate::errormap::ops_error;
 use crate::guard::AdminGuard;
+use crate::params::AdminPaging;
 use crate::state::ApiDeps;
 use axum::Json as AxumJson;
 use axum::extract::{Path, Query, State};
@@ -54,8 +55,6 @@ fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
 
 #[derive(Deserialize)]
 struct RiskPaging {
-    page: Option<i64>,
-    page_size: Option<i64>,
     status: Option<String>,
 }
 
@@ -63,6 +62,7 @@ async fn list_wallet_risks(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
     headers: HeaderMap,
+    AdminPaging { page, page_size }: AdminPaging,
     Query(q): Query<RiskPaging>,
 ) -> Response {
     let rid = rid_of(&headers);
@@ -78,8 +78,8 @@ async fn list_wallet_risks(
         .list(
             &guard.profile,
             q.status.as_deref().unwrap_or(""),
-            q.page.unwrap_or(1).max(1) as u32,
-            q.page_size.unwrap_or(20).clamp(1, 100) as u32,
+            page,
+            page_size,
         )
         .await
     {

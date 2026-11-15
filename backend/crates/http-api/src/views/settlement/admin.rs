@@ -8,6 +8,7 @@
 
 use crate::errormap::ops_error;
 use crate::guard::AdminGuard;
+use crate::params::AdminPaging;
 use crate::state::ApiDeps;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
@@ -232,8 +233,6 @@ fn invoice_error(e: chargepilot_mod_settlement::InvoiceAdminError, rid: &str) ->
 
 #[derive(Deserialize)]
 struct MeterPaging {
-    page: Option<i64>,
-    page_size: Option<i64>,
     status: Option<String>,
     keyword: Option<String>,
 }
@@ -242,16 +241,12 @@ async fn list_meter_reviews(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
     headers: HeaderMap,
+    AdminPaging { page, page_size }: AdminPaging,
     Query(q): Query<MeterPaging>,
 ) -> Response {
     let rid = rid_of(&headers);
     if let Some(resp) = deny(&guard, "finance.read", &rid) {
         return resp;
-    }
-    let page = q.page.unwrap_or(1);
-    let size = q.page_size.unwrap_or(20);
-    if !(1..=1_000_000).contains(&page) || !(1..=100).contains(&size) {
-        return crate::respond(400, Code::BadRequest as i64, "分页参数无效", &rid);
     }
     let keyword = q.keyword.unwrap_or_default().trim().to_string();
     if keyword.chars().count() > 128 {
@@ -263,16 +258,12 @@ async fn list_meter_reviews(
         return crate::respond(400, Code::BadRequest as i64, "关键词过长或状态无效", &rid);
     }
     match chargepilot_mod_settlement::meter_review::list_manual_fee_reviews(
-        &deps.db,
-        &status,
-        &keyword,
-        page as u32,
-        size as u32,
+        &deps.db, &status, &keyword, page, page_size,
     )
     .await
     {
         Ok((items, total)) => httpx::ok(
-            json!({"items": items, "total": total, "page": page, "page_size": size}),
+            json!({"items": items, "total": total, "page": page, "page_size": page_size}),
             &rid,
         ),
         Err(e) => {
@@ -575,8 +566,6 @@ fn meter_error(e: chargepilot_mod_settlement::ReviewError, rid: &str) -> Respons
 
 #[derive(Deserialize)]
 struct RefundPaging {
-    page: Option<i64>,
-    page_size: Option<i64>,
     status: Option<String>,
     refund_no: Option<String>,
     keyword: Option<String>,
@@ -586,16 +575,12 @@ async fn list_refunds(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
     headers: HeaderMap,
+    AdminPaging { page, page_size }: AdminPaging,
     Query(q): Query<RefundPaging>,
 ) -> Response {
     let rid = rid_of(&headers);
     if let Some(resp) = deny(&guard, "finance.refund.read", &rid) {
         return resp;
-    }
-    let page = q.page.unwrap_or(1);
-    let size = q.page_size.unwrap_or(20);
-    if !(1..=1_000_000).contains(&page) || !(1..=100).contains(&size) {
-        return crate::respond(400, Code::BadRequest as i64, "分页参数无效", &rid);
     }
     // keyword 不参与退款筛选，但旧版 ReadAdminPage 仍校验其长度。
     if q.keyword
@@ -619,16 +604,12 @@ async fn list_refunds(
         return crate::respond(400, Code::BadRequest as i64, "退款单号过长", &rid);
     }
     match chargepilot_mod_settlement::refund_admin::list_refunds(
-        &deps.db,
-        &status,
-        &refund_no,
-        page as u32,
-        size as u32,
+        &deps.db, &status, &refund_no, page, page_size,
     )
     .await
     {
         Ok((items, total)) => httpx::ok(
-            json!({"items": items, "total": total, "page": page, "page_size": size}),
+            json!({"items": items, "total": total, "page": page, "page_size": page_size}),
             &rid,
         ),
         Err(e) => {

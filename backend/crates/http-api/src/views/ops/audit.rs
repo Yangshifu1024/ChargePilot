@@ -1,13 +1,13 @@
 //! 运营域后台门面·审计与 MFA（票 18：原 admin_misc.rs 的审计/MFA 区块）。
 use crate::errormap::ops_error;
 use crate::guard::AdminGuard;
+use crate::params::AdminPaging;
 use crate::state::ApiDeps;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_ops::MfaError;
 use chargepilot_mod_ops::OpsError;
-use chargepilot_mod_ops::management::Page;
 use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
@@ -16,8 +16,6 @@ use std::sync::Arc;
 
 #[derive(Deserialize)]
 struct AuditPaging {
-    page: Option<i64>,
-    page_size: Option<i64>,
     module: Option<String>,
     action: Option<String>,
     actor: Option<String>,
@@ -30,16 +28,13 @@ async fn list_audit_logs(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
     headers: HeaderMap,
+    AdminPaging { page, page_size }: AdminPaging,
     Query(q): Query<AuditPaging>,
 ) -> Response {
     let rid = rid_of(&headers);
     if let Some(resp) = deny(&guard, "audit.read", &rid) {
         return resp;
     }
-    let page = match Page::sanitized(q.page.unwrap_or(1), q.page_size.unwrap_or(20)) {
-        Ok(p) => p,
-        Err(e) => return crate::respond(400, Code::BadRequest as i64, &e.to_string(), &rid),
-    };
     // 仅解析 RFC3339 输入（旧版 time.Parse(time.RFC3339)；无效返回 400）。
     let parse_bound =
         |raw: Option<&str>| -> Result<Option<chrono::DateTime<chrono::Utc>>, Response> {
@@ -72,10 +67,9 @@ async fn list_audit_logs(
         from,
         to,
     };
-    match chargepilot_mod_ops::audit_query::list(&deps.db, &query, page.page, page.page_size).await
-    {
+    match chargepilot_mod_ops::audit_query::list(&deps.db, &query, page, page_size).await {
         Ok((items, total)) => httpx::ok(
-            json!({"items": items, "total": total, "page": page.page, "page_size": page.page_size}),
+            json!({"items": items, "total": total, "page": page, "page_size": page_size}),
             &rid,
         ),
         Err(e) => {

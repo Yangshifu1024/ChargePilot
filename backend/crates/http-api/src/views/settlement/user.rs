@@ -6,9 +6,10 @@
 //! 挂载行：.merge(user_settlement::router())
 //! （lib.rs build_router 中与其余 user 路由并列；模块声明 pub mod user_settlement;）
 
+use crate::params::UserPaging;
 use crate::state::ApiDeps;
 use crate::user_guard::UserGuard;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_settlement::UserInvoiceError;
@@ -38,20 +39,6 @@ fn rid_of(headers: &HeaderMap) -> String {
     httpx::request_id_from(headers)
 }
 
-#[derive(Deserialize)]
-struct Paging {
-    page: Option<i64>,
-    page_size: Option<i64>,
-}
-
-/// 分页参数：默认第 1 页、每页 20，上限 100（旧版 ReadPaging(c, 20, DefaultPageLimit)）。
-fn paging(q: &Paging) -> (u32, u32) {
-    (
-        q.page.unwrap_or(1).max(1) as u32,
-        q.page_size.unwrap_or(20).clamp(1, 100) as u32,
-    )
-}
-
 /// 路径账单 ID 解析：非法或为零一律 400（旧版 strconv.ParseUint + id==0 校验）。
 fn bill_id_of(raw: &str, rid: &str) -> Result<u64, Response> {
     match raw.parse::<u64>() {
@@ -70,13 +57,12 @@ async fn bill_list(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
     UserGuard(uid): UserGuard,
-    Query(q): Query<Paging>,
+    UserPaging { page, page_size }: UserPaging,
 ) -> Response {
     let rid = rid_of(&headers);
-    let (page, size) = paging(&q);
-    match chargepilot_mod_settlement::bill::list_user_bills(&deps.db, uid, page, size).await {
+    match chargepilot_mod_settlement::bill::list_user_bills(&deps.db, uid, page, page_size).await {
         Ok((items, total)) => httpx::ok(
-            json!({"items": items, "total": total, "page": page, "page_size": size}),
+            json!({"items": items, "total": total, "page": page, "page_size": page_size}),
             &rid,
         ),
         Err(e) => {
@@ -263,13 +249,12 @@ async fn invoice_my(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
     UserGuard(uid): UserGuard,
-    Query(q): Query<Paging>,
+    UserPaging { page, page_size }: UserPaging,
 ) -> Response {
     let rid = rid_of(&headers);
-    let (page, size) = paging(&q);
-    match user_invoice::list_user_invoices(&deps.db, uid, page, size).await {
+    match user_invoice::list_user_invoices(&deps.db, uid, page, page_size).await {
         Ok((items, total)) => httpx::ok(
-            json!({"items": items, "total": total, "page": page, "page_size": size}),
+            json!({"items": items, "total": total, "page": page, "page_size": page_size}),
             &rid,
         ),
         Err(e) => {

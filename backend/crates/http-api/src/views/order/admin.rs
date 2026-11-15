@@ -1,12 +1,12 @@
 //! 订单域后台门面（票 18：先归位反馈工单区块；admin_orders 热区批并入）。
 use crate::errormap::ops_error;
 use crate::guard::AdminGuard;
+use crate::params::AdminPaging;
 use crate::state::ApiDeps;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_ops::OpsError;
-use chargepilot_mod_ops::management::Page;
 use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
@@ -15,8 +15,6 @@ use std::sync::Arc;
 
 #[derive(Deserialize)]
 struct CasePaging {
-    page: Option<i64>,
-    page_size: Option<i64>,
     status: Option<String>,
 }
 
@@ -25,6 +23,7 @@ async fn list_feedback(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
     headers: HeaderMap,
+    AdminPaging { page, page_size }: AdminPaging,
     Query(q): Query<CasePaging>,
 ) -> Response {
     let rid = rid_of(&headers);
@@ -42,20 +41,16 @@ async fn list_feedback(
     {
         return crate::respond(400, Code::BadRequest as i64, "关键词过长或状态无效", &rid);
     }
-    let page = match Page::sanitized(q.page.unwrap_or(1), q.page_size.unwrap_or(20)) {
-        Ok(p) => p,
-        Err(e) => return crate::respond(400, Code::BadRequest as i64, &e.to_string(), &rid),
-    };
     match chargepilot_mod_order::feedback::list(
         &deps.db,
         q.status.as_deref().unwrap_or(""),
-        page.page,
-        page.page_size,
+        page,
+        page_size,
     )
     .await
     {
         Ok((items, total)) => httpx::ok(
-            json!({"items": items, "total": total, "page": page.page, "page_size": page.page_size}),
+            json!({"items": items, "total": total, "page": page, "page_size": page_size}),
             &rid,
         ),
         Err(e) => feedback_error(e, &rid),
@@ -233,20 +228,6 @@ fn parse_path_id(raw: &str, rid: &str) -> Result<u64, Response> {
     }
 }
 
-/// 通用分页参数（旧版 ReadAdminPage 的 page/page_size；上限与旧版一致）。
-#[derive(Deserialize)]
-struct Paging {
-    page: Option<i64>,
-    page_size: Option<i64>,
-}
-
-impl Paging {
-    fn sanitized(&self, rid: &str) -> Result<Page, Response> {
-        Page::sanitized(self.page.unwrap_or(1), self.page_size.unwrap_or(20))
-            .map_err(|e| crate::respond(400, Code::BadRequest as i64, &e.to_string(), rid))
-    }
-}
-
 /// 关键词与状态校验（旧版 ReadAdminPage：关键词 ≤128 字，状态落白名单）。
 fn validate_keyword_status(
     keyword: Option<&str>,
@@ -298,8 +279,6 @@ fn one_of(value: Option<&str>, allowed: &[&str]) -> bool {
 
 #[derive(Deserialize)]
 struct OrderListParams {
-    page: Option<i64>,
-    page_size: Option<i64>,
     keyword: Option<String>,
     status: Option<String>,
     order_no: Option<String>,
@@ -316,21 +295,13 @@ async fn list_orders(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
     headers: HeaderMap,
+    AdminPaging { page, page_size }: AdminPaging,
     Query(q): Query<OrderListParams>,
 ) -> Response {
     let rid = rid_of(&headers);
     if let Some(resp) = deny(&guard, "order.read", &rid) {
         return resp;
     }
-    let page = match (Paging {
-        page: q.page,
-        page_size: q.page_size,
-    })
-    .sanitized(&rid)
-    {
-        Ok(p) => p,
-        Err(resp) => return resp,
-    };
     if let Err(resp) = validate_keyword_status(
         q.keyword.as_deref(),
         q.status.as_deref(),
@@ -381,8 +352,8 @@ async fn list_orders(
         );
     }
     let query = AdminOrderListQuery {
-        page: page.page,
-        page_size: page.page_size,
+        page,
+        page_size,
         order_no: q.order_no.filter(|v| !v.is_empty()),
         device_id: q.device_id.filter(|v| !v.is_empty()),
         status: q.status.filter(|v| !v.is_empty()),
@@ -398,8 +369,8 @@ async fn list_orders(
             json!({
                 "items": items,
                 "total": total,
-                "page": page.page,
-                "page_size": page.page_size,
+                "page": page,
+                "page_size": page_size,
             }),
             &rid,
         ),
@@ -598,8 +569,6 @@ async fn order_refunds(
 
 #[derive(Deserialize)]
 struct PaymentOrderParams {
-    page: Option<i64>,
-    page_size: Option<i64>,
     keyword: Option<String>,
     status: Option<String>,
     order_no: Option<String>,
@@ -614,21 +583,13 @@ async fn payment_orders(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
     headers: HeaderMap,
+    AdminPaging { page, page_size }: AdminPaging,
     Query(q): Query<PaymentOrderParams>,
 ) -> Response {
     let rid = rid_of(&headers);
     if let Some(resp) = deny(&guard, "order.read", &rid) {
         return resp;
     }
-    let page = match (Paging {
-        page: q.page,
-        page_size: q.page_size,
-    })
-    .sanitized(&rid)
-    {
-        Ok(p) => p,
-        Err(resp) => return resp,
-    };
     // 旧版：状态白名单为空（任何非空 status 拒绝），关键词 ≤128 字。
     if let Err(resp) = validate_keyword_status(q.keyword.as_deref(), q.status.as_deref(), &[], &rid)
     {
@@ -687,8 +648,8 @@ async fn payment_orders(
         );
     }
     let query = PaymentOrderListQuery {
-        page: page.page,
-        page_size: page.page_size,
+        page,
+        page_size,
         order_no: q.order_no.filter(|v| !v.is_empty()),
         biz_type: q.biz_type.filter(|v| !v.is_empty()),
         pay_method: q.pay_method.filter(|v| !v.is_empty()),
@@ -701,8 +662,8 @@ async fn payment_orders(
             json!({
                 "items": items,
                 "total": total,
-                "page": page.page,
-                "page_size": page.page_size,
+                "page": page,
+                "page_size": page_size,
             }),
             &rid,
         ),

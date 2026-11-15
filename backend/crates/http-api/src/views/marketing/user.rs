@@ -1,5 +1,6 @@
 //! 营销域用户端门面（票 18 冷区批：原 user_marketing.rs 归位）。
 
+use crate::params::UserPaging;
 use crate::state::ApiDeps;
 use crate::user_guard::UserGuard;
 use axum::extract::{Query, State};
@@ -41,8 +42,6 @@ fn query_error(e: CouponQueryError, rid: &str) -> Response {
 
 #[derive(Deserialize)]
 struct MyCouponQuery {
-    page: Option<i64>,
-    page_size: Option<i64>,
     status: Option<String>,
     only_usable: Option<String>,
 }
@@ -51,14 +50,15 @@ async fn my_coupons(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
     UserGuard(uid): UserGuard,
+    UserPaging { page, page_size }: UserPaging,
     Query(q): Query<MyCouponQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
     match mine(
         &deps.db,
         uid,
-        q.page.unwrap_or(1).max(1),
-        q.page_size.unwrap_or(20).clamp(1, 100),
+        page.into(),
+        page_size.into(),
         q.status.as_deref().unwrap_or(""),
         q.only_usable.as_deref() == Some("true"),
         chrono::Utc::now(),

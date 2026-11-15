@@ -1,6 +1,7 @@
 //! 设备域后台门面（票 18：先归位设备能力；admin_pricing_device/device_and_user 热区批并入）。
 use crate::errormap::ops_error;
 use crate::guard::AdminGuard;
+use crate::params::AdminPaging;
 use crate::state::ApiDeps;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
@@ -120,8 +121,6 @@ fn device_error(e: DeviceError, rid: &str) -> Response {
 }
 #[derive(Deserialize)]
 struct PagingQuery {
-    page: Option<i64>,
-    page_size: Option<i64>,
     keyword: Option<String>,
     status: Option<String>,
 }
@@ -130,13 +129,15 @@ async fn list_stations(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
     headers: HeaderMap,
+    AdminPaging { page, page_size }: AdminPaging,
     Query(q): Query<PagingQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
     if let Some(resp) = deny(&guard, "station.read", &rid) {
         return resp;
     }
-    let page = match Page::sanitized(q.page.unwrap_or(1), q.page_size.unwrap_or(20)) {
+    // 域服务签名收 ops Page 类型；分页已在提取器按 F6 校验，此处重建承载。
+    let page = match Page::sanitized(page.into(), page_size.into()) {
         Ok(p) => p,
         Err(e) => return crate::respond(400, Code::BadRequest as i64, &e.to_string(), &rid),
     };
@@ -364,8 +365,6 @@ pub fn station_router() -> axum::Router<Arc<ApiDeps>> {
 
 #[derive(Deserialize)]
 struct DeviceQuery {
-    page: Option<i64>,
-    page_size: Option<i64>,
     station_id: Option<u64>,
     status: Option<String>,
     keyword: Option<String>,
@@ -375,13 +374,15 @@ async fn list_devices(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
     headers: HeaderMap,
+    AdminPaging { page, page_size }: AdminPaging,
     Query(q): Query<DeviceQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
     if let Some(resp) = deny(&guard, "device.read", &rid) {
         return resp;
     }
-    let page = match Page::sanitized(q.page.unwrap_or(1), q.page_size.unwrap_or(20)) {
+    // 域服务签名收 ops Page 类型；分页已在提取器按 F6 校验，此处重建承载。
+    let page = match Page::sanitized(page.into(), page_size.into()) {
         Ok(p) => p,
         Err(e) => return crate::respond(400, Code::BadRequest as i64, &e.to_string(), &rid),
     };
@@ -542,19 +543,16 @@ async fn admin_fault_list(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
     headers: HeaderMap,
+    AdminPaging { page, page_size }: AdminPaging,
     Query(q): Query<PagingQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
     if let Some(resp) = deny(&guard, "fault.read", &rid) {
         return resp;
     }
-    let page = match Page::sanitized(q.page.unwrap_or(1), q.page_size.unwrap_or(20)) {
-        Ok(p) => p,
-        Err(e) => return crate::respond(400, Code::BadRequest as i64, &e.to_string(), &rid),
-    };
-    match fault::admin_list(&deps.db, q.status.as_deref(), page.page, page.page_size).await {
+    match fault::admin_list(&deps.db, q.status.as_deref(), page, page_size).await {
         Ok((items, total)) => httpx::ok(
-            json!({"items": items, "total": total, "page": page.page, "page_size": page.page_size}),
+            json!({"items": items, "total": total, "page": page, "page_size": page_size}),
             &rid,
         ),
         Err(e) => device_error(e, &rid),

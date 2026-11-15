@@ -1,6 +1,7 @@
 //! 营销域后台门面（票 18 冷区批：原 admin_marketing.rs 归位）。
 
 use crate::guard::AdminGuard;
+use crate::params::AdminPaging;
 use crate::state::ApiDeps;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -232,11 +233,9 @@ async fn grant_coupon_handler(
     }
 }
 
-/// 活动列表查询参数（旧版 ReadAdminPage：page/page_size/status/keyword）。
+/// 活动列表查询参数（旧版 ReadAdminPage：status/keyword；分页经 AdminPaging）。
 #[derive(Deserialize)]
 struct ActivityListQuery {
-    page: Option<i64>,
-    page_size: Option<i64>,
     status: Option<String>,
     keyword: Option<String>,
 }
@@ -245,6 +244,7 @@ async fn list_activities(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
     headers: HeaderMap,
+    AdminPaging { page, page_size }: AdminPaging,
     axum::extract::Query(q): axum::extract::Query<ActivityListQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
@@ -256,14 +256,13 @@ async fn list_activities(
         &guard.profile,
         q.status.as_deref().unwrap_or(""),
         q.keyword.as_deref().unwrap_or(""),
-        q.page.unwrap_or(1).max(1),
-        q.page_size.unwrap_or(20).clamp(1, 100),
+        page.into(),
+        page_size.into(),
     )
     .await
     {
         Ok((items, total)) => httpx::ok(
-            json!({"items": items, "total": total, "page": q.page.unwrap_or(1).max(1),
-                   "page_size": q.page_size.unwrap_or(20).clamp(1, 100)}),
+            json!({"items": items, "total": total, "page": page, "page_size": page_size}),
             &rid,
         ),
         Err(e) => coupon_error(e, &rid),

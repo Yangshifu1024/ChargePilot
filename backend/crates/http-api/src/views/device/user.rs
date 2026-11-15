@@ -3,6 +3,7 @@
 //! 后台路由：设备管理、导入、故障工单、告警认领；
 //! C 端路由：故障提交/查询、站点附近/详情（无需登录的部分公开）。
 
+use crate::params::UserPaging;
 use crate::state::ApiDeps;
 use crate::user_guard::UserGuard;
 use axum::extract::{Path, Query, State};
@@ -126,22 +127,14 @@ async fn report_fault(
     }
 }
 
-#[derive(Deserialize)]
-struct MyFaultQuery {
-    page: Option<u32>,
-    page_size: Option<u32>,
-}
-
 async fn my_faults(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
     UserGuard(user_id): UserGuard,
-    Query(q): Query<MyFaultQuery>,
+    UserPaging { page, page_size }: UserPaging,
 ) -> Response {
     let rid = rid_of(&headers);
-    let page = q.page.unwrap_or(1).max(1);
-    let size = q.page_size.unwrap_or(20).clamp(1, 100);
-    match fault::list_mine(&deps.db, user_id, page, size).await {
+    match fault::list_mine(&deps.db, user_id, page, page_size).await {
         Ok(items) => httpx::ok(json!({"items": items}), &rid),
         Err(e) => device_error(e, &rid),
     }

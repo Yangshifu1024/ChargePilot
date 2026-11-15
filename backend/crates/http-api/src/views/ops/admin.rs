@@ -2,6 +2,7 @@
 
 use crate::errormap::ops_error;
 use crate::guard::AdminGuard;
+use crate::params::AdminPaging;
 use crate::state::ApiDeps;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
@@ -66,15 +67,8 @@ fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
     }
 }
 
-fn page_query(query: &PagingQuery) -> Result<Page, Response> {
-    Page::sanitized(query.page.unwrap_or(1), query.page_size.unwrap_or(20))
-        .map_err(|e| ops_error(OpsError::bad_input(e.to_string()), ""))
-}
-
 #[derive(Deserialize)]
 struct PagingQuery {
-    page: Option<i64>,
-    page_size: Option<i64>,
     keyword: Option<String>,
     status: Option<String>,
 }
@@ -83,15 +77,17 @@ async fn list_admin_users(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
     headers: HeaderMap,
+    AdminPaging { page, page_size }: AdminPaging,
     Query(q): Query<PagingQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
     if let Some(resp) = deny(&guard, "admin_user.read", &rid) {
         return resp;
     }
-    let page = match page_query(&q) {
+    // 域服务签名收 ops Page 类型；分页已在提取器按 F6 校验，此处重建承载。
+    let page = match Page::sanitized(page.into(), page_size.into()) {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(e) => return ops_error(OpsError::bad_input(e.to_string()), &rid),
     };
     let status_filter = q
         .status

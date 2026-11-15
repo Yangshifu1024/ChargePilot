@@ -1,5 +1,6 @@
 //! 钱包域用户端门面（票 18 冷区批：原 user_wallet.rs 归位）。
 
+use crate::params::UserPaging;
 use crate::state::{ApiDeps, WalletState};
 use crate::user_guard::UserGuard;
 use axum::Json as AxumJson;
@@ -45,16 +46,7 @@ fn rid_of(headers: &HeaderMap) -> String {
 
 #[derive(Deserialize)]
 struct Paging {
-    page: Option<i64>,
-    page_size: Option<i64>,
     direction: Option<String>,
-}
-
-fn paging(q: &Paging) -> (u32, u32) {
-    (
-        q.page.unwrap_or(1).max(1) as u32,
-        q.page_size.unwrap_or(20).clamp(1, 100) as u32,
-    )
 }
 
 async fn wallet_balance(
@@ -73,12 +65,14 @@ async fn wallet_txns(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
     UserGuard(uid): UserGuard,
+    UserPaging { page, page_size }: UserPaging,
     Query(q): Query<Paging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let (page, size) = paging(&q);
     let direction = q.direction.as_deref().filter(|d| !d.is_empty());
-    match chargepilot_mod_wallet::query::transactions(&deps.db, uid, direction, page, size).await {
+    match chargepilot_mod_wallet::query::transactions(&deps.db, uid, direction, page, page_size)
+        .await
+    {
         Ok(p) => httpx::ok(
             json!({"items": p.items, "total": p.total, "page": p.page, "page_size": p.page_size}),
             &rid,
@@ -91,12 +85,17 @@ async fn wallet_recharges(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
     UserGuard(uid): UserGuard,
-    Query(q): Query<Paging>,
+    UserPaging { page, page_size }: UserPaging,
 ) -> Response {
     let rid = rid_of(&headers);
-    let (page, size) = paging(&q);
-    match chargepilot_mod_wallet::query::recharges(&deps.db, uid, page, size, chrono::Utc::now())
-        .await
+    match chargepilot_mod_wallet::query::recharges(
+        &deps.db,
+        uid,
+        page,
+        page_size,
+        chrono::Utc::now(),
+    )
+    .await
     {
         Ok(p) => httpx::ok(
             json!({"items": p.items, "total": p.total, "page": p.page, "page_size": p.page_size}),
@@ -110,11 +109,10 @@ async fn wallet_refunds(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
     UserGuard(uid): UserGuard,
-    Query(q): Query<Paging>,
+    UserPaging { page, page_size }: UserPaging,
 ) -> Response {
     let rid = rid_of(&headers);
-    let (page, size) = paging(&q);
-    match chargepilot_mod_wallet::query::refunds(&deps.db, uid, page, size).await {
+    match chargepilot_mod_wallet::query::refunds(&deps.db, uid, page, page_size).await {
         Ok(p) => httpx::ok(
             json!({"items": p.items, "total": p.total, "page": p.page, "page_size": p.page_size}),
             &rid,
