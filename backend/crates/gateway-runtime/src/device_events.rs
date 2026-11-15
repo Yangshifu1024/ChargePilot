@@ -12,7 +12,10 @@ use chargepilot_mod_card::SwipeError;
 use chargepilot_mod_card::swipe::{SwipeInput, SwipeService};
 use chargepilot_mod_payment::scan::TablePortScanner;
 use chargepilot_platform::ids::SegmentAllocator;
-use chargepilot_protocol::{Command, CommandKind};
+use chargepilot_protocol::event_payload::{
+    CardEventPayload, ChargeEndPayload, CommandResultPayload,
+};
+use chargepilot_protocol::{Command, CommandKind, EventType};
 use sqlx::MySqlPool;
 
 /// 设备事件派发器。
@@ -35,96 +38,105 @@ impl EventDispatcher for DeviceEventDispatcher {
     }
 }
 
-/// 从事件载荷解出的公共字段（缺关键字段按不可恢复处理，不重试）。
-struct EventFields {
-    device_id: String,
-    port: u8,
-    card_number: u32,
-    event_id: String,
-    event_key: String,
-    received_at: Option<chrono::DateTime<chrono::Utc>>,
-    consumer_type: u8,
-    fault_code: u8,
-}
-
-fn field_str(payload: &serde_json::Value, key: &str) -> String {
-    payload
-        .get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string()
-}
-
-fn field_u64(payload: &serde_json::Value, key: &str) -> u64 {
-    payload.get(key).and_then(|v| v.as_u64()).unwrap_or(0)
-}
-
-impl EventFields {
-    fn parse(payload: &serde_json::Value) -> Result<Self, anyhow::Error> {
-        let device_id = field_str(payload, "device_id");
-        if device_id.is_empty() {
-            anyhow::bail!("载荷缺少 device_id");
+/// 载荷按类别解析为读取视图；解析失败打警告后按已处理确认——坏载荷重试
+/// 也不会成功，交由状态机兜底扫描接管（不再静默补 0，也不再无限重试）。
+fn parse_payload<T: serde::de::DeserializeOwned>(
+    payload: &serde_json::Value,
+    kind: EventType,
+) -> Option<T> {
+    match serde_json::from_value::<T>(payload.clone()) {
+        Ok(parsed) => Some(parsed),
+        Err(e) => {
+            tracing::warn!(kind = kind.as_str(), error = %e, "设备事件载荷解析失败，跳过");
+            None
         }
-        let received_at = payload
-            .get("received_at")
-            .and_then(|v| v.as_str())
-            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-            .map(|t| t.with_timezone(&chrono::Utc));
-        Ok(Self {
-            device_id,
-            port: field_u64(payload, "port") as u8,
-            card_number: field_u64(payload, "card_number") as u32,
-            event_id: field_str(payload, "event_id"),
-            event_key: field_str(payload, "event_key"),
-            received_at,
-            consumer_type: field_u64(payload, "consumer_type") as u8,
-            fault_code: field_u64(payload, "fault_code") as u8,
-        })
     }
 }
 
 impl DeviceEventDispatcher {
-    /// 事件载荷 → 业务回执。未知类型按已处理确认（不重试）。
+    /// 事件载荷 → 业务回执。按词表路由（未知类型按已处理确认，不重试）。
     pub async fn handle(&self, payload: &serde_json::Value) -> anyhow::Result<()> {
-        let kind = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let kind = payload
+            .get("type")
+            .and_then(|v| v.as_str())
+            .and_then(EventType::parse);
+        let Some(kind) = kind else {
+            let raw = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            tracing::debug!(kind = raw, "设备事件无需业务处理");
+            return Ok(());
+        };
         match kind {
-            "StartResult" => self.handle_start_result(payload).await,
-            "StopResult" => self.handle_stop_result(payload).await,
-            "ChargeEnd" => self.handle_charge_end(payload).await,
-            "CardSwipe" => self.handle_card_swipe(payload).await,
-            "CardBalanceQuery" => self.handle_card_balance(payload).await,
-            "Fault" => self.handle_fault(payload).await,
-            "LocalStart" => self.handle_local_start(payload).await,
-            other => {
-                tracing::debug!(kind = other, "设备事件无需业务处理");
-                Ok(())
+            EventType::StartResult => {
+                if let Some(p) = parse_payload::<CommandResultPayload>(payload, kind) {
+                    self.handle_start_result(&p).await?;
+                }
+            }
+            EventType::StopResult => {
+                if let Some(p) = parse_payload::<CommandResultPayload>(payload, kind) {
+                    self.handle_stop_result(&p).await?;
+                }
+            }
+            EventType::ChargeEnd => {
+                if let Some(p) = parse_payload::<ChargeEndPayload>(payload, kind) {
+                    self.handle_charge_end(&p).await?;
+                }
+            }
+            EventType::CardSwipe => {
+                if let Some(p) = parse_payload::<CardEventPayload>(payload, kind) {
+                    self.handle_card_swipe(&p).await?;
+                }
+            }
+            EventType::CardBalanceQuery => {
+                if let Some(p) = parse_payload::<CardEventPayload>(payload, kind) {
+                    self.handle_card_balance(&p).await?;
+                }
+            }
+            EventType::Fault => {
+                if let Some(p) = parse_payload::<CardEventPayload>(payload, kind) {
+                    self.handle_fault(&p).await?;
+                }
+            }
+            EventType::LocalStart => {
+                if let Some(p) = parse_payload::<CardEventPayload>(payload, kind) {
+                    self.handle_local_start(&p).await?;
+                }
+            }
+            other @ (EventType::Heartbeat
+            | EventType::RemoteResult
+            | EventType::ConfigResult
+            | EventType::Telemetry
+            | EventType::TimeSync) => {
+                tracing::debug!(kind = other.as_str(), "设备事件无需业务处理");
             }
         }
+        Ok(())
     }
 
     /// B8 启动应答：按设备+端口定位最近的 sent 命令，推进成功/失败回执。
-    async fn handle_start_result(&self, payload: &serde_json::Value) -> anyhow::Result<()> {
-        let device_id = payload
-            .get("device_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("载荷缺少 device_id"))?;
-        let port = payload.get("port").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
-        let result_code = payload
-            .get("result_code")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u8;
+    async fn handle_start_result(&self, p: &CommandResultPayload) -> anyhow::Result<()> {
+        // success 由协议适配器翻译（厂商应答码不进运行时）；旧格式在途载荷
+        // 无此字段，按证据缺失跳过，由状态机兜底扫描接管。
+        let Some(success) = p.success else {
+            tracing::warn!(
+                device = %p.device_id,
+                port = p.port,
+                result_code = p.result_code,
+                "启动应答缺中性成败判定（旧格式在途载荷），跳过"
+            );
+            return Ok(());
+        };
         let row: Option<(String, u64, String, String, u8)> = sqlx::query_as(
             "SELECT CAST(`command_id` AS CHAR), `charge_order_id`, `order_no`, `device_id`, `port_no` \
              FROM `charge_command` WHERE `device_id` = ? AND `port_no` = ? AND `status` = ? \
              ORDER BY `created_at` DESC LIMIT 1",
         )
-        .bind(device_id)
-        .bind(port)
+        .bind(&p.device_id)
+        .bind(p.port)
         .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Sent)
         .fetch_optional(&self.pool)
         .await?;
         let Some((command_id, charge_order_id, order_no, dev, port_no)) = row else {
-            tracing::warn!(device = device_id, port, result_code, "无待确认的启动命令");
+            tracing::warn!(device = %p.device_id, port = p.port, result_code = p.result_code, "无待确认的启动命令");
             return Ok(());
         };
         chargepilot_mod_charging::receipts::apply_start_receipt(
@@ -136,8 +148,8 @@ impl DeviceEventDispatcher {
                 device_id: dev,
                 port_no,
                 port_id: charge_order_id, // active_port_charge 复合主键 = 订单 ID
-                success: result_code == 0,
-                result_code,
+                success,
+                result_code: p.result_code,
                 occurred_at_unix_micros: chrono::Utc::now().timestamp_micros(),
             },
         )
@@ -145,19 +157,17 @@ impl DeviceEventDispatcher {
         Ok(())
     }
 
-    /// BA 停止应答：更新停止命令确认状态与结果码。
-    async fn handle_stop_result(&self, payload: &serde_json::Value) -> anyhow::Result<()> {
-        let device_id = payload
-            .get("device_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("载荷缺少 device_id"))?;
-        let port = payload.get("port").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
-        let result_code = payload
-            .get("result_code")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u8;
-        // 0x10 = 停止成功（BA 词表：0 无端口、1 空闲、4 故障、0x10 成功）。
-        let success = result_code == 0x10;
+    /// BA 停止应答：更新停止命令确认状态与结果码（成败取中性判定字段）。
+    async fn handle_stop_result(&self, p: &CommandResultPayload) -> anyhow::Result<()> {
+        let Some(success) = p.success else {
+            tracing::warn!(
+                device = %p.device_id,
+                port = p.port,
+                result_code = p.result_code,
+                "停止应答缺中性成败判定（旧格式在途载荷），跳过"
+            );
+            return Ok(());
+        };
         let updated = sqlx::query(
             "UPDATE `charge_stop_command` SET `status` = ?, `result_code` = ?, \
              `next_retry_at` = NULL \
@@ -168,9 +178,9 @@ impl DeviceEventDispatcher {
         } else {
             chargepilot_domain::charging::command::ChargeStopCommandStatus::Rejected
         })
-        .bind(result_code)
-        .bind(device_id)
-        .bind(port)
+        .bind(p.result_code)
+        .bind(&p.device_id)
+        .bind(p.port)
         .bind(chargepilot_domain::charging::command::ChargeStopCommandStatus::Pending)
         .bind(chargepilot_domain::charging::command::ChargeStopCommandStatus::Sent)
         .execute(&self.pool)
@@ -178,9 +188,9 @@ impl DeviceEventDispatcher {
         .rows_affected();
         if updated == 0 {
             tracing::debug!(
-                device = device_id,
-                port,
-                result_code,
+                device = %p.device_id,
+                port = p.port,
+                result_code = p.result_code,
                 "停止应答无待确认命令"
             );
         }
@@ -188,31 +198,22 @@ impl DeviceEventDispatcher {
     }
 
     /// BB 结束订单：定位停止命令与订单，应用结束回执（端口释放 + 计费任务）。
-    async fn handle_charge_end(&self, payload: &serde_json::Value) -> anyhow::Result<()> {
-        let device_id = payload
-            .get("device_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("载荷缺少 device_id"))?;
-        let port = payload.get("port").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
-        let order_number = payload
-            .get("order_number")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+    async fn handle_charge_end(&self, p: &ChargeEndPayload) -> anyhow::Result<()> {
         let row: Option<(u64, String, String, u8)> = sqlx::query_as(
             "SELECT `charge_order_id`, `order_no`, `start_command_id`, `port_no` \
              FROM `charge_stop_command` WHERE `device_id` = ? AND `port_no` = ? \
              AND `result_reported` = 0 ORDER BY `created_at` DESC LIMIT 1",
         )
-        .bind(device_id)
-        .bind(port)
+        .bind(&p.device_id)
+        .bind(p.port)
         .fetch_optional(&self.pool)
         .await?;
         let Some((charge_order_id, order_no, start_command_id, port_no)) = row else {
             // 本地启动（B4）等无停止命令路径：按订单号定位启动命令兜底。
             tracing::info!(
-                device = device_id,
-                port,
-                order = order_number,
+                device = %p.device_id,
+                port = p.port,
+                order = %p.order_number,
                 "结束上报无待回执停止命令"
             );
             return Ok(());
@@ -225,24 +226,6 @@ impl DeviceEventDispatcher {
         .fetch_optional(&self.pool)
         .await?
         .unwrap_or_default();
-        let charged_wh = payload
-            .get("energy_wh")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
-        let charged_seconds = payload
-            .get("charged_seconds")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
-        let ended_at = payload
-            .get("ended_at")
-            .and_then(|v| v.as_str())
-            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-            .map(|t| t.with_timezone(&chrono::Utc))
-            .unwrap_or_else(chrono::Utc::now);
-        let stop_reason = payload
-            .get("stop_reason")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u8;
         chargepilot_mod_charging::receipts::apply_end_receipt(
             &self.pool,
             &chargepilot_mod_charging::receipts::EndReceiptInput {
@@ -250,14 +233,14 @@ impl DeviceEventDispatcher {
                 order_no,
                 start_command_id,
                 stop_command_id,
-                device_id: device_id.to_string(),
+                device_id: p.device_id.clone(),
                 port_no,
                 meter: chargepilot_domain::charging::actual::EndMeter {
                     segments: vec![],
-                    charged_wh,
-                    charged_seconds,
-                    ended_at,
-                    stop_reason,
+                    charged_wh: p.energy_wh,
+                    charged_seconds: p.charged_seconds,
+                    ended_at: p.ended_at.unwrap_or_else(chrono::Utc::now),
+                    stop_reason: p.stop_reason,
                 },
             },
         )
@@ -271,22 +254,20 @@ impl DeviceEventDispatcher {
     /// 经 StartDispatcher 下发 B7（旧版 CardDispatcher.decide 语义）；
     /// 明确拒绝下发 BD（余额不足保留余额显示，其余置无效卡）；
     /// 其他失败返回 Err 交事件层退避重试（受理幂等，重放不重复扣款）。
-    async fn handle_card_swipe(&self, payload: &serde_json::Value) -> anyhow::Result<()> {
-        let f = EventFields::parse(payload)?;
+    async fn handle_card_swipe(&self, f: &CardEventPayload) -> anyhow::Result<()> {
         if f.card_number == 0 {
             tracing::warn!(device = %f.device_id, port = f.port, "刷卡事件缺少卡号");
             return Ok(());
         }
-        self.swipe_and_reply(&f).await
+        self.swipe_and_reply(f).await
     }
 
     /// D0 卡余额查询：查卡与钱包可用余额后下发 D1；零卡号按无效卡应答。
-    async fn handle_card_balance(&self, payload: &serde_json::Value) -> anyhow::Result<()> {
-        let f = EventFields::parse(payload)?;
+    async fn handle_card_balance(&self, f: &CardEventPayload) -> anyhow::Result<()> {
         let mut invalid = f.card_number == 0;
         let mut units = 0u16;
         if !invalid {
-            let (card_valid, balance_cents) = card_balance_facts(&self.pool, &f).await?;
+            let (card_valid, balance_cents) = card_balance_facts(&self.pool, f).await?;
             invalid = !card_valid;
             units = chargepilot_protocol_dc589::cards::card_balance_units(balance_cents);
         }
@@ -310,8 +291,7 @@ impl DeviceEventDispatcher {
 
     /// C0 故障上报：协议故障码 → 中性指标名后写告警域（生成/合并升级/重放跳过
     /// 均由 record_fault 事务保证）。FaultCode=0 按旧版语义忽略。
-    async fn handle_fault(&self, payload: &serde_json::Value) -> anyhow::Result<()> {
-        let f = EventFields::parse(payload)?;
+    async fn handle_fault(&self, f: &CardEventPayload) -> anyhow::Result<()> {
         if f.fault_code == 0 {
             tracing::debug!(device = %f.device_id, port = f.port, "故障码为零，忽略");
             return Ok(());
@@ -335,16 +315,15 @@ impl DeviceEventDispatcher {
     /// 离线卡本地启动（消费类型 1）平台侧补校验与补单——复用刷卡准入事务
     /// （卡有效性、额度、扣款、订单与操作记录同事务，uk_device_event 幂等），
     /// 校验拒绝按刷卡链下发 BD。B5 收到确认由适配器落库成功后下发。
-    async fn handle_local_start(&self, payload: &serde_json::Value) -> anyhow::Result<()> {
-        let f = EventFields::parse(payload)?;
+    async fn handle_local_start(&self, f: &CardEventPayload) -> anyhow::Result<()> {
         match (f.consumer_type, f.card_number) {
-            (1, card) if card != 0 => self.swipe_and_reply(&f).await,
+            (1, card) if card != 0 => self.swipe_and_reply(f).await,
             (0, _) | (4, _) => {
                 tracing::debug!(
                     device = %f.device_id,
                     port = f.port,
                     consumer = f.consumer_type,
-                    order = %field_str(payload, "order_number"),
+                    order = %f.order_number,
                     "本地启动不涉平台卡，仅事件留痕"
                 );
                 Ok(())
@@ -363,7 +342,7 @@ impl DeviceEventDispatcher {
     }
 
     /// 刷卡准入与拒绝应答（B6 与 B4 离线卡共用）。
-    async fn swipe_and_reply(&self, f: &EventFields) -> anyhow::Result<()> {
+    async fn swipe_and_reply(&self, f: &CardEventPayload) -> anyhow::Result<()> {
         if f.port == 0xFF {
             // 端口号错误标志：直接按无效卡拒绝（旧版 decide 语义）。
             return self
@@ -477,7 +456,7 @@ async fn resolve_port_code(pool: &MySqlPool, device_id: &str, port_no: u8) -> Op
 }
 
 /// 卡有效性事实与钱包可用余额（分）：卡缺失/停用返回 (false, 0)。
-async fn card_balance_facts(pool: &MySqlPool, f: &EventFields) -> anyhow::Result<(bool, i64)> {
+async fn card_balance_facts(pool: &MySqlPool, f: &CardEventPayload) -> anyhow::Result<(bool, i64)> {
     let row: Option<(chargepilot_domain::card::CardStatus, Option<i64>)> = sqlx::query_as(
         "SELECT c.`status`, w.`balance_cents` - w.`frozen_cents` \
          FROM `online_card` c \

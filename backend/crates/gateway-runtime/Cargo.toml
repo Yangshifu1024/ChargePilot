@@ -10,6 +10,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 sqlx = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 chargepilot-events = { path = "../events" }
@@ -28,6 +29,7 @@ chargepilot-storage = { path = "../storage" }
 chargepilot-mod-order = { path = "../modules/order" }
 rand = { workspace = true }
 chrono = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
 

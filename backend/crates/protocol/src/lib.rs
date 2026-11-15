@@ -40,6 +40,51 @@ pub enum EventType {
     LocalStart,
 }
 
+impl EventType {
+    /// 持久化与载荷路由用字符串标记。与 `format!("{k:?}")` 的调试格式
+    /// 逐字一致（device_event.event_type / 载荷 "type" 字段的既有形态，
+    /// 兼容在途数据）；对照测试锁定两者不漂移。
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Heartbeat => "Heartbeat",
+            Self::StartResult => "StartResult",
+            Self::StopResult => "StopResult",
+            Self::ChargeEnd => "ChargeEnd",
+            Self::Fault => "Fault",
+            Self::RemoteResult => "RemoteResult",
+            Self::ConfigResult => "ConfigResult",
+            Self::Telemetry => "Telemetry",
+            Self::TimeSync => "TimeSync",
+            Self::CardSwipe => "CardSwipe",
+            Self::CardBalanceQuery => "CardBalanceQuery",
+            Self::LocalStart => "LocalStart",
+        }
+    }
+
+    /// 从持久化字符串还原类别；未知值返回 None（调用方显性处理，
+    /// 不再依赖字符串碰巧一致）。
+    #[must_use]
+    pub fn parse(raw: &str) -> Option<Self> {
+        let kind = match raw {
+            "Heartbeat" => Self::Heartbeat,
+            "StartResult" => Self::StartResult,
+            "StopResult" => Self::StopResult,
+            "ChargeEnd" => Self::ChargeEnd,
+            "Fault" => Self::Fault,
+            "RemoteResult" => Self::RemoteResult,
+            "ConfigResult" => Self::ConfigResult,
+            "Telemetry" => Self::Telemetry,
+            "TimeSync" => Self::TimeSync,
+            "CardSwipe" => Self::CardSwipe,
+            "CardBalanceQuery" => Self::CardBalanceQuery,
+            "LocalStart" => Self::LocalStart,
+            _ => return None,
+        };
+        Some(kind)
+    }
+}
+
 /// 单端口充电读数：时长单位秒，电量单位毫瓦时（mWh），功率单位 0.1 瓦。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PortTelemetry {
@@ -73,6 +118,9 @@ pub struct Event {
     pub port: u8,
     /// 设备命令结果码（启动/停止/配置应答原值）。
     pub result_code: u8,
+    /// 中性成败判定（协议适配器翻译应答码后填写；非应答类事件为 None）。
+    /// 厂商码值语义不进运行时：gateway-runtime 只读本字段，不认识原始码。
+    pub success: Option<bool>,
     /// 故障码原值（故障事件）。
     pub fault_code: u8,
     /// 结束事件累计电量（Wh；入库时再除以 1000 转 kWh）。
@@ -115,6 +163,51 @@ pub struct Event {
     pub card_balance_units: u16,
     /// 命令关联的设备订单号（8 字节 BCD 原文）。
     pub order_bcd: [u8; 8],
+}
+
+/// 设备事件载荷的读取视图（gateway-runtime 从 `device_event.event_json` /
+/// `domain_event.payload` 反序列化的唯一入口）。字段名与既有 JSON 逐字一致；
+/// 写侧保持全字段平面投影（本类型不相关的字段为 null，多余字段反序列化时
+/// 忽略，兼容在途载荷）。解析失败显性报错，调用方不再静默补 0。
+pub mod event_payload {
+    use chrono::{DateTime, Utc};
+    use serde::Deserialize;
+
+    /// 启动/停止应答（B8/BA）。`success` 由协议适配器翻译后投影；
+    /// 旧格式在途载荷无此字段（None），调用方按「证据缺失」显性处理。
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct CommandResultPayload {
+        pub device_id: String,
+        pub port: u8,
+        pub result_code: u8,
+        pub success: Option<bool>,
+    }
+
+    /// 充电结束上报（BB）。
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct ChargeEndPayload {
+        pub device_id: String,
+        pub port: u8,
+        pub order_number: String,
+        pub energy_wh: u32,
+        pub charged_seconds: u32,
+        pub ended_at: Option<DateTime<Utc>>,
+        pub stop_reason: u8,
+    }
+
+    /// 刷卡（B6）/ 余额查询（D0）/ 故障（C0）/ 本地启动（B4）共用的公共字段。
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct CardEventPayload {
+        pub event_id: String,
+        pub event_key: String,
+        pub device_id: String,
+        pub port: u8,
+        pub card_number: u32,
+        pub consumer_type: u8,
+        pub fault_code: u8,
+        pub received_at: Option<DateTime<Utc>>,
+        pub order_number: String,
+    }
 }
 
 /// 平台下发命令的类别。
@@ -291,4 +384,33 @@ pub trait Adapter: Send + Sync {
         recorder: Option<Arc<dyn SessionRecorder>>,
         router: Option<Arc<dyn SessionRouter>>,
     ) -> BoxFut<std::io::Result<()>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// as_str 与既有调试格式逐字一致（device_event.event_type / 载荷
+    /// "type" 字段的存量形态），词表漂移在编译期测试锁定。
+    #[test]
+    fn event_type_as_str_matches_legacy_debug_format() {
+        for kind in [
+            EventType::Heartbeat,
+            EventType::StartResult,
+            EventType::StopResult,
+            EventType::ChargeEnd,
+            EventType::Fault,
+            EventType::RemoteResult,
+            EventType::ConfigResult,
+            EventType::Telemetry,
+            EventType::TimeSync,
+            EventType::CardSwipe,
+            EventType::CardBalanceQuery,
+            EventType::LocalStart,
+        ] {
+            assert_eq!(kind.as_str(), format!("{kind:?}"));
+            assert_eq!(EventType::parse(kind.as_str()), Some(kind));
+        }
+        assert_eq!(EventType::parse("Nope"), None);
+    }
 }

@@ -518,6 +518,13 @@ async fn dispatch(
             });
             event.port = result.port;
             event.result_code = result.code;
+            // 厂商应答码 → 中性成败，翻译只发生在协议实现内（B8: 0 成功；
+            // BA 词表：0 无端口、1 空闲、4 故障、0x10 成功），运行时零码值。
+            event.success = Some(if f.command == 0xB8 {
+                result.code == 0
+            } else {
+                result.code == 0x10
+            });
             sink.record(event).await.map_err(io_of)?;
         }
         // BB 结束订单：落库 → BC 确认。

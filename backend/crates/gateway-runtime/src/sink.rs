@@ -322,7 +322,10 @@ async fn persist_event(pool: &MySqlPool, event: &Event) -> anyhow::Result<()> {
         "event_id": event.event_id,
         "event_key": key,
         "device_id": event.device_id,
-        "type": event.kind.map(|k| format!("{k:?}")).unwrap_or_default(),
+        // 词表标记（与既有调试格式逐字一致，兼容在途载荷）；不再依赖
+        // 调试格式偶然等于路由字符串。
+        "type": event.kind.map(|k| k.as_str()).unwrap_or_default(),
+        "success": event.success,
         "port": event.port,
         "result_code": event.result_code,
         "fault_code": event.fault_code,
@@ -349,7 +352,7 @@ async fn persist_event(pool: &MySqlPool, event: &Event) -> anyhow::Result<()> {
     )
     .bind(&key)
     .bind(&event.device_id)
-    .bind(event.kind.map(|k| format!("{k:?}")).unwrap_or_default())
+    .bind(event.kind.map(|k| k.as_str()).unwrap_or_default())
     .bind(i64::from(event.port))
     .bind(&payload)
     .bind(ts)
