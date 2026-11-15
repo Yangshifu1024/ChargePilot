@@ -1,8 +1,9 @@
 //! 设备启动/结束回执应用（旧版 charging/start/result_repo.go 与
 //! charging/finish/result_repo.go 对齐；本批覆盖微信支付路径，卡随批 6）。
-//! 幂等（红线）：同命令同内容重放静默确认，不同内容报冲突。
+//! 幂等（红线）：同命令同内容重放静默确认，不同内容报冲突。SQL 在 repo/。
 
 use crate::error::ReceiptError;
+use crate::repo::{receipts, set_read_committed};
 use chargepilot_domain::charging::actual::{EndMeter, same_segments};
 use sqlx::{Acquire, MySqlPool};
 
@@ -40,21 +41,14 @@ pub async fn apply_start_receipt(
         return Err(ReceiptError::Conflict);
     }
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await?;
+    set_read_committed(&mut conn).await?;
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
 
     // 锁订单并核对设备与端口（user_id 供成功分支写端口占用）。
-    let order_no_row: Option<(u64, String, u64, String, u8)> = sqlx::query_as(
-        "SELECT `id`, `order_no`, `user_id`, `device_id`, `port_no` FROM `charge_order` \
-         WHERE `id` = ? FOR UPDATE",
-    )
-    .bind(input.charge_order_id as i64)
-    .fetch_optional(&mut *c)
-    .await?;
-    let Some((id, order_no, view_user_id, device_id, port_no)) = order_no_row else {
+    let Some((id, order_no, view_user_id, device_id, port_no)) =
+        receipts::lock_receipt_order_tx(&mut *c, input.charge_order_id).await?
+    else {
         return Err(ReceiptError::Conflict);
     };
     if id != input.charge_order_id
@@ -65,17 +59,8 @@ pub async fn apply_start_receipt(
         return Err(ReceiptError::Conflict);
     }
     // 幂等：同命令已登记。同内容静默确认，不同内容冲突（旧版逐列核对）。
-    // 启动回执幂等投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
-    type StartReceiptRow = (u64, Option<String>, Option<String>, Option<u8>, bool);
-    let existing: Option<StartReceiptRow> = sqlx::query_as(
-        "SELECT `charge_order_id`, `order_no`, `device_id`, `port_no`, `success` \
-         FROM `charge_start_receipt` WHERE `command_id` = ?",
-    )
-    .bind(&input.command_id)
-    .fetch_optional(&mut *c)
-    .await?;
     if let Some((existing_order, existing_no, existing_device, existing_port, existing_success)) =
-        existing
+        receipts::find_start_receipt_tx(&mut *c, &input.command_id).await?
     {
         if existing_order != input.charge_order_id
             || existing_no.as_deref() != Some(input.order_no.as_str())
@@ -89,31 +74,23 @@ pub async fn apply_start_receipt(
         return Ok(true);
     }
     // 状态必须是 paid（旧版 view.Status != paid 冲突）。
-    let status: chargepilot_domain::order::ChargeOrderStatus =
-        sqlx::query_scalar("SELECT `status` FROM `charge_order` WHERE `id` = ?")
-            .bind(id as i64)
-            .fetch_one(&mut *c)
-            .await?;
+    let status = receipts::order_status_tx(&mut *c, id).await?;
     if status != chargepilot_domain::order::ChargeOrderStatus::Paid {
         return Err(ReceiptError::Conflict);
     }
     // 登记回执（uk_command 幂等）。
-    sqlx::query(
-        "INSERT INTO `charge_start_receipt` \
-         (`charge_order_id`, `command_id`, `success`, `port_id`, `order_no`, `device_id`, \
-          `port_no`, `result_code`, `occurred_at`) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    receipts::insert_start_receipt_tx(
+        &mut *c,
+        id,
+        &input.command_id,
+        input.success,
+        input.port_id,
+        &input.order_no,
+        &input.device_id,
+        input.port_no,
+        input.result_code,
+        occurred_at,
     )
-    .bind(id as i64)
-    .bind(&input.command_id)
-    .bind(input.success)
-    .bind(input.port_id as i64)
-    .bind(&input.order_no)
-    .bind(&input.device_id)
-    .bind(input.port_no)
-    .bind(input.result_code)
-    .bind(occurred_at)
-    .execute(&mut *c)
     .await?;
 
     let event_id = format!("S{}", &input.command_id[..32.min(input.command_id.len())]);
@@ -134,12 +111,7 @@ pub async fn apply_start_receipt(
         .await?;
         // 刷卡首购操作确认（非刷卡订单无行，天然幂等）。
         chargepilot_mod_card::confirm_start_operation_tx(&mut *c, id).await?;
-        sqlx::query("UPDATE `charge_command` SET `status` = ?, `result_code` = 0, `ack_at` = ?, `result_reported` = 1 WHERE `charge_order_id` = ?")
-            .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Acked)
-            .bind(occurred_at)
-            .bind(id as i64)
-            .execute(&mut *c)
-            .await?;
+        receipts::ack_command_tx(&mut *c, id, occurred_at).await?;
         chargepilot_mod_order::append_event_in_tx(
             &mut *c,
             id,
@@ -160,48 +132,16 @@ pub async fn apply_start_receipt(
     let _refunding =
         chargepilot_mod_order::mark_start_rejected_tx(&mut *c, id, &order_no, &reason).await?;
     chargepilot_mod_card::fail_start_operation_tx(&mut *c, id).await?;
-    let payment_order_id: u64 = sqlx::query_scalar(
-        "SELECT `payment_order_id` FROM `charge_payment_intent` WHERE `charge_order_id` = ?",
-    )
-    .bind(id as i64)
-    .fetch_one(&mut *c)
-    .await?;
+    let payment_order_id = crate::repo::intent_payment_id_tx(&mut *c, id).await?;
     let cleaned = input.command_id.replace('-', "");
     let refund_no = format!("WR{}", &cleaned[..cleaned.len().min(32)]);
-    sqlx::query(
-        "INSERT INTO `refund_record` (`refund_no`, `payment_order_id`, `user_id`, `biz_type`, \
-         `biz_id`, `refund_cents`, `reason`, `status`, `execution_policy`, `created_month`) \
-         SELECT ?, ?, c.`user_id`, 'charge', c.`id`, p.`paid_cents`, ?, ?, ?, c.`created_month` \
-         FROM `charge_order` c JOIN `payment_order` p ON p.`id` = ? \
-         WHERE c.`id` = ?",
-    )
-    .bind(&refund_no)
-    .bind(payment_order_id as i64)
-    .bind(&reason)
-    .bind(chargepilot_domain::money::RefundStatus::Pending)
-    .bind(chargepilot_domain::money::ExecutionPolicy::Automatic)
-    .bind(payment_order_id as i64)
-    .bind(id as i64)
-    .execute(&mut *c)
-    .await?;
-    sqlx::query("UPDATE `charge_command` SET `status` = ?, `result_code` = ?, `result_reported` = 1, `error` = ? WHERE `charge_order_id` = ?")
-        .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Rejected)
-        .bind(input.result_code)
-        .bind(&reason)
-        .bind(id as i64)
-        .execute(&mut *c)
+    crate::repo::insert_charge_refund_tx(&mut *c, &refund_no, payment_order_id, id, &reason)
         .await?;
+    receipts::reject_command_tx(&mut *c, id, input.result_code, &reason).await?;
     // 释放端口预占（active_port_charge 与意图释放同事务）；刷卡会话占用一并释放。
     chargepilot_mod_order::release_port_tx(&mut *c, &device_id, port_no, id).await?;
     chargepilot_mod_card::card_charge_port_release_tx(&mut *c, id).await?;
-    sqlx::query(
-        "UPDATE `charge_payment_intent` SET `status` = ? WHERE `charge_order_id` = ? AND `status` = ?",
-    )
-    .bind(chargepilot_domain::payment::PaymentIntentStatus::RefundRequired)
-    .bind(id as i64)
-    .bind(chargepilot_domain::payment::PaymentIntentStatus::Paid)
-    .execute(&mut *c)
-    .await?;
+    crate::repo::mark_intent_refund_required_tx(&mut *c, id).await?;
     chargepilot_mod_order::append_domain_event_tx(
         &mut *c,
         &event_id,
@@ -251,9 +191,7 @@ pub async fn apply_end_receipt(
         serde_json::to_string(&input.meter).map_err(|e| ReceiptError::Storage(e.to_string()))?;
 
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await?;
+    set_read_committed(&mut conn).await?;
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
 
@@ -269,13 +207,9 @@ pub async fn apply_end_receipt(
         return Err(ReceiptError::Conflict);
     }
     // 幂等：已有回执 → 同内容重放确认，不同内容冲突。
-    let existing: Option<(String,)> = sqlx::query_as(
-        "SELECT CAST(`meter_json` AS CHAR) FROM `charge_end_receipt` WHERE `charge_order_id` = ?",
-    )
-    .bind(input.charge_order_id as i64)
-    .fetch_optional(&mut *c)
-    .await?;
-    if let Some((previous_json,)) = existing {
+    if let Some(previous_json) =
+        receipts::find_end_receipt_tx(&mut *c, input.charge_order_id).await?
+    {
         let previous: EndMeter = serde_json::from_str(&previous_json)
             .map_err(|e| ReceiptError::Storage(e.to_string()))?;
         if previous.charged_wh != input.meter.charged_wh
@@ -299,14 +233,9 @@ pub async fn apply_end_receipt(
         return Err(ReceiptError::Conflict);
     }
     // 成功启动凭据核对（旧版 start.PortID 匹配）。
-    let start: Option<(String, bool, Option<u64>)> = sqlx::query_as(
-        "SELECT CAST(`command_id` AS CHAR), `success`, `port_id` FROM `charge_start_receipt` \
-         WHERE `charge_order_id` = ?",
-    )
-    .bind(input.charge_order_id as i64)
-    .fetch_optional(&mut *c)
-    .await?;
-    let Some((start_cmd, start_success, start_port)) = start else {
+    let Some((start_cmd, start_success, start_port)) =
+        receipts::find_start_credential_tx(&mut *c, input.charge_order_id).await?
+    else {
         return Err(ReceiptError::Conflict);
     };
     if !start_success
@@ -316,14 +245,12 @@ pub async fn apply_end_receipt(
         return Err(ReceiptError::Conflict);
     }
     // 计量校验：分段、总电量与时长一致性（旧版在计费侧校验，这里先存证据）。
-    sqlx::query(
-        "INSERT INTO `charge_end_receipt` (`charge_order_id`, `stop_command_id`, `meter_json`) \
-         VALUES (?, ?, CAST(? AS JSON))",
+    receipts::insert_end_receipt_tx(
+        &mut *c,
+        input.charge_order_id,
+        &input.stop_command_id,
+        &meter_json,
     )
-    .bind(input.charge_order_id as i64)
-    .bind(&input.stop_command_id)
-    .bind(&meter_json)
-    .execute(&mut *c)
     .await?;
     // 订单完成：charging → completed + 计量列（Wh→kWh 四位小数）。
     // Wh → kWh：四位定点小数（旧版 StringFixed(4) 语义；电量非负，除法安全）。
@@ -365,13 +292,7 @@ pub async fn apply_end_receipt(
     )
     .await
     .map_err(|e| ReceiptError::Storage(e.to_string()))?;
-    sqlx::query(
-        "INSERT IGNORE INTO `charge_billing_job` (`charge_order_id`, `status`) VALUES (?, ?)",
-    )
-    .bind(input.charge_order_id as i64)
-    .bind(chargepilot_domain::settlement::BillingJobStatus::Pending)
-    .execute(&mut *c)
-    .await?;
+    receipts::insert_billing_job_tx(&mut *c, input.charge_order_id).await?;
     chargepilot_mod_order::append_domain_event_tx(
         &mut *c,
         &input.stop_command_id,

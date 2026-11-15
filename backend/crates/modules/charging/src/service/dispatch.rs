@@ -1,6 +1,7 @@
 //! 启动投递器：消费 charge_payment_confirmed 事件，写启动命令与端口预占，
-//! 下发设备命令。幂等（ADR 002）：同订单重复投递不重复建命令。
+//! 下发设备命令。幂等（ADR 002）：同订单重复投递不重复建命令。SQL 在 repo/dispatch.rs。
 
+use crate::repo::dispatch;
 use crate::sink::CommandSink;
 use chargepilot_events::{EnqueuedEvent, EventDispatcher};
 use chargepilot_platform::ids::SegmentAllocator;
@@ -35,64 +36,41 @@ impl StartDispatcher {
             .and_then(|v| v.as_u64())
             .ok_or_else(|| anyhow::anyhow!("事件载荷缺少 charge_order_id"))?;
         // 幂等：已有命令直接确认。
-        let existing: Option<(String,)> = sqlx::query_as(
-            "SELECT CAST(`command_id` AS CHAR) FROM `charge_command` WHERE `charge_order_id` = ?",
-        )
-        .bind(charge_order_id as i64)
-        .fetch_optional(&self.pool)
-        .await?;
-        if existing.is_some() {
+        if dispatch::find_command_tx(&self.pool, charge_order_id)
+            .await?
+            .is_some()
+        {
             return Ok(());
         }
         // 读订单与意图事实（快照与执行量在意图上）。
-        let order: Option<(u64, String, u64, String, u8, u8, u16)> = sqlx::query_as(
-            "SELECT c.`id`, c.`order_no`, c.`user_id`, c.`device_id`, c.`port_no`, \
-                    i.`charge_mode`, i.`charge_quantity` \
-             FROM `charge_order` c JOIN `charge_payment_intent` i ON i.`charge_order_id` = c.`id` \
-             WHERE c.`id` = ? AND c.`status` = ? LIMIT 1",
-        )
-        .bind(charge_order_id as i64)
-        .bind(chargepilot_domain::order::ChargeOrderStatus::Paid)
-        .fetch_optional(&self.pool)
-        .await?;
-        let Some((id, order_no, user_id, device_id, port_no, charge_mode, quantity)) = order else {
+        let Some((id, order_no, user_id, device_id, port_no, charge_mode, quantity)) =
+            dispatch::paid_order_with_intent(&self.pool, charge_order_id).await?
+        else {
             // 非 paid 状态（失败/完成）时事件按已处理确认，不再重试。
             return Ok(());
         };
-        let port_code: String =
-            sqlx::query_scalar("SELECT `port_code` FROM `charge_order` WHERE `id` = ?")
-                .bind(id as i64)
-                .fetch_one(&self.pool)
-                .await?;
+        let port_code = dispatch::order_port_code(&self.pool, id).await?;
         let command_id = chargepilot_platform::ids::uuid_v4();
         let stop_command_id = chargepilot_platform::ids::uuid_v4();
 
         // 写命令 + 端口预占（同事务；预占冲突即命令重复，幂等跳过）。
         let mut tx = self.pool.begin().await?;
         let conn = tx.acquire().await?;
-        let inserted = sqlx::query(
-            "INSERT INTO `charge_command` \
-             (`command_id`, `stop_command_id`, `charge_order_id`, `payment_order_id`, `order_no`, \
-              `user_id`, `device_id`, `port_no`, `port_code`, `owns_port`, `status`, \
-              `charge_mode`, `quantity`) \
-             SELECT ?, ?, ?, p.`payment_order_id`, ?, ?, ?, ?, ?, 1, ?, ?, ? \
-             FROM `charge_payment_intent` p WHERE p.`charge_order_id` = ?",
+        let insert_result = dispatch::insert_command_tx(
+            conn,
+            &command_id,
+            &stop_command_id,
+            id,
+            &order_no,
+            user_id,
+            &device_id,
+            port_no,
+            &port_code,
+            charge_mode,
+            quantity,
         )
-        .bind(&command_id)
-        .bind(&stop_command_id)
-        .bind(id as i64)
-        .bind(&order_no)
-        .bind(user_id as i64)
-        .bind(&device_id)
-        .bind(port_no)
-        .bind(&port_code)
-        .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Pending)
-        .bind(charge_mode)
-        .bind(quantity as i64)
-        .bind(id as i64)
-        .execute(&mut *conn)
         .await;
-        match inserted {
+        match insert_result {
             Err(sqlx::Error::Database(db)) if db.code().as_deref() == Some("23000") => {
                 // 命令已存在（并发投递）：视为幂等成功。
                 tx.rollback().await?;
@@ -104,11 +82,7 @@ impl StartDispatcher {
         // 命令落库即标记已发送；设备确认随回执推进（旧版 sent_at 语义）。
         // 端口占用不在受理时写：与旧版一致，成功回执（apply_start_receipt）
         // 才占 active_port_charge，结束回执按订单释放。
-        sqlx::query("UPDATE `charge_command` SET `status` = ?, `sent_at` = UTC_TIMESTAMP(3) WHERE `command_id` = ?")
-            .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Sent)
-            .bind(&command_id)
-            .execute(&mut *conn)
-            .await?;
+        dispatch::mark_command_sent_tx(conn, &command_id).await?;
         tx.commit().await?;
 
         // 下发设备命令（simulation：直接成功，测试/开发闭环在回执侧推进）。
@@ -126,9 +100,9 @@ impl StartDispatcher {
                 if !self.simulation {
                     return Ok(());
                 }
-                crate::receipts::apply_start_receipt(
+                crate::service::receipts::apply_start_receipt(
                     &self.pool,
-                    &crate::receipts::StartReceiptInput {
+                    &crate::service::receipts::StartReceiptInput {
                         command_id,
                         charge_order_id: id,
                         order_no,
@@ -145,14 +119,7 @@ impl StartDispatcher {
             }
             Err(e) => {
                 // 下发失败：命令标记 rejected，订单走失败路径（可重试由 sweeper 兜底）。
-                sqlx::query(
-                    "UPDATE `charge_command` SET `status` = ?, `error` = ? WHERE `command_id` = ?",
-                )
-                .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Rejected)
-                .bind(&e)
-                .bind(&cmd.command_id)
-                .execute(&self.pool)
-                .await?;
+                dispatch::mark_command_rejected_tx(&self.pool, &cmd.command_id, &e).await?;
                 anyhow::bail!("启动命令下发失败: {e}")
             }
         }

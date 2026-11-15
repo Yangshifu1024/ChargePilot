@@ -13,17 +13,18 @@
 
 pub use error::{ReceiptError, StopError};
 
-pub mod dispatch;
 pub mod error;
-pub mod receipts;
+pub mod repo;
+pub mod service;
 pub mod sink;
-pub mod stop;
-pub mod sweeper;
 
-pub use dispatch::StartDispatcher;
-pub use receipts::{EndReceiptInput, StartReceiptInput, apply_end_receipt, apply_start_receipt};
+pub use service::dispatch::StartDispatcher;
+pub use service::receipts::{
+    EndReceiptInput, StartReceiptInput, apply_end_receipt, apply_start_receipt,
+};
+pub use service::stop::{ActiveStop, StopService};
+pub use service::{dispatch, receipts, stop, sweeper};
 pub use sink::{CommandSink, SimulationSink, StartCommand};
-pub use stop::{ActiveStop, StopService};
 
 /// dyn 兼容 Future 别名的公共出口（模块内部各自引用）。
 pub mod futures_bounds {
