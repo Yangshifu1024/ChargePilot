@@ -35,6 +35,44 @@ backend/crates/
 └── app/                   # 组合根(装配 + serve/migrate/simulator)→ 07
 ```
 
+```mermaid
+flowchart TD
+    DOM["domain<br/>(纯规则 + 词表,零依赖)"]
+    PLT["platform<br/>(横切能力)"]
+    STO["storage<br/>(池 + 迁移)"]
+    EVT["events<br/>(事务内入队 + 投递)"]
+    PRO["protocol<br/>(设备契约,F5 冻结)"]
+    PDC["protocol-dc589<br/>(唯一协议实现)"]
+
+    subgraph MODS["modules:12 个域 crate(ops 为依赖根)"]
+        direction LR
+        OPS[ops] --- ORD[order] --- CHT[charging] --- PAY[payment] --- STL[settlement] --- WAL[wallet] --- CRD[card] --- DEV[device] --- IDE[identity] --- MKT[marketing] --- PRC[pricing] --- EXP[export]
+    end
+
+    GW["gateway-runtime<br/>(TCP 接入运行时)"]
+    HTTP["http-api<br/>(聚合门面层)"]
+    APP["app<br/>(组合根,唯一读 env)"]
+
+    MODS --> DOM
+    MODS --> PLT
+    MODS --> EVT
+    EVT --> PLT
+    EVT --> DOM
+    PDC --> PRO
+    GW --> PDC
+    GW --> EVT
+    GW --> DOM
+    GW --> STO
+    GW -- "充电链路直调域服务面<br/>(偏离登记 #2)" --> MODS
+    HTTP --> MODS
+    HTTP --> PLT
+    HTTP -- "仅 SnapshotStore<br/>(偏离登记 #1)" --> GW
+    APP --> HTTP
+    APP --> GW
+    APP --> MODS
+    APP --> PLT
+```
+
 依赖规则(编译器强制,详见蓝图第四章):`domain` 零依赖;`modules/<域>` → domain + platform + events + 显式列出的其它 modules(Cargo.toml 即依赖清单,跨域依赖须有业务理由注释);`http-api` → 用到的 modules + platform + gateway-runtime(仅 SnapshotStore,偏离登记 #1);`app` → 一切。
 
 ## 按任务找图

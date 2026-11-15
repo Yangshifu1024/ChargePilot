@@ -24,6 +24,19 @@ platform 不依赖任何业务模块;**任何模块不得绕过它直读环境�
 
 ## 2. events —— 领域事件层(契约见 03 第 3 节)
 
+### 2.1 事件生命周期
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: 业务事务内 enqueue::in_tx<br/>(事件与业务写入同事务提交)
+    pending --> published: runtime 投递成功<br/>(1s 轮询按 EventKind 路由)
+    pending --> pending: 失败退避重排<br/>(间隔 2^retry 秒,retry 封顶 8)
+    pending --> dead: 重试耗尽(死信停投;<br/>业务侧由各域兜底扫描推滞者)
+    published --> [*]
+```
+
+### 2.2 模块组成
+
 ```text
 events/src/
 ├── lib.rs      # EventSource / EventKind(8 值)/ EventDeliveryStatus / EnqueuedEvent

@@ -23,6 +23,27 @@ http-api/src/
 - **错误映射枢纽**(errormap.rs):每个域错误类型一个映射函数(如 `identity_error`/`wallet_error`),handler 出错统一走 `errormap::<域>_error(e, rid)`;注意 `WalletError` 有两个映射函数(`wallet_error` C 端 / `risk_error` 后台),这是保留契约差异的有意形态。`rid_of`(请求 ID)、`bearer`(令牌提取)、`respond`(信封写出)也住在 errormap。
 - **权限模型**:后台每个 handler 以 `deny(&guard, perms::XXX, &rid)` 起手(权限码词表唯一真相源是 `modules/ops/src/perms.rs`);用户端经 `user_guard.rs` 提取器鉴权。
 
+## 1.5 请求处理管线
+
+```mermaid
+flowchart LR
+    A["客户端<br/>(admin-web / 小程序 / H5)"] --> B["axum 路由<br/>lib.rs::build_router"]
+    B --> C{"路由类别"}
+    C -- "后台 /api/v1/admin" --> D["AdminGuard 提取器<br/>(JWT admin kind + 实时权限)"]
+    D --> E["deny(权限码) 检查<br/>(词表唯一真相源 ops::perms.rs)"]
+    C -- "C 端 /api/v1/user" --> F["UserSession 提取器<br/>(JWT user kind)"]
+    C -- "资金域条件路由" --> G["ApiDeps 装配开关<br/>(未装配 → 路由不注册)"]
+    E --> H["params.rs 双轨提取器<br/>(UserPaging/AdminPaging → PageRequest 唯一校验)"]
+    F --> H
+    G --> H
+    H --> I["views/域 薄门面<br/>→ 域 service → repo"]
+    I --> J{"结果"}
+    J -- "Ok" --> K["httpx::ok 信封"]
+    J -- "Err" --> L["errormap::域_error<br/>→ 冻结错误码(F6)"]
+    K --> M["响应 {code, message, data,<br/>request_id, trace_id}"]
+    L --> M
+```
+
 ## 2. 路由总览
 
 共 **122 条 route 注册,按方法拆开 139 个业务端点**。前缀约定:`/api/v1/admin/*` 后台、`/api/v1/user/*` C 端(H5/小程序)。响应统一信封 `{code, message, data, request_id, trace_id, errors?}`。

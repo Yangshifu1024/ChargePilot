@@ -13,6 +13,14 @@
 
 **decode 三方向(F10)**:
 
+```mermaid
+flowchart LR
+    V["词表值(wordlist_enum!)"] --> D{"来源方向"}
+    D -- "DB → Rust" --> A["严格失败<br/>未知值 = schema 漂移报警"]
+    D -- "设备/外部上报" --> T["原值透传<br/>(协议翻译封闭在 protocol-dc589)"]
+    D -- "API 入参" --> B["解析失败 → 400"]
+```
+
 | 方向 | 行为 |
 |---|---|
 | DB → Rust | 严格失败——未知值即 schema 漂移报警 |

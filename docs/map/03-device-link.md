@@ -3,6 +3,46 @@
 > 覆盖:TCP 设备接入的契约层、DC589 协议实现、接入运行时、事件投递。
 > 规则归属:协议两层结构与 36 条指令/帧格式/故障码语义是冻结红线(F5);容量预算 G1–G4 见 gateway-runtime/src/lib.rs 总纲。
 
+## 0. 上行事件泳道图(设备帧 → 域用例)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor D as 设备(TCP :9100)
+    participant A as protocol-dc589 适配器
+    participant S as GatewaySink
+    participant SN as SnapshotStore
+    participant T as TelemetryBuffer
+    participant E as events runtime
+    participant DE as DeviceEventDispatcher
+    participant DM as 各域原语
+
+    D->>A: TCP 帧(EE|LEN|CMD|SESSION|DATA|SUM)
+    A->>A: 解码 → 中性 Event<br/>(应答码/故障码翻译封闭在本层,F5)
+    A->>S: record(Event)<br/>(持久化成功后才回 ACK 帧)
+    alt 心跳 / 遥测(A4 等)
+        S->>SN: 内存快照先更新(毫秒级,只承载显示与估算)
+        S->>T: 有界缓冲(200ms 或 500 条批量;满丢最旧明细 ADR 005)
+        T->>T: 批量落 telemetry + 15min/小时聚合
+    else 业务事件(B8/BA/BB/B6/C0/B4)
+        S->>E: device_event + domain_event 同事务落库
+        E->>DE: 按 EventKind 路由(1s 轮询;失败退避 2^retry 秒)
+        DE->>DM: B8/BA/BB→charging 回执原语<br/>B6→card::SwipeService<br/>C0→device::alert 告警<br/>B4→平台侧补单
+    end
+```
+
+## 0.2 下发命令流程(平台 → 设备)
+
+```mermaid
+flowchart TD
+    A["charging StartDispatcher<br/>(charge_payment_confirmed 事件触发)"] --> B["GatewayCommandSink<br/>(charging CommandSink trait 的真实实现)"]
+    B --> C{"SessionRegistry<br/>有该设备会话?"}
+    C -- "在线" --> D["DeviceSession 串行下发<br/>(B7 启动 / B9 停止)"]
+    D --> E["mark_command_sent_tx<br/>(下发成功后落库)"]
+    C -- "离线" --> F["命令标 rejected"]
+    F --> G["charging-start-timeout 兜底扫描(30s)<br/>订单 refunding → 退款登记"]
+```
+
 ## 1. 两层协议结构(F5,结构冻结)
 
 ```text

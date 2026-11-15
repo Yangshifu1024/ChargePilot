@@ -4,6 +4,81 @@
 > 这是平台的主干业务流,跨越 payment → charging → gateway-runtime → events → order → settlement → wallet 七个 crate。
 > 规则归属:状态机定案(ADR 002)、支付成功事务是入口、事件 at-least-once 见蓝图 F3;order 写侧无编排层(原语范式)是评审定案,见蓝图第五章。
 
+## 0.1 全景泳道图:下单支付 → 启动命令
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as 用户(小程序/H5)
+    participant H as http-api
+    participant P as payment 域
+    participant O as order 域
+    participant E as events
+    participant C as charging 域
+    participant G as gateway-runtime
+    actor D as 设备(DC589)
+
+    U->>H: POST /user/scan/start
+    H->>P: CheckoutService 下单
+    P->>P: 冻结支付意图 + 计费快照<br/>(幂等: client_request_id 原单恢复)
+    P-->>U: 返回支付参数
+    Note over P: 微信回调 / 模拟确认汇入同一入口
+    P->>P: apply 支付成功事务(READ COMMITTED)
+    P->>O: create_paid_in_tx + freeze_pricing_in_tx
+    P->>E: enqueue(charge_payment_confirmed)<br/>与业务同事务提交
+    E->>C: 1s 轮询投递 → StartDispatcher
+    C->>O: occupy_port_tx(端口预占)
+    C->>G: StartCommand(GatewayCommandSink)
+    G->>D: B7 启动帧
+    Note over C,D: 设备离线 → 命令标 rejected → 兜底扫描退款(见 09)
+```
+
+## 0.2 全景泳道图:回执推进 → 停止 → 计费
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor D as 设备(DC589)
+    participant G as gateway-runtime
+    participant E as events
+    participant C as charging 域
+    participant O as order 域
+    participant S as settlement 域
+    actor U as 用户(小程序/H5)
+
+    D->>G: B8 启动应答(厂商应答码)
+    Note over G: 适配器翻译 → 中性 success(码值不进运行时)
+    G->>E: 落 device_event + domain_event(同事务)
+    E->>C: device_event → handle_start_result
+    C->>C: locate_pending_start<br/>(定位最近 sent 命令 + 组装回执输入)
+    C->>C: apply_start_receipt 事务<br/>(幂等核对 + 状态必须 paid)
+    C->>O: mark_charging_tx(订单 charging) + 端口占用确认
+    Note over D,U: 充电中:心跳遥测 → 批量落库与聚合;<br/>C 端轮询 /charge/ongoing/snapshot 读 SnapshotStore
+    U->>C: 用户停止(StopService,条件注册路由)
+    C->>G: B9 停止帧(停止命令 pending → sent)
+    D->>G: BA 停止应答
+    G->>C: ack_stop_command(→ Acked/Rejected)
+    D->>G: BB 结束上报(计量分段)
+    G->>C: apply_end_receipt 事务
+    C->>O: complete_tx(订单 completed) + release_port_tx(释放端口)
+    C->>S: insert_billing_job_tx(计费任务)
+    S->>S: settle_session 纯函数结算<br/>→ 费用回执 + 账单签发(15s 循环)
+```
+
+## 0.3 退款汇合流程
+
+```mermaid
+flowchart LR
+    A["① 自动:启动失败/超时<br/>charging 失败分支 + 兜底扫描"] --> X
+    B["② 自动:计费余款<br/>settlement::billing 登记"] --> X
+    C["③ 人工:双人审核<br/>refund_admin(两名不同操作者)"] --> X
+    W["④ 钱包余额退款<br/>风控通过后转入"] --> X
+    X["refund_executor<br/>(15s 独立循环)"] --> Y["渠道执行退款<br/>(微信退款构造 / simulation 直接成功)"]
+    Y --> Z["payment_order.refunded_cents 推进<br/>(CHECK 约束防超退)"]
+    Z --> O["订单 refunding → refunded<br/>(order::advance_refunded_tx)"]
+    O --> E["refund_completed 事件"]
+```
+
 ## 0. 参与角色速查
 
 | crate | 在本链路中的角色 | 关键入口 |

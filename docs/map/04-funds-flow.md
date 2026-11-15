@@ -14,6 +14,29 @@
 | card | 在线卡扣款(资金动作发生在 swipe 事务内) | online_card、card_operation、card_charge、online_card_audit、card_event_delivery |
 | order | 订单资金列推进(refunded_cents 等,经原语) | charge_order(资金列)、charge_order_pricing、charge_event_log |
 
+## 1.5 充值泳道图
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as 用户
+    participant H as http-api
+    participant W as wallet 域
+    participant P as payment 域
+    participant CH as 支付渠道
+    actor ADM as 后台(customer_finance)
+
+    U->>H: POST /user/wallet/recharge(条件注册:checkout)
+    H->>W: 充值申请事务<br/>(幂等建单;锁序 用户→钱包→请求)
+    W->>P: RechargeBridge(RechargePayments 唯一生产实现)
+    Note over W,CH: 预支付只在事务提交后发起(外部调用不出事务)
+    P->>CH: 渠道预支付(PayProvider)
+    CH-->>P: 支付成功回调 / 模拟确认
+    P->>P: apply 事务(wallet 分支):回调幂等摘要 + 状态推进
+    P->>W: 充值入账(wallet::repo::credit)<br/>同事务:流水 + 余额推进
+    Note over ADM: 余额退款的风控支线:<br/>3 次/5 分钟频次冻结转人工 → wallet::risk 审核<br/>(审核不直接退款,通过后转退款执行器)
+```
+
 ## 2. 充值链路(钱包充值)
 
 ```text
