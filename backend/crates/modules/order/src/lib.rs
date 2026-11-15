@@ -11,10 +11,9 @@ pub mod service;
 
 pub use error::{FeedbackError, FeedbackSubmitError, OrderError};
 pub use repo::lifecycle::{
-    LifecycleView, PaidOrderDraft, append_domain_event_tx, append_event_in_tx, complete_tx,
-    create_paid_in_tx, freeze_pricing_in_tx, lock_for_lifecycle_tx, mark_charging_tx,
-    mark_start_rejected_tx, month_start_of, new_charge_order_no_tx, new_payment_order_no,
-    occupy_port_tx, release_port_tx,
+    LifecycleView, PaidOrderDraft, append_event_in_tx, complete_tx, create_paid_in_tx,
+    freeze_pricing_in_tx, lock_for_lifecycle_tx, mark_charging_tx, mark_start_rejected_tx,
+    month_start_of, new_charge_order_no_tx, new_payment_order_no, occupy_port_tx, release_port_tx,
 };
 pub use repo::{admin_query, user_query};
 pub use service::feedback;

@@ -536,9 +536,6 @@ async fn admin_orders_flow() {
     let db = app.db;
     let alloc = app.allocator;
     let (token, admin_id) = login_super(&router, &db, &alloc).await;
-    // 支付单列表断言按本批次时间过滤（隔离库内历史残留；Z 后缀规避
-    // query 中 + 号被解析为空格）。
-    let created_from = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let seed = seed_all(db.as_ref(), alloc.as_ref())
         .await
         .expect("种子应成功");
@@ -1130,25 +1127,27 @@ async fn admin_orders_flow() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // ---- 支付单列表 ----
-    let (status, body) = req(
-        &router,
-        "GET",
-        "/api/v1/admin/payment-orders?page=1&page_size=100&created_from={created_from}",
-        None,
-        Some(&token),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body["data"]["total"].as_i64().unwrap() >= 3);
-    let items = body["data"]["items"].as_array().unwrap();
-    let find_pay = |no: u64| -> Value {
-        items
-            .iter()
-            .find(|it| it["payment_order_id"].as_u64() == Some(no))
-            .cloned()
-            .unwrap_or_else(|| panic!("应包含支付单 {no}: {body}"))
+    // ---- 支付单列表 ----
+    // 多轮集成会让库内历史支付单超出单页容量，本批次单可能掉出首页——
+    // 按 order_no 精确断言本批次三单（列表级时间过滤见下方专项用例）。
+    let fetch_pay = |payment_id: u64| {
+        let router = &router;
+        let token = &token;
+        async move {
+            let (status, body) = req(
+                router,
+                "GET",
+                &format!("/api/v1/admin/payment-orders?order_no=P{payment_id}&page_size=10"),
+                None,
+                Some(token),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["data"]["total"], 1, "order_no 精确查询应唯一: {body}");
+            body["data"]["items"][0].clone()
+        }
     };
-    let pay1 = find_pay(seed.order_1.payment_id);
+    let pay1 = fetch_pay(seed.order_1.payment_id).await;
     assert_eq!(pay1["order_no"], format!("P{}", seed.order_1.payment_id));
     assert_eq!(
         pay1["user_id"],
@@ -1168,10 +1167,10 @@ async fn admin_orders_flow() {
         "充值外支付单应关联充电单"
     );
     assert_eq!(pay1["charge_order_no"], seed.order_1.order_no);
-    let pay2 = find_pay(seed.order_2.payment_id);
+    let pay2 = fetch_pay(seed.order_2.payment_id).await;
     assert_eq!(pay2["pay_method"], "balance");
     assert_eq!(pay2["charge_order_no"], seed.order_2.order_no);
-    let pay3 = find_pay(seed.pay_3);
+    let pay3 = fetch_pay(seed.pay_3).await;
     assert_eq!(pay3["biz_type"], "wallet_recharge");
     assert_eq!(
         pay3["payment_status"], "pending",

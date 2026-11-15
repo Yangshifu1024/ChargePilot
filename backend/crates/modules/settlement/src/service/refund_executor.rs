@@ -143,11 +143,11 @@ async fn execute_one(
         )
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        chargepilot_mod_order::append_domain_event_tx(
+        chargepilot_events::enqueue::in_tx(
             &mut *c,
+            chargepilot_events::EventSource::User,
+            chargepilot_events::EventKind::RefundCompleted,
             &event_id,
-            "user",
-            "refund_completed",
             &serde_json::json!({
                 "event_id": event_id,
                 "charge_order_id": biz_id,

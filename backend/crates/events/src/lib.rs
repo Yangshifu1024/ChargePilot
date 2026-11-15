@@ -16,14 +16,25 @@ pub enum EventSource {
 
 /// 事件类别词表（`domain_event.kind`，进程内约束——该列为无约束 VARCHAR，
 /// 枚举只约束注册表路由与入队校验；载荷透传，未知类别保持「无处理器」路径）。
+/// 名单与全仓实际写入点一一对应（架构评审候选 3：补 4 个实写值、删 3 个
+/// 从无写入者的愿望值）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventKind {
+    /// 充电结束回执（charging/receipts，BB 帧）。
     ChargeEnded,
-    RefundRequired,
-    RefundSucceeded,
+    /// 计费批次结算完成（settlement/billing）。
     ChargeSettled,
+    /// 支付回执确认（payment/apply、card/swipe）。
     ChargePaymentConfirmed,
-    WalletRechargeSettled,
+    /// 支付迟到（payment/apply：订单已终态后的迟到回调）。
+    ChargePaymentLate,
+    /// 启动失败（charging/receipts：设备拒绝启动）。
+    ChargeStartFailed,
+    /// 启动超时（charging/sweeper：兜底扫描接管滞留启动）。
+    ChargeStartTimeout,
+    /// 退款完成（settlement/refund_executor）。
+    RefundCompleted,
+    /// 设备事件中转（gateway-runtime）。
     DeviceEvent,
 }
 
@@ -33,11 +44,12 @@ impl EventKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ChargeEnded => "charge_ended",
-            Self::RefundRequired => "refund_required",
-            Self::RefundSucceeded => "refund_succeeded",
             Self::ChargeSettled => "charge_settled",
             Self::ChargePaymentConfirmed => "charge_payment_confirmed",
-            Self::WalletRechargeSettled => "wallet_recharge_settled",
+            Self::ChargePaymentLate => "charge_payment_late",
+            Self::ChargeStartFailed => "charge_start_failed",
+            Self::ChargeStartTimeout => "charge_start_timeout",
+            Self::RefundCompleted => "refund_completed",
             Self::DeviceEvent => "device_event",
         }
     }
@@ -47,11 +59,12 @@ impl EventKind {
     pub fn parse(value: &str) -> Option<Self> {
         Some(match value {
             "charge_ended" => Self::ChargeEnded,
-            "refund_required" => Self::RefundRequired,
-            "refund_succeeded" => Self::RefundSucceeded,
             "charge_settled" => Self::ChargeSettled,
             "charge_payment_confirmed" => Self::ChargePaymentConfirmed,
-            "wallet_recharge_settled" => Self::WalletRechargeSettled,
+            "charge_payment_late" => Self::ChargePaymentLate,
+            "charge_start_failed" => Self::ChargeStartFailed,
+            "charge_start_timeout" => Self::ChargeStartTimeout,
+            "refund_completed" => Self::RefundCompleted,
             "device_event" => Self::DeviceEvent,
             _ => return None,
         })
@@ -62,16 +75,17 @@ impl EventKind {
 pub mod kind {
     use super::EventKind;
     pub const CHARGE_ENDED: &str = EventKind::ChargeEnded.as_str();
-    pub const REFUND_REQUIRED: &str = EventKind::RefundRequired.as_str();
-    pub const REFUND_SUCCEEDED: &str = EventKind::RefundSucceeded.as_str();
     pub const CHARGE_SETTLED: &str = EventKind::ChargeSettled.as_str();
     pub const CHARGE_PAYMENT_CONFIRMED: &str = EventKind::ChargePaymentConfirmed.as_str();
-    pub const WALLET_RECHARGE_SETTLED: &str = EventKind::WalletRechargeSettled.as_str();
+    pub const CHARGE_PAYMENT_LATE: &str = EventKind::ChargePaymentLate.as_str();
+    pub const CHARGE_START_FAILED: &str = EventKind::ChargeStartFailed.as_str();
+    pub const CHARGE_START_TIMEOUT: &str = EventKind::ChargeStartTimeout.as_str();
+    pub const REFUND_COMPLETED: &str = EventKind::RefundCompleted.as_str();
     pub const DEVICE_EVENT: &str = EventKind::DeviceEvent.as_str();
 }
 
-/// domain_event.status 列的投递状态（三值；pending 领取中、
-/// published 处理器已确认、failed 待退避重排）。
+/// domain_event.status 列的投递状态（四值；pending 领取中、
+/// published 处理器已确认、failed 待退避重排、dead 重试上限后死信终态）。
 /// sqlx 三件套手写（与 domain wordlist_enum! 同款打样范式；events 是
 /// domain 外的独立 crate，宏保持 pub(crate) 不跨 crate 导出）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,16 +94,18 @@ pub enum EventDeliveryStatus {
     Pending,
     Published,
     Failed,
+    Dead,
 }
 
 impl EventDeliveryStatus {
-    /// DB 字面量锚点（与 `migrations/0001_init.sql` 逐字节一致）。
+    /// DB 字面量锚点（列无约束 VARCHAR，dead 为词表扩展值）。
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Pending => "pending",
             Self::Published => "published",
             Self::Failed => "failed",
+            Self::Dead => "dead",
         }
     }
 }
@@ -111,6 +127,7 @@ impl<'de> sqlx::Decode<'de, sqlx::MySql> for EventDeliveryStatus {
             "pending" => Self::Pending,
             "published" => Self::Published,
             "failed" => Self::Failed,
+            "dead" => Self::Dead,
             other => {
                 return Err(format!("未知字面量 `{other}`（词表 EventDeliveryStatus）").into());
             }

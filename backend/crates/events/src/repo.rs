@@ -60,20 +60,39 @@ pub async fn mark_published(pool: &MySqlPool, id: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 投递失败：failed + 指数退避重排（`1 << min(retry,8)` 秒）。
+/// 投递重试上限：第 10 次失败置死信（退避累计约 17 分钟；DB 列无约束，
+/// dead 为词表扩展值，零迁移）。
+const MAX_RETRY: u32 = 10;
+
+/// 投递失败：failed + 指数退避重排（`1 << min(retry,8)` 秒）；
+/// 超上限置 dead 死信终态（调用方告警日志，人工排查后处理）。
 pub async fn mark_failed(
     pool: &MySqlPool,
     id: u64,
     retry_count: u32,
     err: &str,
 ) -> anyhow::Result<()> {
+    let next_retry = retry_count + 1;
+    if next_retry >= MAX_RETRY {
+        tracing::error!(event_id = id, retry = next_retry, error = %err, "事件投递重试超上限，置死信");
+        sqlx::query(
+            "UPDATE `domain_event` SET `status`=?, `retry_count`=?, `last_error`=? WHERE `id`=?",
+        )
+        .bind(crate::EventDeliveryStatus::Dead)
+        .bind(next_retry as i64)
+        .bind(truncate(err, 250))
+        .bind(id as i64)
+        .execute(pool)
+        .await?;
+        return Ok(());
+    }
     let backoff_secs: i64 = 1i64 << retry_count.min(8);
     sqlx::query(
         "UPDATE `domain_event` SET `status`=?, `retry_count`=?, `last_error`=?, \
          `scheduled_at`=DATE_ADD(NOW(3), INTERVAL ? SECOND) WHERE `id`=?",
     )
     .bind(crate::EventDeliveryStatus::Failed)
-    .bind(retry_count as i64 + 1)
+    .bind(next_retry as i64)
     .bind(truncate(err, 250))
     .bind(backoff_secs)
     .bind(id as i64)

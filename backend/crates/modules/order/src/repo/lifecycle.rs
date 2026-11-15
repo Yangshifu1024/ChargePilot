@@ -139,26 +139,6 @@ pub async fn append_event_in_tx(
     Ok(())
 }
 
-/// 写入领域事件出站表（进程内投递；旧版 ops.AppendEventInTx 的新版对应物）。
-pub async fn append_domain_event_tx(
-    tx: &mut MySqlConnection,
-    event_id: &str,
-    source: &str,
-    kind: &str,
-    payload: &serde_json::Value,
-) -> Result<(), OrderError> {
-    sqlx::query(
-        "INSERT INTO `domain_event` (`event_id`, `source`, `kind`, `payload_json`) VALUES (?, ?, ?, ?)",
-    )
-    .bind(event_id)
-    .bind(source)
-    .bind(kind)
-    .bind(payload)
-    .execute(&mut *tx)
-    .await?;
-    Ok(())
-}
-
 /// 支付单号：P + 号段分配 ID（旧版 NewOrderNumber；新版号段替代旧雪花表）。
 pub async fn new_payment_order_no(allocator: &SegmentAllocator) -> Result<String, OrderError> {
     let id = allocator

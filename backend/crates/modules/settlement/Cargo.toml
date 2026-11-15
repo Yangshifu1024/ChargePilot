@@ -17,6 +17,7 @@ chargepilot-mod-ops.workspace = true  # 操作员实时权限与引导账号
 chargepilot-mod-wallet.workspace = true  # 余额退回入账（RefundRecorder trait 实现）
 chargepilot-mod-order.workspace = true  # 订单视图与事件登记
 chargepilot-mod-payment.workspace = true  # 支付单状态推进与退款锁
+chargepilot-events.workspace = true  # 结算完成/退款完成事件事务内入队
 
 [lints]
 workspace = true

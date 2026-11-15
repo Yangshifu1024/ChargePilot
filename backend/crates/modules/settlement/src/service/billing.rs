@@ -244,11 +244,11 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     )
     .await
     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    chargepilot_mod_order::append_domain_event_tx(
+    chargepilot_events::enqueue::in_tx(
         &mut *c,
+        chargepilot_events::EventSource::User,
+        chargepilot_events::EventKind::ChargeSettled,
         &event_id,
-        "user",
-        "charge_settled",
         &serde_json::json!({
             "event_id": event_id,
             "charge_order_id": charge_order_id,

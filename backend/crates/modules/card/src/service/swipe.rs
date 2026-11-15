@@ -13,8 +13,8 @@ use chargepilot_domain::charging::actual::Rule;
 use chargepilot_domain::charging::settle::{Estimate, Offer};
 use chargepilot_domain::charging::spec::ChargeMode;
 use chargepilot_mod_order::{
-    PaidOrderDraft, append_domain_event_tx, append_event_in_tx, create_paid_in_tx,
-    freeze_pricing_in_tx, new_charge_order_no_tx, new_payment_order_no,
+    PaidOrderDraft, append_event_in_tx, create_paid_in_tx, freeze_pricing_in_tx,
+    new_charge_order_no_tx, new_payment_order_no,
 };
 use chargepilot_mod_payment::card_funding::{
     checkout_port_available, create_card_intent_in_tx, create_card_payment_in_tx,
@@ -607,11 +607,11 @@ async fn start_purchase_in_tx(
     )
     .await
     .map_err(map_order_error)?;
-    append_domain_event_tx(
+    chargepilot_events::enqueue::in_tx(
         c,
+        chargepilot_events::EventSource::User,
+        chargepilot_events::EventKind::ChargePaymentConfirmed,
         operation_id,
-        "user",
-        "charge_payment_confirmed",
         &serde_json::json!({
             "event_id": operation_id,
             "charge_order_id": charge_order_id,
@@ -619,7 +619,7 @@ async fn start_purchase_in_tx(
         }),
     )
     .await
-    .map_err(map_order_error)?;
+    .map_err(|e| SwipeError::Persist(e.to_string()))?;
     Ok((
         CardOperationKind::Start.as_str().to_owned(),
         charge_order_id,

@@ -55,10 +55,16 @@ pub async fn spawn_dispatch_loop(
 
 async fn dispatch_one(pool: &MySqlPool, registry: &Registry, event: &EnqueuedEvent) {
     let started = std::time::Instant::now();
-    let result = match registry.get(&event.kind) {
-        None => Err(anyhow::anyhow!("kind '{}' 无已登记处理器", event.kind)),
-        Some(handler) => handler.dispatch(event).await,
+    // 无已登记处理器 = 该类别本就无消费方（留痕类事件），直接确认完成——
+    // 永久态不该重试（旧实现按失败退避重排，导致留痕事件被无限反复扫表）。
+    let Some(handler) = registry.get(&event.kind) else {
+        tracing::debug!(event_id = %event.event_id, kind = %event.kind, "事件无已登记处理器，按完成确认");
+        if let Err(e) = repo::mark_published(pool, event.id).await {
+            tracing::error!(event_id = %event.event_id, error = %e, "标记 published 失败");
+        }
+        return;
     };
+    let result = handler.dispatch(event).await;
     metrics::histogram!("event_dispatch_latency_seconds").record(started.elapsed().as_secs_f64());
     match result {
         Ok(()) => {

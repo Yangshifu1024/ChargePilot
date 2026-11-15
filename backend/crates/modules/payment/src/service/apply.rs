@@ -264,11 +264,11 @@ pub async fn apply_payment(
         )
         .await?;
         let event_id = format!("P{}", &digest[..32.min(digest.len())]);
-        chargepilot_mod_order::append_domain_event_tx(
+        chargepilot_events::enqueue::in_tx(
             &mut *conn,
+            chargepilot_events::EventSource::User,
+            chargepilot_events::EventKind::ChargePaymentLate,
             &event_id,
-            "user",
-            "charge_payment_late",
             &serde_json::json!({
                 "event_id": event_id,
                 "payment_order_id": order_id,
@@ -364,11 +364,11 @@ pub async fn apply_payment(
     )
     .await
     .map_err(|e| ApplyError::Storage(e.to_string()))?;
-    chargepilot_mod_order::append_domain_event_tx(
+    chargepilot_events::enqueue::in_tx(
         &mut *conn,
+        chargepilot_events::EventSource::User,
+        chargepilot_events::EventKind::ChargePaymentConfirmed,
         &event_id,
-        "user",
-        "charge_payment_confirmed",
         &serde_json::json!({
             "event_id": event_id,
             "charge_order_id": charge_order_id,

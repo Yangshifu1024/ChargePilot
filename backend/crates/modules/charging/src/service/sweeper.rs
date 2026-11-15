@@ -57,11 +57,11 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
             mark_intent_refund_required_tx(&mut tx, id).await?;
             let cleaned = command_id.replace('-', "");
             let event_id = format!("T{}", &cleaned[..cleaned.len().min(32)]);
-            chargepilot_mod_order::append_domain_event_tx(
+            chargepilot_events::enqueue::in_tx(
                 &mut tx,
+                chargepilot_events::EventSource::Gateway,
+                chargepilot_events::EventKind::ChargeStartTimeout,
                 &event_id,
-                "gateway",
-                "charge_start_timeout",
                 &serde_json::json!({
                     "event_id": event_id,
                     "charge_order_id": id,

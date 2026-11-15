@@ -142,11 +142,11 @@ pub async fn apply_start_receipt(
     chargepilot_mod_order::release_port_tx(&mut *c, &device_id, port_no, id).await?;
     chargepilot_mod_card::card_charge_port_release_tx(&mut *c, id).await?;
     crate::repo::mark_intent_refund_required_tx(&mut *c, id).await?;
-    chargepilot_mod_order::append_domain_event_tx(
+    chargepilot_events::enqueue::in_tx(
         &mut *c,
+        chargepilot_events::EventSource::Gateway,
+        chargepilot_events::EventKind::ChargeStartFailed,
         &event_id,
-        "gateway",
-        "charge_start_failed",
         &serde_json::json!({
             "event_id": event_id,
             "charge_order_id": id,
@@ -293,11 +293,11 @@ pub async fn apply_end_receipt(
     .await
     .map_err(|e| ReceiptError::Storage(e.to_string()))?;
     receipts::insert_billing_job_tx(&mut *c, input.charge_order_id).await?;
-    chargepilot_mod_order::append_domain_event_tx(
+    chargepilot_events::enqueue::in_tx(
         &mut *c,
+        chargepilot_events::EventSource::Gateway,
+        chargepilot_events::EventKind::ChargeEnded,
         &input.stop_command_id,
-        "gateway",
-        "charge_ended",
         &serde_json::json!({
             "event_id": input.stop_command_id,
             "charge_order_id": input.charge_order_id,

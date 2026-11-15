@@ -22,6 +22,7 @@ chargepilot-mod-wallet.workspace = true  # 余额充值桥与钱包错误映射
 chargepilot-mod-marketing.workspace = true  # 券核销幂等
 chargepilot-mod-order.workspace = true  # 订单号分配与订单事实
 chargepilot-mod-pricing.workspace = true  # 计费方案扫描与冻结
+chargepilot-events.workspace = true  # 支付迟到/确认事件事务内入队
 
 [dev-dependencies]
 tokio.workspace = true
