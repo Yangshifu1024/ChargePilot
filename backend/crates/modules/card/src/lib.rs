@@ -21,6 +21,7 @@ pub mod service;
 
 pub use service::{admin, swipe, user_card};
 
+pub use repo::balance::balance_facts;
 pub use repo::swipe::{
     card_charge_port_release_tx, confirm_start_operation_tx, fail_start_operation_tx,
 };

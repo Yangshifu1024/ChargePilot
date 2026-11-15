@@ -126,3 +126,31 @@ pub async fn ack(
     tx.commit().await?;
     Ok(id)
 }
+
+/// 心跳证据驱动的告警自动恢复编排（原 gateway-runtime resolve_recovered_alerts
+/// 归位）：逐条活跃告警核对恢复证据——来源事件查不到不判（缺证据不恢复）；
+/// 心跳不晚于最新故障不判（水印防乱序重放）；「该指标是否已恢复」的判定经
+/// 调用方注入的检查器完成（厂商故障码的翻译留在网关侧，设备域不依赖协议
+/// 实现）。
+pub async fn resolve_recovered_for_heartbeat(
+    pool: &MySqlPool,
+    device_id: &str,
+    heartbeat_at: chrono::DateTime<chrono::Utc>,
+    recovered_check: &(dyn Fn(&str) -> bool + Send + Sync),
+) -> StationResult<()> {
+    for (alert_id, created_month, metric, event_key) in
+        alert::list_active_for_recovery(pool, device_id).await?
+    {
+        // 最新故障时刻取告警来源事件的接收时间；查不到时不判定。
+        let Some(fault_at) = alert::event_received_at(pool, &event_key).await? else {
+            continue;
+        };
+        if heartbeat_at <= fault_at {
+            continue; // 心跳不晚于最新故障：不能作为恢复证据（水印语义）。
+        }
+        if recovered_check(&metric) {
+            alert::auto_resolve(pool, alert_id, created_month, &event_key, heartbeat_at).await?;
+        }
+    }
+    Ok(())
+}

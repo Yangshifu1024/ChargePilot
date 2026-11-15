@@ -72,7 +72,7 @@ impl CommandSink for GatewayCommandSink {
                     order_bcd,
                     mode,
                     quantity,
-                    consumer_type: 2, // 扫码
+                    consumer_type: chargepilot_protocol_dc589::consumer::SCAN, // 扫码（协议词表常量）
                     card_number: 0,
                     card_balance_units: 0,
                     card_invalid: false,

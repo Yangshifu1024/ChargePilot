@@ -12,6 +12,7 @@ pub mod adapter;
 pub mod cards;
 pub mod commands;
 pub mod config;
+pub mod consumer;
 pub mod device;
 pub mod fault;
 pub mod frame;

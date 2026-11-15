@@ -2,6 +2,7 @@
 //! swipe 用例在事务内编排，本文件只提供行模型与共享读取原语。
 
 pub mod admin;
+pub mod balance;
 pub mod swipe;
 pub mod user_card;
 

@@ -267,7 +267,8 @@ impl DeviceEventDispatcher {
         let mut invalid = f.card_number == 0;
         let mut units = 0u16;
         if !invalid {
-            let (card_valid, balance_cents) = card_balance_facts(&self.pool, f).await?;
+            let (card_valid, balance_cents) =
+                chargepilot_mod_card::balance_facts(&self.pool, &f.card_number.to_string()).await?;
             invalid = !card_valid;
             units = chargepilot_protocol_dc589::cards::card_balance_units(balance_cents);
         }
@@ -395,10 +396,11 @@ impl DeviceEventDispatcher {
             }
             Err(e) if e.is_declined() => {
                 // 明确拒绝：余额不足保留余额显示，其余按无效卡拒绝。
-                let balance_cents = card_balance_facts(&self.pool, f)
-                    .await
-                    .map(|(_, cents)| cents)
-                    .unwrap_or(0);
+                let balance_cents =
+                    chargepilot_mod_card::balance_facts(&self.pool, &f.card_number.to_string())
+                        .await
+                        .map(|(_, cents)| cents)
+                        .unwrap_or(0);
                 tracing::info!(
                     device = %f.device_id,
                     card = f.card_number,
@@ -453,24 +455,4 @@ async fn resolve_port_code(pool: &MySqlPool, device_id: &str, port_no: u8) -> Op
     .await
     .ok()
     .flatten()
-}
-
-/// 卡有效性事实与钱包可用余额（分）：卡缺失/停用返回 (false, 0)。
-async fn card_balance_facts(pool: &MySqlPool, f: &CardEventPayload) -> anyhow::Result<(bool, i64)> {
-    let row: Option<(chargepilot_domain::card::CardStatus, Option<i64>)> = sqlx::query_as(
-        "SELECT c.`status`, w.`balance_cents` - w.`frozen_cents` \
-         FROM `online_card` c \
-         LEFT JOIN `wallet_account` w ON w.`user_id` = c.`user_id` AND w.`deleted_at` IS NULL \
-         WHERE c.`card_no` = ? LIMIT 1",
-    )
-    .bind(f.card_number.to_string())
-    .fetch_optional(pool)
-    .await?;
-    let Some((status, available)) = row else {
-        return Ok((false, 0));
-    };
-    Ok((
-        status == chargepilot_domain::card::CardStatus::Active,
-        available.unwrap_or(0),
-    ))
 }

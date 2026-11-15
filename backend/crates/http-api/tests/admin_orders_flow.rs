@@ -536,6 +536,9 @@ async fn admin_orders_flow() {
     let db = app.db;
     let alloc = app.allocator;
     let (token, admin_id) = login_super(&router, &db, &alloc).await;
+    // 支付单列表断言按本批次时间过滤（隔离库内历史残留；Z 后缀规避
+    // query 中 + 号被解析为空格）。
+    let created_from = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let seed = seed_all(db.as_ref(), alloc.as_ref())
         .await
         .expect("种子应成功");
@@ -1130,7 +1133,7 @@ async fn admin_orders_flow() {
     let (status, body) = req(
         &router,
         "GET",
-        "/api/v1/admin/payment-orders?page=1&page_size=100",
+        "/api/v1/admin/payment-orders?page=1&page_size=100&created_from={created_from}",
         None,
         Some(&token),
     )

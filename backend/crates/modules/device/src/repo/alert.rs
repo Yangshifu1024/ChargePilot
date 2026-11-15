@@ -108,6 +108,37 @@ pub async fn auto_resolve(
     Ok(n > 0)
 }
 
+/// 按设备查活跃/已确认告警的恢复判定字段（心跳恢复编排用；
+/// rule_id IS NULL 排除人工规则告警——自动恢复只针对故障事实告警）。
+pub async fn list_active_for_recovery(
+    pool: &MySqlPool,
+    device_id: &str,
+) -> StationResult<Vec<(u64, NaiveDate, String, String)>> {
+    sqlx::query_as(
+        "SELECT `id`, `created_month`, `metric`, `event_id` FROM `alert_event` \
+         WHERE `device_id` = ? AND `rule_id` IS NULL AND `status` IN (?, ?)",
+    )
+    .bind(device_id)
+    .bind(AlertStatus::Active)
+    .bind(AlertStatus::Acknowledged)
+    .fetch_all(pool)
+    .await
+    .map_err(DeviceError::from)
+}
+
+/// 按事件键查来源告警的接收时刻（恢复证据）。device_event 是网关接入域
+/// 的表——告警行引用其事件键，补全证据属告警生命周期语义（跨域读一列）。
+pub async fn event_received_at(
+    pool: &MySqlPool,
+    event_key: &str,
+) -> StationResult<Option<DateTime<Utc>>> {
+    sqlx::query_scalar("SELECT `received_at` FROM `device_event` WHERE `event_key` = ?")
+        .bind(event_key)
+        .fetch_optional(pool)
+        .await
+        .map_err(DeviceError::from)
+}
+
 /// 后台告警列表（active/acknowledged，倒序，上限 200）。
 pub async fn list_active_rows(pool: &MySqlPool) -> StationResult<Vec<AlertRow>> {
     sqlx::query_as::<_, AlertRow>(
