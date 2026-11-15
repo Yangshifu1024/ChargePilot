@@ -309,7 +309,8 @@ async fn build_snapshot(deps: &ApiDeps, row: &OrderRecord) -> Result<Value, sqlx
                 out["current_power_w"] = json!(f64::from(p.power_deci_watts) / 10.0);
             }
             if p.charged_mwh > 0 {
-                out["charged_kwh"] = json!(f64::from(p.charged_mwh) / 1_000_000.0);
+                out["charged_kwh"] =
+                    json!(chargepilot_domain::telemetry::kwh_from_mwh(p.charged_mwh));
             }
             if snap.voltage_v > 0 {
                 out["voltage_v"] = json!(f64::from(snap.voltage_v));

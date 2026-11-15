@@ -1795,7 +1795,7 @@ CREATE TABLE `telemetry` (
   `device_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '设备全局唯一编号',
   `port_no` tinyint unsigned DEFAULT NULL COMMENT '遥测所属端口号，为 NULL 时表示设备级指标',
   `port_key` tinyint unsigned GENERATED ALWAYS AS (COALESCE(`port_no`,0)) STORED COMMENT '样本唯一键端口，设备级 NULL 映射为零',
-  `metric` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'voltage_v / current_a / temperature_c / battery_soc / power_w / meter_kwh',
+  `metric` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'voltage_v / temperature_c / power_w / meter_kwh（protocol::TelemetryMetric 词表；current_a/battery_soc 无设备数据源已除名）',
   `value_num` decimal(18,6) DEFAULT NULL COMMENT '遥测数值，单位随指标',
   `value_json` json DEFAULT NULL COMMENT '非数值遥测内容 JSON',
   `ts` datetime(3) NOT NULL COMMENT '采集时间戳',

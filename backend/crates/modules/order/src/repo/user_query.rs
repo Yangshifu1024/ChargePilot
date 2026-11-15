@@ -492,12 +492,20 @@ async fn list_raw_readings(
     to: chrono::DateTime<chrono::Utc>,
     limit: i64,
 ) -> Result<Vec<Reading>, sqlx::Error> {
+    // 设备级指标过滤列表由词表生成（与写侧同一真相，新增指标自动纳入）。
+    let device_metrics = chargepilot_domain::telemetry::TelemetryMetric::device_level()
+        .iter()
+        .map(|m| format!("'{}'", m.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
     query_as(
-        "SELECT `ts`, CAST(`metric` AS CHAR), CAST(`value_num` AS CHAR) \
+        &format!(
+            "SELECT `ts`, CAST(`metric` AS CHAR), CAST(`value_num` AS CHAR) \
          FROM `telemetry` \
          WHERE `device_id` = ? AND `ts` >= ? AND `ts` <= ? AND `value_num` IS NOT NULL \
-         AND (`port_no` = ? OR (`port_no` IS NULL AND CAST(`metric` AS CHAR) IN ('voltage_v', 'temperature_c'))) \
+         AND (`port_no` = ? OR (`port_no` IS NULL AND CAST(`metric` AS CHAR) IN ({device_metrics}))) \
          ORDER BY `ts` DESC LIMIT ?",
+        ),
     )
     .bind(device_id)
     .bind(from)
@@ -519,12 +527,18 @@ async fn list_bucketed_readings(
     limit: i64,
 ) -> Result<Vec<Reading>, sqlx::Error> {
     use chrono::Datelike as _;
+    // 设备级指标过滤列表由词表生成（与写侧同一真相，新增指标自动纳入）。
+    let device_metrics = chargepilot_domain::telemetry::TelemetryMetric::device_level()
+        .iter()
+        .map(|m| format!("'{}'", m.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
     let sql = format!(
         "SELECT `bucket_start` AS `ts`, CAST(`metric` AS CHAR), CAST(`avg_value` AS CHAR) \
          FROM `{table}` \
          WHERE `device_id` = ? AND `bucket_start` >= ? AND `bucket_start` <= ? \
          AND `bucket_month` >= ? AND `bucket_month` <= ? \
-         AND (`port_no` = ? OR (`port_no` IS NULL AND CAST(`metric` AS CHAR) IN ('voltage_v', 'temperature_c'))) \
+         AND (`port_no` = ? OR (`port_no` IS NULL AND CAST(`metric` AS CHAR) IN ({device_metrics}))) \
          ORDER BY `bucket_start` DESC LIMIT ?",
     );
     let month = |t: chrono::DateTime<chrono::Utc>| {
@@ -573,18 +587,17 @@ fn merge_points(
         .collect()
 }
 
-/// 单点 JSON（旧版 CurvePoint：未上报指标为 null，不补零）。
+/// 单点 JSON（旧版 CurvePoint：未上报指标为 null，不补零；键由遥测词表
+/// 生成——设计期的 current_a/battery_soc 无设备数据源，已从词表删除）。
 fn point_json(ts: chrono::DateTime<chrono::Utc>, values: &HashMap<String, f64>) -> Value {
     let metric = |k: &str| values.get(k).copied();
-    json!({
-        "ts": ts.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        "power_w": metric("power_w"),
-        "current_a": metric("current_a"),
-        "voltage_v": metric("voltage_v"),
-        "temperature_c": metric("temperature_c"),
-        "battery_soc": metric("battery_soc"),
-        "meter_kwh": metric("meter_kwh"),
-    })
+    let mut point = json!({ "ts": ts.to_rfc3339_opts(chrono::SecondsFormat::Secs, true) });
+    for m in chargepilot_domain::telemetry::TelemetryMetric::all() {
+        point[m.as_str()] = metric(m.as_str())
+            .map(serde_json::Value::from)
+            .unwrap_or(Value::Null);
+    }
+    point
 }
 
 /// 实时曲线窗口读数（旧版 Curve + chooseSource）：

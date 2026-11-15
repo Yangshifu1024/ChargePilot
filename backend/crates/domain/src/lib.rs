@@ -17,5 +17,6 @@ pub mod page;
 pub mod payment;
 pub mod pricing;
 pub mod settlement;
+pub mod telemetry;
 pub mod wallet;
 pub mod wordlist;

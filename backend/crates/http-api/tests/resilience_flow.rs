@@ -486,7 +486,7 @@ async fn telemetry_buffer_overflow_drops_oldest() {
         buffer.push(chargepilot_gateway_runtime::telemetry::Sample {
             device_id: device_id.clone(),
             port_no: Some(1),
-            metric: "power_w",
+            metric: chargepilot_domain::telemetry::TelemetryMetric::PowerW,
             value: f64::from(i as u16),
             ts: base + chrono::Duration::milliseconds(i as i64),
         });

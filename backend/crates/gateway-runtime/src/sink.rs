@@ -113,8 +113,10 @@ impl Sink for GatewaySink {
                     telemetry.push(Sample {
                         device_id: event.device_id.clone(),
                         port_no: Some(meter.port),
-                        metric: "power_w",
-                        value: f64::from(meter.power_deci_watts) / 10.0,
+                        metric: chargepilot_domain::telemetry::TelemetryMetric::PowerW,
+                        value: chargepilot_domain::telemetry::watts_from_deci_watts(
+                            meter.power_deci_watts,
+                        ),
                         ts: event.received_at.unwrap_or_else(chrono::Utc::now),
                     });
                     persist_event(&pool, &event).await
@@ -192,14 +194,14 @@ async fn handle_heartbeat(
     telemetry.push(Sample {
         device_id: event.device_id.clone(),
         port_no: None,
-        metric: "voltage_v",
+        metric: chargepilot_domain::telemetry::TelemetryMetric::VoltageV,
         value: f64::from(event.voltage_v),
         ts,
     });
     telemetry.push(Sample {
         device_id: event.device_id.clone(),
         port_no: None,
-        metric: "temperature_c",
+        metric: chargepilot_domain::telemetry::TelemetryMetric::TemperatureC,
         value: f64::from(event.temperature_c),
         ts,
     });
@@ -208,15 +210,15 @@ async fn handle_heartbeat(
         telemetry.push(Sample {
             device_id: event.device_id.clone(),
             port_no: Some(port.port),
-            metric: "power_w",
-            value: f64::from(port.power_deci_watts) / 10.0,
+            metric: chargepilot_domain::telemetry::TelemetryMetric::PowerW,
+            value: chargepilot_domain::telemetry::watts_from_deci_watts(port.power_deci_watts),
             ts,
         });
         telemetry.push(Sample {
             device_id: event.device_id.clone(),
             port_no: Some(port.port),
-            metric: "meter_kwh",
-            value: f64::from(port.charged_mwh) / 1_000_000.0,
+            metric: chargepilot_domain::telemetry::TelemetryMetric::MeterKwh,
+            value: chargepilot_domain::telemetry::kwh_from_mwh(port.charged_mwh),
             ts,
         });
     }

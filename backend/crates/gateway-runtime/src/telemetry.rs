@@ -28,8 +28,8 @@ pub struct Sample {
     pub device_id: String,
     /// 端口号（None = 设备级指标）。
     pub port_no: Option<u8>,
-    /// 指标名（voltage_v / temperature_c / power_w / meter_kwh）。
-    pub metric: &'static str,
+    /// 指标（protocol 词表值；入库投影 as_str）。
+    pub metric: chargepilot_domain::telemetry::TelemetryMetric,
     /// 数值（单位随指标）。
     pub value: f64,
     /// 采集时刻。
@@ -125,7 +125,7 @@ impl TelemetryBuffer {
 type BucketKey = (
     String,
     Option<u8>,
-    &'static str,
+    chargepilot_domain::telemetry::TelemetryMetric,
     chrono::DateTime<chrono::Utc>,
     String,
 );
@@ -176,7 +176,7 @@ pub async fn flush(pool: &MySqlPool, samples: &[Sample]) -> anyhow::Result<()> {
             .push(", ")
             .push_bind(s.port_no.map(i64::from))
             .push(", ")
-            .push_bind(s.metric)
+            .push_bind(s.metric.as_str())
             .push(", ")
             .push_bind(s.value)
             .push(", ")
@@ -221,7 +221,7 @@ pub async fn flush(pool: &MySqlPool, samples: &[Sample]) -> anyhow::Result<()> {
                     .push(", ")
                     .push_bind((*port_no).map(i64::from))
                     .push(", ")
-                    .push_bind(*metric)
+                    .push_bind(metric.as_str())
                     .push(", ")
                     .push_bind(*start)
                     .push(", ");
@@ -317,7 +317,7 @@ mod tests {
         Sample {
             device_id: "dev-1".into(),
             port_no: Some(1),
-            metric: "power_w",
+            metric: chargepilot_domain::telemetry::TelemetryMetric::PowerW,
             value,
             ts: base + chrono::Duration::minutes(i64::from(minute)),
         }
@@ -330,7 +330,7 @@ mod tests {
             buffer.push(Sample {
                 device_id: format!("dev-{i}"),
                 port_no: None,
-                metric: "power_w",
+                metric: chargepilot_domain::telemetry::TelemetryMetric::PowerW,
                 value: i as f64,
                 ts: chrono::Utc::now(),
             });

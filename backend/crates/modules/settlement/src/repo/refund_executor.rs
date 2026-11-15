@@ -92,8 +92,6 @@ pub async fn complete_refund_tx(
     Ok(())
 }
 
-/// 订单行内状态（证据链分派）。
-
 /// 渠道明确拒绝的退款失败登记（新事务；主事务已回滚）。
 pub async fn fail_refund(
     pool: &MySqlPool,
