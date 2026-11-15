@@ -15,3 +15,7 @@
 ### Domain docs
 
 单上下文布局：仓库根目录一个 `GLOSSARY.md`，架构决策记录位于 `docs/adr/`。见 `docs/agents/domain.md`。
+
+### Coding standards
+
+违反即生产回归的硬规则（当前两条：sqlx 类型映射对照迁移 SQL 的列声明；集成测试解码路径必须有非 NULL 真实形态行）见根目录 [CODING_STANDARDS.md](CODING_STANDARDS.md)。写或改 FromRow / query_as / bind 前先读它。

@@ -173,6 +173,24 @@ async fn register_heartbeat_events_and_flush() {
     assert_eq!(snap.port(2).unwrap().power_deci_watts, 1200);
     assert_eq!(snap.port(1).unwrap().reported_status, Some(0));
     assert_eq!(telemetry.received(), 4, "电压+温度+功率+电量");
+    // 心跳落库事实：signal_strength 列是 tinyint unsigned，回归曾因解码方
+    // Option<i64> 断裂（仅生产非 NULL 行触发，本地 NULL 数据测不出来）。
+    // 按 unsigned 单字节解码断言锁定列类型与解码方一致（CODING_STANDARDS
+    // 规则①②的产生端实例）。
+    let (sig, has_hb, has_seen, has_sig_at): (u8, bool, bool, bool) = sqlx::query_as(
+        "SELECT `signal_strength`, `last_heartbeat_at` IS NOT NULL, \
+         `last_seen_at` IS NOT NULL, `signal_at` IS NOT NULL \
+         FROM `device` WHERE `device_id` = ?",
+    )
+    .bind(&device_id)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(sig, 21, "心跳信号 21 应落库并按 tinyint unsigned 解码");
+    assert!(
+        has_hb && has_seen && has_sig_at,
+        "心跳时刻、在线时刻与信号时刻应非 NULL"
+    );
 
     // 业务事件落库（刷卡）。
     let swipe = Event {

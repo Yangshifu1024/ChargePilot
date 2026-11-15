@@ -141,6 +141,41 @@ async fn import_devices_and_fault_flow() {
         Some(2),
         "端口运行态应带 port_count=2 的上报行"
     );
+    // 非 NULL 真实形态行进解码路径：心跳后 signal_strength 是 tinyint
+    // unsigned 非 NULL 读数（0 也是有效读数）。生产回归 Option<i64> 解码
+    // 断裂只在非 NULL 行触发，未发心跳的 NULL 测试行测不出来——造行重读，
+    // 锁定运行态响应按 unsigned 单字节解码（CODING_STANDARDS 规则①②的读侧实例）。
+    sqlx::query(
+        "UPDATE `device` SET `signal_strength` = 20, `signal_at` = NOW(3), \
+         `last_heartbeat_at` = NOW(3), `last_seen_at` = NOW(3) WHERE `device_id` = ?",
+    )
+    .bind(&d1)
+    .execute(db.as_ref())
+    .await
+    .unwrap();
+    let (status, body) = req(
+        &router,
+        "GET",
+        "/api/v1/admin/devices?status=&keyword=&page=1&page_size=50",
+        None,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let row_after = body["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["device_id"].as_str() == Some(d1.as_str()))
+        .unwrap();
+    assert_eq!(
+        row_after["signal_strength"], 20,
+        "非 NULL 信号应按 tinyint unsigned 解码"
+    );
+    assert!(
+        row_after["last_heartbeat_at"].is_string(),
+        "心跳后心跳时刻应为字符串"
+    );
     let detail_id: u64 = sqlx::query_scalar("SELECT `id` FROM `device_meta` WHERE `device_id` = ?")
         .bind(&d1)
         .fetch_one(db.as_ref())
