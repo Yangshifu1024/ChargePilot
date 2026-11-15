@@ -1,7 +1,7 @@
 //! C 端钱包查询组合：余额、流水、充值付款条件与退款进度（旧版 query.go 对齐）。
 //! 只查询调用方用户的数据；未开户返回可用的零余额视图，不以流水重算余额。
 
-use super::{Page, WalletError, account};
+use crate::{Page, WalletError, account};
 use chargepilot_domain::money::PaymentOrderStatus;
 use serde::Serialize;
 use sqlx::MySqlPool;

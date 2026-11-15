@@ -1,7 +1,7 @@
 //! 充值到账：支付回调所需的申请锁定与钱包入账（旧版 recharge_credit_repo.go 对齐）。
 //! 调用前须锁支付与充值申请；重复通知由支付回调幂等表提前识别，不会二次入账。
 
-use super::WalletError;
+use crate::WalletError;
 use sqlx::MySqlConnection;
 
 /// 支付回调所需的充值申请查询结果（旧版 RechargeReceipt）。
@@ -30,7 +30,7 @@ pub async fn lock_recharge_for_payment_tx(
     .await?;
     let (request_id, user_id, amount_cents) = row.ok_or(WalletError::NotFound)?;
     // openid 是登录身份的固定标识，不由用户修改。只读，不反向取得用户行锁。
-    let openid = super::account::find_user_openid_tx(tx, user_id).await?;
+    let openid = crate::repo::account::find_user_openid_tx(tx, user_id).await?;
     Ok(RechargeReceipt {
         request_id,
         user_id,

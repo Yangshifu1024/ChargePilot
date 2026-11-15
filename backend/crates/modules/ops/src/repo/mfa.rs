@@ -11,7 +11,8 @@ pub struct MfaAccount {
     pub password_hash: String,
     pub mfa_enabled: bool,
     pub mfa_secret: Option<String>,
-    pub mfa_secret_version: i64,
+    /// TOTP 密钥代际（schema 为 bigint unsigned）。
+    pub mfa_secret_version: u64,
     pub mfa_last_step: Option<i64>,
     pub auth_version: u64,
 }

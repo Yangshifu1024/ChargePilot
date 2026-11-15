@@ -42,7 +42,7 @@ pub async fn find_by_user(
 
 // ---------- 事务内账户操作（旧版 wallet_account_repo.go 对齐） ----------
 
-use super::WalletError;
+use crate::WalletError;
 
 /// 钱包账户完整行（旧版 WalletRow）：充值与退款都要读余额与冻结额。
 #[derive(Debug, Clone)]
@@ -51,7 +51,7 @@ pub struct AccountRow {
     pub user_id: u64,
     pub balance_cents: i64,
     pub frozen_cents: i64,
-    pub status: super::AccountStatus,
+    pub status: crate::AccountStatus,
     pub version: u64,
 }
 
@@ -61,7 +61,7 @@ pub async fn lock_wallet_account_tx(
     tx: &mut MySqlConnection,
     user_id: u64,
 ) -> Result<AccountRow, WalletError> {
-    let row: Option<(u64, u64, i64, i64, super::AccountStatus, u64)> = sqlx::query_as(
+    let row: Option<(u64, u64, i64, i64, crate::AccountStatus, u64)> = sqlx::query_as(
         "SELECT `id`, `user_id`, `balance_cents`, `frozen_cents`, `status`, `version` \
          FROM `wallet_account` WHERE `user_id` = ? AND `deleted_at` IS NULL LIMIT 1 FOR UPDATE",
     )
@@ -89,7 +89,7 @@ pub async fn open_wallet_account_tx(
          VALUES (?, 0, 0, ?)",
     )
     .bind(user_id as i64)
-    .bind(super::AccountStatus::Active)
+    .bind(crate::AccountStatus::Active)
     .execute(&mut *tx)
     .await?;
     Ok(())
@@ -131,7 +131,7 @@ pub async fn freeze_wallet_tx(tx: &mut MySqlConnection, wallet_id: u64) -> Resul
     sqlx::query(
         "UPDATE `wallet_account` SET `status` = ?, `version` = `version` + 1 WHERE `id` = ?",
     )
-    .bind(super::AccountStatus::Frozen)
+    .bind(crate::AccountStatus::Frozen)
     .bind(wallet_id as i64)
     .execute(&mut *tx)
     .await?;
@@ -146,7 +146,7 @@ pub async fn activate_wallet_tx(
     sqlx::query(
         "UPDATE `wallet_account` SET `status` = ?, `version` = `version` + 1 WHERE `id` = ?",
     )
-    .bind(super::AccountStatus::Active)
+    .bind(crate::AccountStatus::Active)
     .bind(wallet_id as i64)
     .execute(&mut *tx)
     .await?;

@@ -1,8 +1,9 @@
 //! 余额退款申请与原路拆单预占（旧版 refund.go + wallet_reservation_repo.go 对齐）。
 //! 锁序为 钱包→申请→充值支付→在途退款；accepted 表示已预占资金，
-//! manual_review 表示待审核，均不表示渠道已退回资金。
+//! manual_review 表示待审核，均不表示渠道已退回资金。SQL 在 repo/refund.rs。
 
-use super::{WalletError, account};
+use crate::WalletError;
+use crate::repo::{account, refund};
 use chargepilot_domain::money::{BizType, RefundDraft};
 use serde::Serialize;
 use sqlx::{Acquire, MySqlConnection, MySqlPool};
@@ -30,7 +31,10 @@ pub trait RechargeSourceReader: Send + Sync {
         &'a self,
         tx: &'a mut MySqlConnection,
         user_id: u64,
-    ) -> crate::recharge::futures_bounds::BoxFuture<'a, Result<Vec<RechargeSource>, WalletError>>;
+    ) -> crate::service::recharge::futures_bounds::BoxFuture<
+        'a,
+        Result<Vec<RechargeSource>, WalletError>,
+    >;
 }
 
 /// settlement 提供退款创建及在途聚合（旧版 RefundRecorder）；实现随批 5 接入。
@@ -40,14 +44,14 @@ pub trait RefundRecorder: Send + Sync {
         &'a self,
         tx: &'a mut MySqlConnection,
         payment_id: u64,
-    ) -> crate::recharge::futures_bounds::BoxFuture<'a, Result<i64, WalletError>>;
+    ) -> crate::service::recharge::futures_bounds::BoxFuture<'a, Result<i64, WalletError>>;
     /// 在调用方事务中按 draft 创建原单号退款；返回主键。
     /// 记录、钱包冻结和来源分摊必须由调用方一并提交，不在此调用渠道。
     fn create_in_tx<'a>(
         &'a self,
         tx: &'a mut MySqlConnection,
         draft: RefundDraft,
-    ) -> crate::recharge::futures_bounds::BoxFuture<'a, Result<u64, WalletError>>;
+    ) -> crate::service::recharge::futures_bounds::BoxFuture<'a, Result<u64, WalletError>>;
 }
 
 /// 用户退款申请输入（旧版 RefundInput）。
@@ -94,7 +98,7 @@ impl RefundService {
         input: &RefundInput,
     ) -> Result<RefundReceipt, WalletError> {
         if user_id == 0
-            || !super::recharge::is_uuid(&input.request_id)
+            || !crate::service::recharge::is_uuid(&input.request_id)
             || input.amount_cents < chargepilot_domain::limits::REFUND_AMOUNT_MIN_CENTS
             || input.amount_cents > 5_000_000
             || input.reason.chars().count() > 255
@@ -103,21 +107,12 @@ impl RefundService {
         }
         let reason = input.reason.trim().to_string();
         let mut conn = self.db.acquire().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-            .execute(&mut *conn)
-            .await?;
+        crate::repo::set_read_committed(&mut conn).await?;
         let mut tx = conn.begin().await?;
         // 锁序第一步：钱包行锁。
         let acct = account::lock_wallet_account_tx(&mut tx, user_id).await?;
         // 幂等重放：同请求号逐字段比对后返回首次回执。
-        // response_json 为 json 列、reason 可能为 ascii_bin：读取侧 CAST。
-        let prior: Option<(u64, Option<String>, String)> = sqlx::query_as(
-            "SELECT `user_id`, CAST(`reason` AS CHAR), CAST(`response_json` AS CHAR) \
-             FROM `wallet_refund_request` WHERE `request_id` = ? LIMIT 1 FOR UPDATE",
-        )
-        .bind(&input.request_id)
-        .fetch_optional(&mut *tx)
-        .await?;
+        let prior = refund::lock_request_replay_tx(&mut tx, &input.request_id).await?;
         if let Some((prior_user, prior_reason, response_json)) = prior {
             if prior_user != user_id || prior_reason.unwrap_or_default() != reason {
                 return Err(WalletError::RequestConflict);
@@ -130,7 +125,7 @@ impl RefundService {
             tx.commit().await?;
             return Ok(receipt);
         }
-        if acct.status != super::AccountStatus::Active {
+        if acct.status != crate::AccountStatus::Active {
             return Err(WalletError::Frozen);
         }
         if acct.balance_cents - acct.frozen_cents < input.amount_cents {
@@ -141,41 +136,20 @@ impl RefundService {
         } else {
             Some(reason.clone())
         };
-        sqlx::query(
-            "INSERT INTO `wallet_refund_request` (`request_id`, `user_id`, `amount_cents`, `reason`) \
-             VALUES (?, ?, ?, ?)",
+        refund::insert_request_tx(
+            &mut tx,
+            &input.request_id,
+            user_id,
+            input.amount_cents,
+            &reason_opt,
         )
-        .bind(&input.request_id)
-        .bind(user_id as i64)
-        .bind(input.amount_cents)
-        .bind(&reason_opt)
-        .execute(&mut *tx)
         .await?;
         // 频次风控：5 分钟窗口内（含本次）第 3 次申请起转人工并冻结钱包。
         let since = chrono::Utc::now() - chrono::Duration::minutes(5);
-        let (count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM `wallet_refund_request` WHERE `user_id` = ? AND `created_at` >= ?",
-        )
-        .bind(user_id as i64)
-        .bind(since)
-        .fetch_one(&mut *tx)
-        .await?;
+        let count = refund::request_count_since_tx(&mut tx, user_id, since).await?;
         let status = if count >= 3 {
-            let freeze_id: i64 = sqlx::query(
-                "INSERT INTO `risk_freeze_log` (`user_id`, `trigger_rule`, `frozen_action`, `reason`) \
-                 VALUES (?, 'wallet_refund_frequency', 'wallet', 'wallet refund frequency')",
-            )
-            .bind(user_id as i64)
-            .execute(&mut *tx)
-            .await?
-            .last_insert_id() as i64;
-            sqlx::query(
-                "INSERT INTO `wallet_risk_freeze_link` (`request_id`, `freeze_id`) VALUES (?, ?)",
-            )
-            .bind(&input.request_id)
-            .bind(freeze_id)
-            .execute(&mut *tx)
-            .await?;
+            let freeze_id = refund::insert_frequency_freeze_tx(&mut tx, user_id).await?;
+            refund::link_freeze_tx(&mut tx, &input.request_id, freeze_id).await?;
             account::freeze_wallet_tx(&mut tx, acct.id).await?;
             "manual_review".to_string()
         } else {
@@ -199,13 +173,7 @@ impl RefundService {
         // response_json 为 json 列：绑定 Value（String 绑定会 3140）。
         let response_json =
             serde_json::to_value(&receipt).map_err(|e| WalletError::Storage(e.to_string()))?;
-        sqlx::query(
-            "UPDATE `wallet_refund_request` SET `response_json` = ? WHERE `request_id` = ?",
-        )
-        .bind(&response_json)
-        .bind(&input.request_id)
-        .execute(&mut *tx)
-        .await?;
+        refund::save_response_tx(&mut tx, &input.request_id, &response_json).await?;
         tx.commit().await?;
         Ok(receipt)
     }
@@ -219,22 +187,13 @@ impl RefundService {
         req: WalletRefundReservation,
     ) -> Result<(), WalletError> {
         // 事务内重读钱包余额（旧版在预占函数内加锁读取）。
-        let row: Option<(u64, i64, i64)> = sqlx::query_as(
-            "SELECT `id`, `balance_cents`, `frozen_cents` FROM `wallet_account` \
-             WHERE `user_id` = ? AND `deleted_at` IS NULL LIMIT 1 FOR UPDATE",
-        )
-        .bind(req.user_id as i64)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let (wallet_id, balance, frozen) = row.ok_or(WalletError::NotFound)?;
+        let (wallet_id, balance, frozen) = refund::lock_wallet_balance_tx(tx, req.user_id)
+            .await?
+            .ok_or(WalletError::NotFound)?;
         if req.amount_cents <= 0 || balance < frozen || req.amount_cents > balance - frozen {
             return Err(WalletError::RequestConflict);
         }
-        let (existing,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM `wallet_refund_part` WHERE `request_id` = ?")
-                .bind(&req.request_id)
-                .fetch_one(&mut *tx)
-                .await?;
+        let existing = refund::part_count_tx(tx, &req.request_id).await?;
         if existing != 0 {
             return Err(WalletError::RequestConflict);
         }
@@ -280,16 +239,7 @@ impl RefundService {
                     },
                 )
                 .await?;
-            sqlx::query(
-                "INSERT INTO `wallet_refund_part` (`refund_record_id`, `request_id`, \
-                 `wallet_account_id`, `amount_cents`, `settled`) VALUES (?, ?, ?, ?, FALSE)",
-            )
-            .bind(refund_id as i64)
-            .bind(&req.request_id)
-            .bind(wallet_id)
-            .bind(amount)
-            .execute(&mut *tx)
-            .await?;
+            refund::insert_part_tx(tx, refund_id, &req.request_id, wallet_id, amount).await?;
             left -= amount;
             if left == 0 {
                 break;
@@ -298,14 +248,7 @@ impl RefundService {
         if left != 0 {
             return Err(WalletError::RequestConflict);
         }
-        sqlx::query(
-            "UPDATE `wallet_account` SET `frozen_cents` = `frozen_cents` + ?, \
-             `version` = `version` + 1 WHERE `id` = ?",
-        )
-        .bind(req.amount_cents)
-        .bind(wallet_id)
-        .execute(&mut *tx)
-        .await?;
+        refund::freeze_balance_tx(tx, wallet_id, req.amount_cents).await?;
         Ok(())
     }
 }

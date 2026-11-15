@@ -3,7 +3,7 @@
 //! 只读：不把待支付单视为已到账，金额取已保存的支付与退款记录；
 //! 用户存在性与权限由身份用例核对，本模块不提供资金写入。
 
-use super::{Page, WalletError};
+use crate::{Page, WalletError};
 use serde::Serialize;
 use sqlx::MySqlPool;
 

@@ -2,7 +2,7 @@
 //! 只触及 wallet_account / wallet_txn 两表，供刷卡、结算、启动失败退款等
 //! 跨模块事务复用；错误语义以本模块 WalletError 表达，调用方按业务映射。
 
-use super::{AccountStatus, TxnBizType, TxnDirection, WalletError};
+use crate::{AccountStatus, TxnBizType, TxnDirection, WalletError};
 use sqlx::MySqlConnection;
 
 /// wallet_account 的行锁查询结果（旧版 Row）。

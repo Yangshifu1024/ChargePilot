@@ -1,8 +1,10 @@
 //! 充值申请事务：幂等建单、支付单复用与提交后的预支付准备（旧版 recharge.go 对齐）。
 //! 锁序为 用户→钱包→请求；READ COMMITTED 使等锁后的重放能读取前次提交的申请；
 //! 预支付只在事务提交后请求，渠道失败保留申请，相同 request_id 可恢复支付参数。
+//! SQL 在 repo/recharge.rs。
 
-use super::{WalletError, account};
+use crate::WalletError;
+use crate::repo::{account, recharge};
 use chargepilot_domain::money::PaymentOrderStatus;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -94,9 +96,7 @@ impl RechargeService {
         }
         // READ COMMITTED：使等锁后的重放能读取前次提交的申请（旧版 TxOptions 语义）。
         let mut conn = self.db.acquire().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-            .execute(&mut *conn)
-            .await?;
+        crate::repo::set_read_committed(&mut conn).await?;
         let mut tx = conn.begin().await?;
         let open_id = account::find_user_openid_tx(&mut tx, user_id).await?;
         if open_id.is_empty() {
@@ -112,18 +112,12 @@ impl RechargeService {
             Err(e) => return Err(e),
         };
         if let Some(row) = account_row
-            && row.status != super::AccountStatus::Active
+            && row.status != crate::AccountStatus::Active
         {
             return Err(WalletError::Frozen);
         }
         // 幂等重放：同请求号读取既有申请，归属与金额一致则复用支付单。
-        let prior: Option<(u64, i64, u64)> = sqlx::query_as(
-            "SELECT `user_id`, `amount_cents`, `payment_order_id` FROM `wallet_recharge_request` \
-             WHERE `request_id` = ? LIMIT 1 FOR UPDATE",
-        )
-        .bind(&input.request_id)
-        .fetch_optional(&mut *tx)
-        .await?;
+        let prior = recharge::lock_request_tx(&mut tx, &input.request_id).await?;
         let pay = match prior {
             Some((uid, amount, payment_id)) => {
                 if uid != user_id || amount != input.amount_cents {
@@ -138,16 +132,14 @@ impl RechargeService {
                     .await?;
                 let payload = serde_json::to_string(input)
                     .map_err(|e| WalletError::Storage(e.to_string()))?;
-                sqlx::query(
-                    "INSERT INTO `wallet_recharge_request` (`request_id`, `user_id`, \
-                     `amount_cents`, `payment_order_id`, `request_json`) VALUES (?, ?, ?, ?, ?)",
+                recharge::insert_request_tx(
+                    &mut tx,
+                    &input.request_id,
+                    user_id,
+                    input.amount_cents,
+                    pay.id,
+                    &payload,
                 )
-                .bind(&input.request_id)
-                .bind(user_id as i64)
-                .bind(input.amount_cents)
-                .bind(pay.id as i64)
-                .bind(&payload)
-                .execute(&mut *tx)
                 .await?;
                 pay
             }
