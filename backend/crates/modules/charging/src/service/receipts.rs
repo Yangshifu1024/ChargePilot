@@ -22,6 +22,34 @@ pub struct StartReceiptInput {
     pub occurred_at_unix_micros: i64,
 }
 
+/// 定位待确认启动命令并组装回执输入（B8 消费侧）。设备+端口最近一条
+/// sent 命令即回执对象；端口主键与 active_port_charge 复合主键一致：
+/// 即订单 ID。None = 无待确认命令（调用方决定日志与跳过）。
+pub async fn locate_pending_start(
+    pool: &MySqlPool,
+    device_id: &str,
+    port_no: u8,
+    success: bool,
+    result_code: u8,
+) -> Result<Option<StartReceiptInput>, sqlx::Error> {
+    let Some((command_id, charge_order_id, order_no, dev, port)) =
+        crate::repo::dispatch::find_latest_sent_command(pool, device_id, port_no).await?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(StartReceiptInput {
+        command_id,
+        charge_order_id,
+        order_no,
+        device_id: dev,
+        port_no: port,
+        port_id: charge_order_id,
+        success,
+        result_code,
+        occurred_at_unix_micros: chrono::Utc::now().timestamp_micros(),
+    }))
+}
+
 /// 应用启动回执（旧版 StartResultService.Apply，微信支付路径）。
 /// 返回 true 表示同内容重放。成功 → 订单 charging + 端口占用确认；
 /// 失败 → 订单 refunding + 登记渠道退款记录 + 出站退款事件。

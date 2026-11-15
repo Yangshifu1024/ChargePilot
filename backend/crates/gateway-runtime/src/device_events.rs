@@ -125,35 +125,21 @@ impl DeviceEventDispatcher {
             );
             return Ok(());
         };
-        let row: Option<(String, u64, String, String, u8)> = sqlx::query_as(
-            "SELECT CAST(`command_id` AS CHAR), `charge_order_id`, `order_no`, `device_id`, `port_no` \
-             FROM `charge_command` WHERE `device_id` = ? AND `port_no` = ? AND `status` = ? \
-             ORDER BY `created_at` DESC LIMIT 1",
+        // 定位与输入组装在 charging 域内（locate_pending_start）；无待确认
+        // 命令由状态机兜底扫描接管。
+        let Some(input) = chargepilot_mod_charging::locate_pending_start(
+            &self.pool,
+            &p.device_id,
+            p.port,
+            success,
+            p.result_code,
         )
-        .bind(&p.device_id)
-        .bind(p.port)
-        .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Sent)
-        .fetch_optional(&self.pool)
-        .await?;
-        let Some((command_id, charge_order_id, order_no, dev, port_no)) = row else {
+        .await?
+        else {
             tracing::warn!(device = %p.device_id, port = p.port, result_code = p.result_code, "无待确认的启动命令");
             return Ok(());
         };
-        chargepilot_mod_charging::receipts::apply_start_receipt(
-            &self.pool,
-            &chargepilot_mod_charging::receipts::StartReceiptInput {
-                command_id,
-                charge_order_id,
-                order_no,
-                device_id: dev,
-                port_no,
-                port_id: charge_order_id, // active_port_charge 复合主键 = 订单 ID
-                success,
-                result_code: p.result_code,
-                occurred_at_unix_micros: chrono::Utc::now().timestamp_micros(),
-            },
-        )
-        .await?;
+        chargepilot_mod_charging::apply_start_receipt(&self.pool, &input).await?;
         Ok(())
     }
 
@@ -168,24 +154,15 @@ impl DeviceEventDispatcher {
             );
             return Ok(());
         };
-        let updated = sqlx::query(
-            "UPDATE `charge_stop_command` SET `status` = ?, `result_code` = ?, \
-             `next_retry_at` = NULL \
-             WHERE `device_id` = ? AND `port_no` = ? AND `status` IN (?, ?)",
+        // 确认状态机（Pending/Sent → Acked/Rejected）归 charging 域原语。
+        let updated = chargepilot_mod_charging::repo::stop::ack_stop_command(
+            &self.pool,
+            &p.device_id,
+            p.port,
+            success,
+            p.result_code,
         )
-        .bind(if success {
-            chargepilot_domain::charging::command::ChargeStopCommandStatus::Acked
-        } else {
-            chargepilot_domain::charging::command::ChargeStopCommandStatus::Rejected
-        })
-        .bind(p.result_code)
-        .bind(&p.device_id)
-        .bind(p.port)
-        .bind(chargepilot_domain::charging::command::ChargeStopCommandStatus::Pending)
-        .bind(chargepilot_domain::charging::command::ChargeStopCommandStatus::Sent)
-        .execute(&self.pool)
-        .await?
-        .rows_affected();
+        .await?;
         if updated == 0 {
             tracing::debug!(
                 device = %p.device_id,
@@ -199,16 +176,14 @@ impl DeviceEventDispatcher {
 
     /// BB 结束订单：定位停止命令与订单，应用结束回执（端口释放 + 计费任务）。
     async fn handle_charge_end(&self, p: &ChargeEndPayload) -> anyhow::Result<()> {
-        let row: Option<(u64, String, String, u8)> = sqlx::query_as(
-            "SELECT `charge_order_id`, `order_no`, `start_command_id`, `port_no` \
-             FROM `charge_stop_command` WHERE `device_id` = ? AND `port_no` = ? \
-             AND `result_reported` = 0 ORDER BY `created_at` DESC LIMIT 1",
-        )
-        .bind(&p.device_id)
-        .bind(p.port)
-        .fetch_optional(&self.pool)
-        .await?;
-        let Some((charge_order_id, order_no, start_command_id, port_no)) = row else {
+        let Some((charge_order_id, order_no, start_command_id, port_no)) =
+            chargepilot_mod_charging::repo::stop::find_unreported_stop(
+                &self.pool,
+                &p.device_id,
+                p.port,
+            )
+            .await?
+        else {
             // 本地启动（B4）等无停止命令路径：按订单号定位启动命令兜底。
             tracing::info!(
                 device = %p.device_id,
@@ -218,14 +193,11 @@ impl DeviceEventDispatcher {
             );
             return Ok(());
         };
-        let stop_command_id: String = sqlx::query_scalar(
-            "SELECT `command_id` FROM `charge_stop_command` \
-             WHERE `charge_order_id` = ? ORDER BY `created_at` DESC LIMIT 1",
-        )
-        .bind(charge_order_id as i64)
-        .fetch_optional(&self.pool)
-        .await?
-        .unwrap_or_default();
+        // 空串兜底是编排决策：无停止命令时结束回执仍按启动命令定位推进。
+        let stop_command_id =
+            chargepilot_mod_charging::repo::stop::find_stop_command_tx(&self.pool, charge_order_id)
+                .await?
+                .unwrap_or_default();
         chargepilot_mod_charging::receipts::apply_end_receipt(
             &self.pool,
             &chargepilot_mod_charging::receipts::EndReceiptInput {
@@ -364,8 +336,10 @@ impl DeviceEventDispatcher {
                 )
                 .await;
         }
-        // 设备端口号 → 业务端口编码；未开通视为暂不可处理（重试）。
-        let Some(port_code) = resolve_port_code(&self.pool, &f.device_id, f.port).await else {
+        // 设备端口号 → 业务端口编码（device_port 事实表原语）；未开通视为暂不可处理（重试）。
+        let Some(port_code) =
+            chargepilot_mod_device::repo::scan::port_code(&self.pool, &f.device_id, f.port).await
+        else {
             anyhow::bail!("端口未开通: device={} port={}", f.device_id, f.port);
         };
         let service = SwipeService {
@@ -441,18 +415,4 @@ impl DeviceEventDispatcher {
             .await
             .map_err(|e| anyhow::anyhow!("设备命令下发失败: {e}"))
     }
-}
-
-/// 按设备号与端口号解析业务端口编码（device_port 事实表）。
-async fn resolve_port_code(pool: &MySqlPool, device_id: &str, port_no: u8) -> Option<String> {
-    sqlx::query_scalar(
-        "SELECT `port_code` FROM `device_port` \
-         WHERE `device_id` = ? AND `port_no` = ? AND `deleted_at` IS NULL LIMIT 1",
-    )
-    .bind(device_id)
-    .bind(i64::from(port_no))
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
 }

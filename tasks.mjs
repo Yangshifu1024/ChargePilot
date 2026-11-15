@@ -78,6 +78,22 @@ const tasks = {
       process.exit(1);
     }
     console.log(`SQL 层审计：${domains} 域 service/ 均无 sqlx::query，SQL 全部收敛 repo/`);
+    // 网关层业务查询禁令（SQL 归位收尾）：device_events.rs 的回执定位/确认
+    // 已下沉所属域 repo（charging/device），出现 sqlx::query 即越界。
+    // sink.rs / telemetry.rs 是蓝图第五章豁免的运行时存储，不在禁令内。
+    const gatewayEvents = `${BACKEND}/crates/gateway-runtime/src/device_events.rs`;
+    if (existsSync(gatewayEvents)) {
+      const count = readFileSync(gatewayEvents, 'utf8')
+        .split('\n')
+        .filter((line) => line.includes('sqlx::query')).length;
+      if (count > 0) {
+        console.error(
+          `SQL 层违规（gateway-runtime/device_events.rs 出现 sqlx::query，业务查询应下沉所属域 repo）：${count} 处`,
+        );
+        process.exit(1);
+      }
+    }
+    console.log('网关层审计：device_events.rs 无 sqlx::query，业务查询保持域内 repo');
   },
   check() {
     tasks['fmt-check']();

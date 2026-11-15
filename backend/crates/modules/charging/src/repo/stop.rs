@@ -41,18 +41,68 @@ pub async fn upsert_cutoff_tx(c: &mut MySqlConnection, order_id: u64) -> Result<
     Ok(())
 }
 
-/// 已有停止命令则复用（幂等重放）。
-pub async fn find_stop_command_tx(
-    c: &mut MySqlConnection,
-    order_id: u64,
-) -> Result<Option<String>, sqlx::Error> {
+/// 已有停止命令则复用（幂等重放）；取最新一条（BB 应答消费同源）。
+pub async fn find_stop_command_tx<'e, E>(c: E, order_id: u64) -> Result<Option<String>, sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::MySql>,
+{
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT CAST(`command_id` AS CHAR) FROM `charge_stop_command` WHERE `charge_order_id` = ?",
+        "SELECT CAST(`command_id` AS CHAR) FROM `charge_stop_command` \
+         WHERE `charge_order_id` = ? ORDER BY `created_at` DESC LIMIT 1",
     )
     .bind(order_id as i64)
     .fetch_optional(c)
     .await?;
     Ok(row.map(|(id,)| id))
+}
+
+/// 停止命令确认（BA 应答：Pending/Sent → Acked/Rejected，成败取中性判定），
+/// 返回影响行数（0 = 无待确认命令）。
+pub async fn ack_stop_command(
+    pool: &MySqlPool,
+    device_id: &str,
+    port_no: u8,
+    success: bool,
+    result_code: u8,
+) -> Result<u64, sqlx::Error> {
+    sqlx::query(
+        "UPDATE `charge_stop_command` SET `status` = ?, `result_code` = ?, \
+         `next_retry_at` = NULL \
+         WHERE `device_id` = ? AND `port_no` = ? AND `status` IN (?, ?)",
+    )
+    .bind(if success {
+        ChargeStopCommandStatus::Acked
+    } else {
+        ChargeStopCommandStatus::Rejected
+    })
+    .bind(result_code)
+    .bind(device_id)
+    .bind(port_no)
+    .bind(ChargeStopCommandStatus::Pending)
+    .bind(ChargeStopCommandStatus::Sent)
+    .execute(pool)
+    .await
+    .map(|r| r.rows_affected())
+}
+
+/// 消费侧定位：设备+端口最近一条未回执停止命令（BB 结束上报处理用）。
+pub type UnreportedStopRow = (u64, String, String, u8);
+
+pub async fn find_unreported_stop(
+    pool: &MySqlPool,
+    device_id: &str,
+    port_no: u8,
+) -> Result<Option<UnreportedStopRow>, sqlx::Error> {
+    let row: Option<UnreportedStopRow> = sqlx::query_as(
+        "SELECT `charge_order_id`, `order_no`, `start_command_id`, `port_no` \
+         FROM `charge_stop_command` WHERE `device_id` = ? AND `port_no` = ? \
+         AND `result_reported` = 0 ORDER BY `created_at` DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .bind(port_no)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
 }
 
 /// 登记停止命令。

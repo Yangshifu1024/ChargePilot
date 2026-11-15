@@ -27,6 +27,21 @@ const SCAN_STATUS_BINDS: (DeviceStatus, VendorStatus) =
 const SCAN_COLS: &str = "SELECT `p`.`port_code`, `p`.`device_id`, `p`.`port_no`, \
          CAST(`p`.`status` AS CHAR), `p`.`current_order_id`, `d`.`last_seen_at`, `d`.`station_id`";
 
+/// 按设备号与端口号取业务端口编码（device_port 事实表）。
+/// 未开通与查询失败均返回 None（调用方按「端口未开通」重试）。
+pub async fn port_code(pool: &MySqlPool, device_id: &str, port_no: u8) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT `port_code` FROM `device_port` \
+         WHERE `device_id` = ? AND `port_no` = ? AND `deleted_at` IS NULL LIMIT 1",
+    )
+    .bind(device_id)
+    .bind(i64::from(port_no))
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+}
+
 /// 读取中央运营状态（缺失按读取错误处理）。
 pub async fn device_meta_status(
     pool: &MySqlPool,

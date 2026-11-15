@@ -19,6 +19,27 @@ pub async fn find_command_tx(
     Ok(row.map(|(id,)| id))
 }
 
+/// 消费侧定位：设备+端口最近一条 sent 启动命令（B8 应答处理用）。
+pub type SentCommandRow = (String, u64, String, String, u8);
+
+pub async fn find_latest_sent_command(
+    pool: &MySqlPool,
+    device_id: &str,
+    port_no: u8,
+) -> Result<Option<SentCommandRow>, sqlx::Error> {
+    let row: Option<SentCommandRow> = sqlx::query_as(
+        "SELECT CAST(`command_id` AS CHAR), `charge_order_id`, `order_no`, `device_id`, `port_no` \
+         FROM `charge_command` WHERE `device_id` = ? AND `port_no` = ? AND `status` = ? \
+         ORDER BY `created_at` DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .bind(port_no)
+    .bind(ChargeCommandStatus::Sent)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
 /// 读订单与意图事实（快照与执行量在意图上）。
 pub async fn paid_order_with_intent(
     pool: &MySqlPool,

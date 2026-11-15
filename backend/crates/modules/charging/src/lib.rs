@@ -21,6 +21,7 @@ pub mod sink;
 pub use service::dispatch::StartDispatcher;
 pub use service::receipts::{
     EndReceiptInput, StartReceiptInput, apply_end_receipt, apply_start_receipt,
+    locate_pending_start,
 };
 pub use service::stop::{ActiveStop, StopService};
 pub use service::{dispatch, receipts, stop, sweeper};
