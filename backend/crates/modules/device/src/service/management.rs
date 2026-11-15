@@ -102,7 +102,7 @@ pub async fn update(
     if !actor_locked
         .permissions
         .iter()
-        .any(|p| p == "device.operate")
+        .any(|p| p == chargepilot_mod_ops::perms::DEVICE_OPERATE)
     {
         return Err(DeviceError::Forbidden);
     }
@@ -162,7 +162,7 @@ pub async fn set_status(
     if !actor_locked
         .permissions
         .iter()
-        .any(|p| p == "device.operate")
+        .any(|p| p == chargepilot_mod_ops::perms::DEVICE_OPERATE)
     {
         return Err(DeviceError::Forbidden);
     }

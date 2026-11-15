@@ -77,7 +77,7 @@ async fn list_coupons_handler(
     headers: HeaderMap,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "coupon.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::COUPON_READ, &rid) {
         return resp;
     }
     match list_coupons(&deps.db, &guard.profile).await {
@@ -93,7 +93,7 @@ async fn create_coupon_handler(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "coupon.create", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::COUPON_CREATE, &rid) {
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
@@ -138,7 +138,7 @@ async fn update_coupon_handler(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "coupon.update", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::COUPON_UPDATE, &rid) {
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
@@ -162,7 +162,7 @@ async fn coupon_stats_handler(
     Path(id): Path<u64>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "coupon.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::COUPON_READ, &rid) {
         return resp;
     }
     match coupon_stats(&deps.db, &guard.profile, id).await {
@@ -182,7 +182,7 @@ async fn grant_coupon_handler(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "coupon.grant", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::COUPON_GRANT, &rid) {
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
@@ -274,7 +274,11 @@ async fn create_activity(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "coupon.activity.manage", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::COUPON_ACTIVITY_MANAGE,
+        &rid,
+    ) {
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
@@ -295,7 +299,11 @@ async fn update_activity(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "coupon.activity.manage", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::COUPON_ACTIVITY_MANAGE,
+        &rid,
+    ) {
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {

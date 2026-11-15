@@ -83,7 +83,7 @@ async fn list_invoices(
     headers: HeaderMap,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "finance.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::FINANCE_READ, &rid) {
         return resp;
     }
     match chargepilot_mod_settlement::repo::invoice_admin::list_invoice_requests(&deps.db).await {
@@ -141,7 +141,7 @@ async fn review_invoice(
     approve: bool,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "invoice.review", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::INVOICE_REVIEW, &rid) {
         return resp;
     }
     if let Some(resp) = require_finance_actor(&guard, &rid) {
@@ -210,7 +210,7 @@ async fn list_meter_reviews(
     Query(q): Query<MeterPaging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "finance.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::FINANCE_READ, &rid) {
         return resp;
     }
     let keyword = q.keyword.unwrap_or_default().trim().to_string();
@@ -269,7 +269,11 @@ async fn propose_meter(
     body: Bytes,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "billing.meter.review", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::BILLING_METER_REVIEW,
+        &rid,
+    ) {
         return resp;
     }
     if let Some(resp) = require_finance_actor(&guard, &rid) {
@@ -376,7 +380,11 @@ async fn decide_meter(
     body: Bytes,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "billing.meter.review", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::BILLING_METER_REVIEW,
+        &rid,
+    ) {
         return resp;
     }
     if let Some(resp) = require_finance_actor(&guard, &rid) {
@@ -455,7 +463,11 @@ async fn resolve_meter_amount(
     body: Bytes,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "billing.meter.review", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::BILLING_METER_REVIEW,
+        &rid,
+    ) {
         return resp;
     }
     if let Some(resp) = require_finance_actor(&guard, &rid) {
@@ -516,7 +528,11 @@ async fn list_refunds(
     Query(q): Query<RefundPaging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "finance.refund.read", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::FINANCE_REFUND_READ,
+        &rid,
+    ) {
         return resp;
     }
     // keyword 不参与退款筛选，但旧版 ReadAdminPage 仍校验其长度。
@@ -602,7 +618,11 @@ async fn review_refund(
     approve: bool,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "order.refund.review", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::ORDER_REFUND_REVIEW,
+        &rid,
+    ) {
         return resp;
     }
     if let Some(resp) = require_finance_actor(&guard, &rid) {
@@ -677,7 +697,11 @@ async fn retry_refund(
     body: Bytes,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "finance.refund.retry", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::FINANCE_REFUND_RETRY,
+        &rid,
+    ) {
         return resp;
     }
     let Some(input) = decode_strict::<RefundRetryBody>(&body) else {
@@ -727,7 +751,11 @@ async fn manual_refund(
     body: Bytes,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "order.refund.create", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::ORDER_REFUND_CREATE,
+        &rid,
+    ) {
         return resp;
     }
     if id == 0 {

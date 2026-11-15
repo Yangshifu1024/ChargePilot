@@ -280,7 +280,7 @@ pub async fn create_activity_rule(
     if !actor
         .permissions
         .iter()
-        .any(|p| p == "coupon.activity.manage")
+        .any(|p| p == chargepilot_mod_ops::perms::COUPON_ACTIVITY_MANAGE)
     {
         return Err(CouponError::Forbidden);
     }
@@ -335,7 +335,7 @@ pub async fn update_activity_rule(
     if !actor
         .permissions
         .iter()
-        .any(|p| p == "coupon.activity.manage")
+        .any(|p| p == chargepilot_mod_ops::perms::COUPON_ACTIVITY_MANAGE)
     {
         return Err(CouponError::Forbidden);
     }
@@ -461,5 +461,5 @@ pub fn has_activity_read(actor: &Profile) -> bool {
     actor
         .permissions
         .iter()
-        .any(|p| p == "coupon.activity.read")
+        .any(|p| p == chargepilot_mod_ops::perms::COUPON_ACTIVITY_READ)
 }

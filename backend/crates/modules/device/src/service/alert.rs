@@ -95,7 +95,11 @@ pub async fn ack(
     let actor_locked = repo::lock_actor_tx(&mut tx, actor.id)
         .await
         .map_err(DeviceError::from)?;
-    if !actor_locked.permissions.iter().any(|p| p == "alert.ack") {
+    if !actor_locked
+        .permissions
+        .iter()
+        .any(|p| p == chargepilot_mod_ops::perms::ALERT_ACK)
+    {
         return Err(DeviceError::Forbidden);
     }
     let (id, _created_month, status) = alert::lock_alert_tx(&mut tx, alert_id)

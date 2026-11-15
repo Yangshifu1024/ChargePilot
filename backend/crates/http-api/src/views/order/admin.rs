@@ -29,7 +29,7 @@ async fn list_feedback(
     Query(q): Query<CasePaging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "feedback.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::FEEDBACK_READ, &rid) {
         return resp;
     }
     // 状态过滤白名单语义收编共享提取器（票 17）；错误文案逐字保留。
@@ -67,7 +67,7 @@ async fn reply_feedback(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "feedback.reply", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::FEEDBACK_REPLY, &rid) {
         return resp;
     }
     let v = body.map(|b| b.0).unwrap_or(Value::Null);
@@ -259,7 +259,7 @@ async fn list_orders(
     Query(q): Query<OrderListParams>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "order.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ORDER_READ, &rid) {
         return resp;
     }
     if let Err(resp) = validate_keyword_status(
@@ -349,7 +349,7 @@ async fn order_detail(
     Path(id): Path<String>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "order.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ORDER_READ, &rid) {
         return resp;
     }
     let order_id = match parse_path_id(&id, &rid) {
@@ -402,7 +402,7 @@ async fn order_timeline(
     Path(id): Path<String>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "order.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ORDER_READ, &rid) {
         return resp;
     }
     let order_id = match parse_path_id(&id, &rid) {
@@ -456,7 +456,7 @@ async fn order_process(
     Query(q): Query<ProcessParams>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "order.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ORDER_READ, &rid) {
         return resp;
     }
     let order_id = match parse_path_id(&id, &rid) {
@@ -500,7 +500,7 @@ async fn order_refunds(
     Path(id): Path<String>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "order.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ORDER_READ, &rid) {
         return resp;
     }
     let order_id = match parse_path_id(&id, &rid) {
@@ -547,7 +547,7 @@ async fn payment_orders(
     Query(q): Query<PaymentOrderParams>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "order.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ORDER_READ, &rid) {
         return resp;
     }
     // 旧版：状态白名单为空（任何非空 status 拒绝），关键词 ≤128 字。

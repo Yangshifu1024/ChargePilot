@@ -419,7 +419,7 @@ pub async fn managed(
     if !actor_locked
         .permissions
         .iter()
-        .any(|p| p == "admin_user.update")
+        .any(|p| p == crate::perms::ADMIN_USER_UPDATE)
     {
         return Err(MfaError::Credentials);
     }

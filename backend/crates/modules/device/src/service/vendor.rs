@@ -76,7 +76,7 @@ pub async fn create(
     if !actor_locked
         .permissions
         .iter()
-        .any(|p| p == "vendor.create")
+        .any(|p| p == chargepilot_mod_ops::perms::VENDOR_CREATE)
     {
         return Err(DeviceError::Forbidden);
     }
@@ -126,7 +126,7 @@ pub async fn update(
     if !actor_locked
         .permissions
         .iter()
-        .any(|p| p == "vendor.update")
+        .any(|p| p == chargepilot_mod_ops::perms::VENDOR_UPDATE)
     {
         return Err(DeviceError::Forbidden);
     }

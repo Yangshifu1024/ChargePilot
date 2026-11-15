@@ -57,7 +57,7 @@ pub async fn create_template(
     if !actor_locked
         .permissions
         .iter()
-        .any(|p| p == "pricing.rule.create")
+        .any(|p| p == chargepilot_mod_ops::perms::PRICING_RULE_CREATE)
     {
         return Err(PricingError::Forbidden);
     }
@@ -110,7 +110,7 @@ pub async fn update_template(
     if !actor_locked
         .permissions
         .iter()
-        .any(|p| p == "pricing.rule.update")
+        .any(|p| p == chargepilot_mod_ops::perms::PRICING_RULE_UPDATE)
     {
         return Err(PricingError::Forbidden);
     }
@@ -171,7 +171,7 @@ pub async fn set_template_status(
     if !actor_locked
         .permissions
         .iter()
-        .any(|p| p == "pricing.rule.update")
+        .any(|p| p == chargepilot_mod_ops::perms::PRICING_RULE_UPDATE)
     {
         return Err(PricingError::Forbidden);
     }

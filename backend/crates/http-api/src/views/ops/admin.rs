@@ -71,7 +71,7 @@ async fn list_admin_users(
     Query(q): Query<PagingQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "admin_user.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ADMIN_USER_READ, &rid) {
         return resp;
     }
     // 域服务签名收 ops Page 类型；分页已在提取器按 F6 校验，此处重建承载。
@@ -99,7 +99,7 @@ async fn create_admin_user(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "admin_user.create", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ADMIN_USER_CREATE, &rid) {
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
@@ -134,7 +134,7 @@ async fn update_admin_user(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "admin_user.update", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ADMIN_USER_UPDATE, &rid) {
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
@@ -175,7 +175,7 @@ async fn delete_admin_user(
     Path(id): Path<u64>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "admin_user.delete", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ADMIN_USER_DELETE, &rid) {
         return resp;
     }
     match management::delete_admin(&deps.db, &guard.profile, id, &real_ip(&headers), &rid).await {
@@ -191,7 +191,7 @@ async fn unlock_admin_user(
     Path(id): Path<u64>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "admin_user.update", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ADMIN_USER_UPDATE, &rid) {
         return resp;
     }
     match management::unlock_admin(&deps.db, &guard.profile, id, &real_ip(&headers), &rid).await {
@@ -208,7 +208,11 @@ async fn reset_password(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "admin_user.reset_password", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::ADMIN_USER_RESET_PASSWORD,
+        &rid,
+    ) {
         return resp;
     }
     let new_password = body
@@ -239,7 +243,7 @@ async fn list_roles(
     headers: HeaderMap,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "admin_user.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ADMIN_USER_READ, &rid) {
         return resp;
     }
     match management::list_roles(&deps.db).await {
@@ -254,7 +258,7 @@ async fn list_permissions(
     headers: HeaderMap,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "admin_user.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ADMIN_USER_READ, &rid) {
         return resp;
     }
     match management::list_permissions(&deps.db).await {
@@ -270,7 +274,7 @@ async fn create_role(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "role.create", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ROLE_CREATE, &rid) {
         return resp;
     }
     let Some(input) = role_input(body.map(|b| b.0)) else {
@@ -295,7 +299,7 @@ async fn update_role(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "role.update", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ROLE_UPDATE, &rid) {
         return resp;
     }
     let Some(input) = role_input(body.map(|b| b.0)) else {
@@ -331,7 +335,7 @@ async fn delete_role(
     Path(id): Path<u64>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "role.delete", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ROLE_DELETE, &rid) {
         return resp;
     }
     match management::delete_role(&deps.db, &guard.profile, id, &real_ip(&headers), &rid).await {
@@ -360,7 +364,7 @@ async fn list_announcements(
     headers: HeaderMap,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "announcement.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ANNOUNCEMENT_READ, &rid) {
         return resp;
     }
     match chargepilot_mod_ops::announcement::list(&deps.db).await {
@@ -376,7 +380,11 @@ async fn publish_announcement(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "announcement.create", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::ANNOUNCEMENT_CREATE,
+        &rid,
+    ) {
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
@@ -420,7 +428,7 @@ async fn dashboard(
     headers: HeaderMap,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "dashboard.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::DASHBOARD_READ, &rid) {
         return resp;
     }
     match chargepilot_mod_ops::dashboard::load(&deps.db).await {

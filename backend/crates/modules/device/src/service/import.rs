@@ -94,7 +94,7 @@ pub async fn import_devices(
     if !actor_locked
         .permissions
         .iter()
-        .any(|p| p == "device.import")
+        .any(|p| p == chargepilot_mod_ops::perms::DEVICE_IMPORT)
     {
         return Err(DeviceError::Forbidden);
     }

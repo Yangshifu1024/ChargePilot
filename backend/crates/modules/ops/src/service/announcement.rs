@@ -74,7 +74,7 @@ pub async fn publish(
     if !actor_locked
         .permissions
         .iter()
-        .any(|p| p == "announcement.create")
+        .any(|p| p == crate::perms::ANNOUNCEMENT_CREATE)
     {
         return Err(OpsError::Permission);
     }

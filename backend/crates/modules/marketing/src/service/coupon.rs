@@ -129,7 +129,7 @@ pub async fn list_coupons(
     pool: &MySqlPool,
     actor: &Profile,
 ) -> Result<Vec<CouponRow>, CouponError> {
-    if !has_permission(actor, "coupon.read") {
+    if !has_permission(actor, chargepilot_mod_ops::perms::COUPON_READ) {
         return Err(CouponError::Forbidden);
     }
     coupon::coupon_rows_desc(pool).await
@@ -144,7 +144,7 @@ pub async fn create_coupon(
     request_id: &str,
     in_row: CouponRow,
 ) -> Result<CouponRow, CouponError> {
-    if !has_permission(actor, "coupon.create") {
+    if !has_permission(actor, chargepilot_mod_ops::perms::COUPON_CREATE) {
         return Err(CouponError::Forbidden);
     }
     if in_row.id != 0
@@ -219,7 +219,7 @@ pub async fn update_coupon(
     id: u64,
     update: CouponUpdate,
 ) -> Result<CouponUpdate, CouponError> {
-    if !has_permission(actor, "coupon.update") {
+    if !has_permission(actor, chargepilot_mod_ops::perms::COUPON_UPDATE) {
         return Err(CouponError::Forbidden);
     }
     if id == 0
@@ -259,7 +259,7 @@ pub async fn coupon_stats(
     actor: &Profile,
     id: u64,
 ) -> Result<CouponStats, CouponError> {
-    if !has_permission(actor, "coupon.read") {
+    if !has_permission(actor, chargepilot_mod_ops::perms::COUPON_READ) {
         return Err(CouponError::Forbidden);
     }
     let mut conn = pool.acquire().await?;
@@ -294,7 +294,7 @@ pub async fn grant_coupon(
     coupon_id: u64,
     input: GrantInput,
 ) -> Result<GrantResult, CouponError> {
-    if !has_permission(actor, "coupon.grant") {
+    if !has_permission(actor, chargepilot_mod_ops::perms::COUPON_GRANT) {
         return Err(CouponError::Forbidden);
     }
     if coupon_id == 0 || input.user_id == 0 || !valid_request_id(&input.request_id) {

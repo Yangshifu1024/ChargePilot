@@ -28,7 +28,11 @@ pub async fn review_invoice(
     request_id: &str,
 ) -> Result<&'static str, InvoiceAdminError> {
     // 服务内实时复核（旧版 audit.Actor.Role / HasPermission 判定）。
-    if actor.role != "customer_finance" || !actor.permissions.iter().any(|p| p == "invoice.review")
+    if actor.role != "customer_finance"
+        || !actor
+            .permissions
+            .iter()
+            .any(|p| p == chargepilot_mod_ops::perms::INVOICE_REVIEW)
     {
         return Err(InvoiceAdminError::Forbidden);
     }
@@ -97,7 +101,7 @@ pub async fn review_invoice(
                 || !first_profile
                     .permissions
                     .iter()
-                    .any(|p| p == "invoice.review")
+                    .any(|p| p == chargepilot_mod_ops::perms::INVOICE_REVIEW)
             {
                 return Err(InvoiceAdminError::Conflict);
             }

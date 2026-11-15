@@ -370,7 +370,7 @@ pub async fn review_meter(
                     && profile
                         .permissions
                         .iter()
-                        .any(|p| p == "billing.meter.review")
+                        .any(|p| p == chargepilot_mod_ops::perms::BILLING_METER_REVIEW)
             }
         };
         if !permitted {

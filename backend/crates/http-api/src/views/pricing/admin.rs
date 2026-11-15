@@ -20,7 +20,7 @@ async fn preview_scheme(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "pricing.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::PRICING_READ, &rid) {
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
@@ -114,7 +114,7 @@ async fn list_schemes(
     headers: HeaderMap,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "pricing.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::PRICING_READ, &rid) {
         return resp;
     }
     match templates::list_templates(&deps.db).await {
@@ -133,7 +133,11 @@ async fn create_scheme(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "pricing.rule.create", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::PRICING_RULE_CREATE,
+        &rid,
+    ) {
         return resp;
     }
     let Some(input) = body
@@ -165,7 +169,11 @@ async fn update_scheme(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "pricing.rule.update", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::PRICING_RULE_UPDATE,
+        &rid,
+    ) {
         return resp;
     }
     let Some(input) = body
@@ -188,7 +196,11 @@ async fn scheme_status(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "pricing.rule.update", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::PRICING_RULE_UPDATE,
+        &rid,
+    ) {
         return resp;
     }
     let v = body.map(|b| b.0).unwrap_or(Value::Null);
@@ -217,7 +229,11 @@ async fn delete_scheme(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "pricing.rule.update", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::PRICING_RULE_UPDATE,
+        &rid,
+    ) {
         return resp;
     }
     let v = body.map(|b| b.0).unwrap_or(Value::Null);
@@ -245,7 +261,11 @@ async fn apply_scheme(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "pricing.rule.create", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::PRICING_RULE_CREATE,
+        &rid,
+    ) {
         return resp;
     }
     let Some(input) = body
@@ -271,7 +291,7 @@ async fn effective_scheme(
     Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "pricing.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::PRICING_READ, &rid) {
         return resp;
     }
     match publication::effective_scheme(&deps.db, id, q.get("device_id").map(String::as_str)).await
@@ -292,7 +312,11 @@ async fn inherit_scheme(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "pricing.rule.update", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::PRICING_RULE_UPDATE,
+        &rid,
+    ) {
         return resp;
     }
     let Some(input) = body

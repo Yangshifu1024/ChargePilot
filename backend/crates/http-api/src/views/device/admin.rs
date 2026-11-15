@@ -30,7 +30,7 @@ async fn device_capabilities(
     Query(q): Query<CapabilityQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "pricing.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::PRICING_READ, &rid) {
         return resp;
     }
     let Some(station_id) = q.station_id.filter(|s| *s > 0) else {
@@ -82,7 +82,7 @@ async fn list_stations(
     Query(q): Query<PagingQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "station.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::STATION_READ, &rid) {
         return resp;
     }
     // 域服务签名收 ops Page 类型；分页已在提取器按 F6 校验，此处重建承载。
@@ -109,7 +109,7 @@ async fn get_station(
     Path(id): Path<u64>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "station.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::STATION_READ, &rid) {
         return resp;
     }
     match station::get(&deps.db, id).await {
@@ -133,7 +133,7 @@ async fn create_station(
     body: Option<axum::Json<station::StationInput>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "station.create", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::STATION_CREATE, &rid) {
         return resp;
     }
     let Some(input) = body.map(|b| b.0) else {
@@ -162,7 +162,7 @@ async fn update_station(
     body: Option<axum::Json<station::StationInput>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "station.update", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::STATION_UPDATE, &rid) {
         return resp;
     }
     let Some(input) = body.map(|b| b.0) else {
@@ -184,7 +184,7 @@ async fn list_vendors(
     headers: HeaderMap,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "vendor.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::VENDOR_READ, &rid) {
         return resp;
     }
     match vendor::list(&deps.db, false).await {
@@ -204,7 +204,7 @@ async fn get_vendor(
     Path(id): Path<u64>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "vendor.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::VENDOR_READ, &rid) {
         return resp;
     }
     match vendor::get(&deps.db, id).await {
@@ -223,7 +223,7 @@ async fn create_vendor(
     body: Option<axum::Json<vendor::VendorInput>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "vendor.create", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::VENDOR_CREATE, &rid) {
         return resp;
     }
     let Some(input) = body.map(|b| b.0) else {
@@ -252,7 +252,7 @@ async fn update_vendor(
     body: Option<axum::Json<vendor::VendorInput>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "vendor.update", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::VENDOR_UPDATE, &rid) {
         return resp;
     }
     let Some(input) = body.map(|b| b.0) else {
@@ -270,7 +270,7 @@ async fn vendor_options(
     headers: HeaderMap,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "device.import", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::DEVICE_IMPORT, &rid) {
         return resp;
     }
     match vendor::list(&deps.db, true).await {
@@ -327,7 +327,7 @@ async fn list_devices(
     Query(q): Query<DeviceQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "device.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::DEVICE_READ, &rid) {
         return resp;
     }
     // 域服务签名收 ops Page 类型；分页已在提取器按 F6 校验，此处重建承载。
@@ -361,7 +361,7 @@ async fn get_device(
     Path(id): Path<u64>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "device.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::DEVICE_READ, &rid) {
         return resp;
     }
     match management::get(&deps.db, id).await {
@@ -378,7 +378,7 @@ async fn update_device(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "device.operate", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::DEVICE_OPERATE, &rid) {
         return resp;
     }
     let Some(v) = body.map(|b| b.0) else {
@@ -409,7 +409,7 @@ async fn set_device_status(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "device.operate", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::DEVICE_OPERATE, &rid) {
         return resp;
     }
     let status = body
@@ -431,7 +431,7 @@ async fn list_imports(
     headers: HeaderMap,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "device.import", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::DEVICE_IMPORT, &rid) {
         return resp;
     }
     match import::list_imports(&deps.db).await {
@@ -447,7 +447,7 @@ async fn create_import(
     body: Option<axum::Json<import::ImportInput>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "device.import", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::DEVICE_IMPORT, &rid) {
         return resp;
     }
     let Some(input) = body.map(|b| b.0) else {
@@ -475,7 +475,7 @@ async fn retry_import(
     Path(import_id): Path<String>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "device.import", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::DEVICE_IMPORT, &rid) {
         return resp;
     }
     // 重试语义：按已存任务重放（已完成任务静默返回）
@@ -496,7 +496,7 @@ async fn admin_fault_list(
     Query(q): Query<PagingQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "fault.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::FAULT_READ, &rid) {
         return resp;
     }
     match fault::admin_list(&deps.db, q.status.as_deref(), page, page_size).await {
@@ -515,7 +515,7 @@ async fn admin_fault_history(
     Path(id): Path<u64>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "fault.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::FAULT_READ, &rid) {
         return resp;
     }
     match fault::admin_history(&deps.db, id).await {
@@ -532,7 +532,7 @@ async fn admin_fault_dispatch(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "fault.dispatch", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::FAULT_DISPATCH, &rid) {
         return resp;
     }
     let v = body.map(|b| b.0).unwrap_or(Value::Null);
@@ -567,7 +567,7 @@ async fn admin_fault_resolve(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "fault.resolve", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::FAULT_RESOLVE, &rid) {
         return resp;
     }
     let v = body.map(|b| b.0).unwrap_or(Value::Null);
@@ -594,7 +594,7 @@ async fn alert_list(
     headers: HeaderMap,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "alert.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ALERT_READ, &rid) {
         return resp;
     }
     match alert::list(&deps.db).await {
@@ -610,7 +610,7 @@ async fn alert_ack(
     Path(id): Path<u64>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "alert.ack", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ALERT_ACK, &rid) {
         return resp;
     }
     match alert::ack(&deps.db, &guard.profile, id, "unknown", &rid).await {

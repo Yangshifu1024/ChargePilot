@@ -54,7 +54,11 @@ async fn list_wallet_risks(
     Query(q): Query<RiskPaging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "finance.wallet_risk.review", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::FINANCE_WALLET_RISK_REVIEW,
+        &rid,
+    ) {
         return resp;
     }
     let Some(wallet) = &deps.wallet else {
@@ -90,7 +94,11 @@ async fn review_wallet_risk(
     AxumJson(body): AxumJson<ReviewBody>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "finance.wallet_risk.review", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::FINANCE_WALLET_RISK_REVIEW,
+        &rid,
+    ) {
         return resp;
     }
     let Some(wallet) = &deps.wallet else {
@@ -123,7 +131,11 @@ async fn release_wallet_risk(
     AxumJson(body): AxumJson<ReleaseBody>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "finance.wallet_risk.release", &rid) {
+    if let Some(resp) = deny(
+        &guard,
+        chargepilot_mod_ops::perms::FINANCE_WALLET_RISK_RELEASE,
+        &rid,
+    ) {
         return resp;
     }
     let Some(wallet) = &deps.wallet else {

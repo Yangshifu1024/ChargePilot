@@ -47,7 +47,7 @@ async fn list_online_cards(
     headers: HeaderMap,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "user.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::USER_READ, &rid) {
         return resp;
     }
     match chargepilot_mod_card::admin::list_cards(&deps.db, &guard.profile).await {
@@ -66,7 +66,7 @@ async fn bind_online_card(
     axum::Json(body): axum::Json<BindBody>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "online_card.manage", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ONLINE_CARD_MANAGE, &rid) {
         return resp;
     }
     // 旧版 DecimalID 解析失败即输入错误，文案与业务输入校验一致。
@@ -103,7 +103,7 @@ async fn online_card_status(
     axum::Json(body): axum::Json<CardStatusBody>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "online_card.manage", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ONLINE_CARD_MANAGE, &rid) {
         return resp;
     }
     let card_id = match path_id(&id, &rid) {

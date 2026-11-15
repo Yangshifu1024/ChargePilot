@@ -138,7 +138,7 @@ pub async fn dispatch(
     if !actor_locked
         .permissions
         .iter()
-        .any(|p| p == "fault.dispatch")
+        .any(|p| p == chargepilot_mod_ops::perms::FAULT_DISPATCH)
     {
         return Err(DeviceError::Forbidden);
     }
@@ -214,7 +214,7 @@ pub async fn resolve(
     if !actor_locked
         .permissions
         .iter()
-        .any(|p| p == "fault.resolve")
+        .any(|p| p == chargepilot_mod_ops::perms::FAULT_RESOLVE)
     {
         return Err(DeviceError::Forbidden);
     }

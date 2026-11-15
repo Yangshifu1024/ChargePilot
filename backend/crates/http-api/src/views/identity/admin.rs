@@ -40,7 +40,7 @@ async fn list_users(
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "user.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::USER_READ, &rid) {
         return resp;
     }
     let keyword = q.get("keyword").map(|s| s.trim()).unwrap_or("");
@@ -74,7 +74,7 @@ async fn user_detail(
     Path(id): Path<String>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "user.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::USER_READ, &rid) {
         return resp;
     }
     let user_id = match path_id(&id, &rid) {
@@ -97,7 +97,7 @@ async fn user_recharges(
     RawQuery(raw): RawQuery,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "user.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::USER_READ, &rid) {
         return resp;
     }
     let user_id = match path_id(&id, &rid) {

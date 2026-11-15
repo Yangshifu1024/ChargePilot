@@ -8,6 +8,7 @@
 pub use error::{MfaError, OpsError};
 
 pub mod error;
+pub mod perms;
 pub mod repo;
 pub mod service;
 

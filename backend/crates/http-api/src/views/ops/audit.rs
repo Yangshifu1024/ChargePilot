@@ -31,7 +31,7 @@ async fn list_audit_logs(
     Query(q): Query<AuditPaging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "audit.read", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::AUDIT_READ, &rid) {
         return resp;
     }
     // 仅解析 RFC3339 输入（旧版 time.Parse(time.RFC3339)；无效返回 400）。
@@ -95,7 +95,7 @@ async fn admin_user_mfa(
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    if let Some(resp) = deny(&guard, "admin_user.update", &rid) {
+    if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ADMIN_USER_UPDATE, &rid) {
         return resp;
     }
     let v = body.map(|b| b.0).unwrap_or(Value::Null);

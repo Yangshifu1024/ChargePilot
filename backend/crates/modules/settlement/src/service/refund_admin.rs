@@ -290,7 +290,7 @@ pub async fn review_manual_refund(
                         && profile
                             .permissions
                             .iter()
-                            .any(|p| p == "order.refund.review")
+                            .any(|p| p == chargepilot_mod_ops::perms::ORDER_REFUND_REVIEW)
                 }
             };
             if !permitted {

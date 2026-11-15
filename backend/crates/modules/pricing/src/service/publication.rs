@@ -71,7 +71,7 @@ pub async fn publish(
     if !actor_locked
         .permissions
         .iter()
-        .any(|p| p == "pricing.rule.create")
+        .any(|p| p == chargepilot_mod_ops::perms::PRICING_RULE_CREATE)
     {
         return Err(PricingError::Forbidden);
     }
@@ -182,7 +182,7 @@ pub async fn inherit_station_rule(
     if !actor_locked
         .permissions
         .iter()
-        .any(|p| p == "pricing.rule.update")
+        .any(|p| p == chargepilot_mod_ops::perms::PRICING_RULE_UPDATE)
     {
         return Err(PricingError::Forbidden);
     }
