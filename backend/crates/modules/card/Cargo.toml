@@ -13,11 +13,11 @@ chrono.workspace = true
 tracing.workspace = true
 chargepilot-domain.workspace = true
 chargepilot-platform.workspace = true
-chargepilot-mod-ops.workspace = true
-chargepilot-mod-order.workspace = true
-chargepilot-mod-payment.workspace = true
-chargepilot-mod-pricing.workspace = true
-chargepilot-mod-wallet.workspace = true
+chargepilot-mod-ops.workspace = true  # 操作员实时权限
+chargepilot-mod-order.workspace = true  # 订单锁与卡会话归属
+chargepilot-mod-payment.workspace = true  # 卡支付写入与端口扫描
+chargepilot-mod-pricing.workspace = true  # 计费规则快照
+chargepilot-mod-wallet.workspace = true  # 余额扣款与钱包错误映射
 
 [lints]
 workspace = true

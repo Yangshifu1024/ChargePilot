@@ -13,7 +13,7 @@ chrono.workspace = true
 tracing.workspace = true
 chargepilot-domain.workspace = true
 chargepilot-platform.workspace = true
-chargepilot-mod-ops.workspace = true
+chargepilot-mod-ops.workspace = true  # 反馈工单的操作员身份与审计事务
 
 [lints]
 workspace = true

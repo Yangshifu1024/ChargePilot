@@ -14,8 +14,8 @@ redis.workspace = true
 tracing.workspace = true
 chargepilot-domain.workspace = true
 chargepilot-platform.workspace = true
-chargepilot-mod-ops.workspace = true
-chargepilot-mod-wallet.workspace = true
+chargepilot-mod-ops.workspace = true  # 后台账号实时权限
+chargepilot-mod-wallet.workspace = true  # 用户状态与钱包账户事实对账
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

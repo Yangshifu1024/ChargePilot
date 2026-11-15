@@ -14,8 +14,7 @@ serde_json.workspace = true
 sha2.workspace = true
 rust_xlsxwriter.workspace = true
 chargepilot-domain.workspace = true
-chargepilot-mod-ops.workspace = true
-chargepilot-mod-order.workspace = true
+chargepilot-mod-ops.workspace = true  # 导出申请的操作员归属与审计
 
 [lints]
 workspace = true

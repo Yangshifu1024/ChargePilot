@@ -543,7 +543,6 @@ dependencies = [
  "anyhow",
  "chargepilot-domain",
  "chargepilot-mod-ops",
- "chargepilot-mod-order",
  "chrono",
  "rust_xlsxwriter",
  "serde",

@@ -13,8 +13,8 @@ serde.workspace = true
 serde_json.workspace = true
 rust_decimal.workspace = true
 chargepilot-domain.workspace = true
-chargepilot-mod-identity.workspace = true
-chargepilot-mod-ops.workspace = true
+chargepilot-mod-identity.workspace = true  # 持券用户身份事实
+chargepilot-mod-ops.workspace = true  # 活动与券管理的操作员准入与审计
 
 [lints]
 workspace = true

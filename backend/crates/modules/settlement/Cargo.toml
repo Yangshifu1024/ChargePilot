@@ -13,10 +13,10 @@ tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chargepilot-domain.workspace = true
-chargepilot-mod-ops.workspace = true
-chargepilot-mod-wallet.workspace = true
-chargepilot-mod-order.workspace = true
-chargepilot-mod-payment.workspace = true
+chargepilot-mod-ops.workspace = true  # 操作员实时权限与引导账号
+chargepilot-mod-wallet.workspace = true  # 余额退回入账（RefundRecorder trait 实现）
+chargepilot-mod-order.workspace = true  # 订单视图与事件登记
+chargepilot-mod-payment.workspace = true  # 支付单状态推进与退款锁
 
 [lints]
 workspace = true

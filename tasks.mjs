@@ -2,7 +2,7 @@
 // ChargePilot 任务入口（沿用旧仓库 tasks.mjs 习惯，make 无依赖版本）
 // 用法：node tasks.mjs <task>
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 
 const BACKEND = 'backend';
 const task = process.argv[2] ?? 'help';
@@ -24,6 +24,28 @@ function envOf() {
   return env;
 }
 
+// 统计目录内全部 .rs 文件中 pattern 出现次数（逐行计数，一行多处分别计）。
+function countPattern(dir, pattern) {
+  let total = 0;
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = `${d}/${e.name}`;
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.rs')) {
+        for (const line of readFileSync(p, 'utf8').split('\n')) {
+          let idx = line.indexOf(pattern);
+          while (idx !== -1) {
+            total += 1;
+            idx = line.indexOf(pattern, idx + pattern.length);
+          }
+        }
+      }
+    }
+  };
+  walk(dir);
+  return total;
+}
+
 const tasks = {
   build() { run('cargo', ['build', '--workspace']); },
   test() { run('cargo', ['test', '--workspace']); },
@@ -34,8 +56,32 @@ const tasks = {
   clippy() { run('cargo', ['clippy', '--workspace', '--all-targets']); },
   // 前后端契约对账（纯静态：扫前端调用点与后端路由注册，免服务）。
   'api-contract'() { run('python3', ['scripts/ops/check-api-contract.py'], { cwd: '.' }); },
+  // SQL 层审计（蓝图批次 4 收尾）：域 crate 的 service/ 只做业务编排与事务
+  // 组装，SQL 只允许出现在 repo/。逐域统计 sqlx::query* 出现次数，非零即失败
+  // （子串口径覆盖 query/query_as/query_scalar/query_builder 全部形态）。
+  'check-sql'() {
+    const modulesDir = `${BACKEND}/crates/modules`;
+    const offenders = [];
+    let domains = 0;
+    for (const entry of readdirSync(modulesDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const serviceDir = `${modulesDir}/${entry.name}/src/service`;
+      if (!existsSync(serviceDir)) continue;
+      domains += 1;
+      const count = countPattern(serviceDir, 'sqlx::query');
+      if (count > 0) offenders.push(`${entry.name}: ${count} 处`);
+    }
+    if (offenders.length > 0) {
+      console.error(
+        `SQL 层违规（service/ 出现 sqlx::query，SQL 应移入 repo/）：\n  ${offenders.join('\n  ')}`,
+      );
+      process.exit(1);
+    }
+    console.log(`SQL 层审计：${domains} 域 service/ 均无 sqlx::query，SQL 全部收敛 repo/`);
+  },
   check() {
     tasks['fmt-check']();
+    tasks['check-sql']();
     tasks.clippy();
     tasks.test();
     tasks['api-contract']();
@@ -95,7 +141,7 @@ const tasks = {
   },
   'redis-down'() { spawnSync('docker', ['rm', '-f', 'chargepilot-dev-redis'], { stdio: 'inherit' }); },
   help() {
-    console.log('任务：build | test | fmt | fmt-check | check | migrate | test-integration [fresh] | db-up | db-down | redis-up | redis-down');
+    console.log('任务：build | test | fmt | fmt-check | check-sql | check | migrate | test-integration [fresh] | db-up | db-down | redis-up | redis-down');
   },
 };
 

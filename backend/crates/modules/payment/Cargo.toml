@@ -18,10 +18,10 @@ sha2.workspace = true
 tracing.workspace = true
 chargepilot-domain.workspace = true
 chargepilot-platform.workspace = true
-chargepilot-mod-wallet.workspace = true
-chargepilot-mod-marketing.workspace = true
-chargepilot-mod-order.workspace = true
-chargepilot-mod-pricing.workspace = true
+chargepilot-mod-wallet.workspace = true  # 余额充值桥与钱包错误映射
+chargepilot-mod-marketing.workspace = true  # 券核销幂等
+chargepilot-mod-order.workspace = true  # 订单号分配与订单事实
+chargepilot-mod-pricing.workspace = true  # 计费方案扫描与冻结
 
 [dev-dependencies]
 tokio.workspace = true

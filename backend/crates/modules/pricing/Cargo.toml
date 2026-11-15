@@ -14,7 +14,7 @@ tracing.workspace = true
 sha2.workspace = true
 chargepilot-domain.workspace = true
 chargepilot-platform.workspace = true
-chargepilot-mod-ops.workspace = true
+chargepilot-mod-ops.workspace = true  # 方案变更的操作员审计
 
 [lints]
 workspace = true
