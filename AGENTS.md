@@ -1,6 +1,6 @@
 # ChargePilot
 
-充电桩运营平台的 Rust 单体重写项目（替代 Go 多服务旧仓库）。整体方案、实施计划与验收标准见 [docs/rewrite-plan.md](docs/rewrite-plan.md)；架构决策见 [docs/adr/](docs/adr/README.md)。
+充电桩运营平台的 Rust 单体项目。架构基准、终态目录树、依赖规则与实施计划见 [docs/blueprint.md](docs/blueprint.md)——实施与蓝图冲突时，当场在其偏离登记表记一行；编码前先读 [CODING_STANDARDS.md](CODING_STANDARDS.md)。
 
 ## Agent skills
 
@@ -14,7 +14,7 @@
 
 ### Domain docs
 
-单上下文布局：仓库根目录一个 `GLOSSARY.md`，架构决策记录位于 `docs/adr/`。见 `docs/agents/domain.md`。
+单上下文布局：仓库根目录一个 `GLOSSARY.md`（惰性创建），架构基准在 `docs/blueprint.md`。见 `docs/agents/domain.md`。
 
 ### Coding standards
 
