@@ -3,7 +3,7 @@
 
 use crate::publication::SpecWrapper;
 use crate::{PricingError, PricingResult};
-use chargepilot_domain::charging_scheme::Scheme;
+use chargepilot_domain::charging::scheme::Scheme;
 use sqlx::MySqlPool;
 
 #[derive(Debug)]

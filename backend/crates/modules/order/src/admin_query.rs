@@ -341,7 +341,7 @@ pub fn package_from_snapshot(raw: &str) -> Option<Value> {
     #[derive(serde::Deserialize, Default)]
     struct FrozenSpec {
         #[serde(default)]
-        scheme: Option<chargepilot_domain::charging_scheme::Scheme>,
+        scheme: Option<chargepilot_domain::charging::scheme::Scheme>,
         #[serde(default)]
         mode: String,
     }
@@ -356,7 +356,7 @@ pub fn package_from_snapshot(raw: &str) -> Option<Value> {
     struct FrozenSnapshot {
         #[serde(default)]
         rule: FrozenRule,
-        offer: Option<chargepilot_domain::charging_settle::Offer>,
+        offer: Option<chargepilot_domain::charging::settle::Offer>,
     }
     let frozen: FrozenSnapshot = serde_json::from_str(raw).ok()?;
     let offer = frozen.offer?;

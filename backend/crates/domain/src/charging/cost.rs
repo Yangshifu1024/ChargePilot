@@ -1,7 +1,7 @@
 //! Cost 计费引擎：分时段功率/电量计价、费用片段与计量截止冻结。
 //! 语义基准：旧仓库 internal/domain/charging/{cost,scheme_cost,breakdown}.go，逐行对齐。
 
-use crate::charging_spec::{
+use crate::charging::spec::{
     BillingError, ChargeMode, MAX_SLICES, Spec, Usage, beijing, compile_periods, div_prec16,
     round_to_cents, string_fixed6, validate_spec,
 };
@@ -69,7 +69,7 @@ fn fragment(
 }
 
 /// 阶梯选档：功率落在 [上一档上界+1, 本档上界] 用本档；超出最后一档用最后一档。
-pub fn tier_for(period: &crate::charging_spec::Period, watts: u32) -> crate::charging_spec::Tier {
+pub fn tier_for(period: &crate::charging::spec::Period, watts: u32) -> crate::charging::spec::Tier {
     let mut lower = 0u64;
     for tier in &period.tiers {
         if (watts as u64) >= lower && (watts as u64) <= tier.max_watts.max(0) as u64 {
@@ -81,7 +81,7 @@ pub fn tier_for(period: &crate::charging_spec::Period, watts: u32) -> crate::cha
         .tiers
         .last()
         .cloned()
-        .unwrap_or(crate::charging_spec::Tier {
+        .unwrap_or(crate::charging::spec::Tier {
             max_watts: 0,
             electric_cents: 0,
             service_cents: 0,
@@ -89,7 +89,7 @@ pub fn tier_for(period: &crate::charging_spec::Period, watts: u32) -> crate::cha
 }
 
 /// 时刻所属费率时段；配置非法时返回零值时段（调用方校验在先，与旧版一致）。
-pub fn period_at(spec: &Spec, at: DateTime<Utc>) -> crate::charging_spec::Period {
+pub fn period_at(spec: &Spec, at: DateTime<Utc>) -> crate::charging::spec::Period {
     let Some(electric) = &spec.electric else {
         return Default::default();
     };
@@ -154,7 +154,7 @@ pub fn cost(spec: &Spec, usage: &Usage) -> Result<Fee, BillingError> {
         time_end: DateTime<Utc>,
         minutes: Decimal,
         peak: u32,
-        period: crate::charging_spec::Period,
+        period: crate::charging::spec::Period,
     }
     let mut peaks: HashMap<String, PeakPeriod> = HashMap::new();
     let bj = beijing();
@@ -166,7 +166,7 @@ pub fn cost(spec: &Spec, usage: &Usage) -> Result<Fee, BillingError> {
         total_wh += sample_wh;
         if spec.mode == ChargeMode::new(ChargeMode::SERVER_ENERGY) {
             let uniform_end = *sample_end - Duration::nanoseconds(1);
-            if !crate::charging_spec::spec_is_uniform_over(spec, *sample_start, uniform_end) {
+            if !crate::charging::spec::spec_is_uniform_over(spec, *sample_start, uniform_end) {
                 return Err(BillingError::MeterReview);
             }
             let period = period_at(spec, *sample_start);
@@ -292,10 +292,10 @@ pub fn cost(spec: &Spec, usage: &Usage) -> Result<Fee, BillingError> {
 /// （旧版 CutoffMeter；ActualMeter 定义见 charging_actual）。
 pub fn cutoff_meter(
     spec: &Spec,
-    m: &crate::charging_actual::ActualMeter,
+    m: &crate::charging::actual::ActualMeter,
     cutoff: DateTime<Utc>,
-) -> Result<crate::charging_actual::ActualMeter, BillingError> {
-    use crate::charging_spec::ChargeMode as CM;
+) -> Result<crate::charging::actual::ActualMeter, BillingError> {
+    use crate::charging::spec::ChargeMode as CM;
     let ended = m.ended_at.ok_or(BillingError::MeterReview)?;
     if cutoff >= ended {
         return Ok(m.clone());

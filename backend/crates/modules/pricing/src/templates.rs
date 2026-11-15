@@ -1,7 +1,7 @@
 //! 计费模板 CRUD：单事务「锁模板行 → 版本核对 → 写入 → 审计」，更新版本 +1（旧版语义）。
 
 use crate::{PricingError, PricingResult};
-use chargepilot_domain::charging_scheme::{Scheme, Spec};
+use chargepilot_domain::charging::scheme::{Scheme, Spec};
 use chargepilot_mod_ops::Profile;
 use chargepilot_mod_ops::repo;
 use serde::Deserialize;

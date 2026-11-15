@@ -4,7 +4,7 @@
 //! 每一步幂等：重放同报文返回相同回执，不同报文报冲突。
 
 use chargepilot_domain::money::{BizType, PaymentOrderStatus};
-use chargepilot_domain::payment_intent::{PaymentIntentStatus, is_late_payment};
+use chargepilot_domain::payment::{PaymentIntentStatus, is_late_payment};
 use sqlx::{Acquire, MySqlPool};
 
 /// 已验签（或模拟确认）的支付事实（旧版 VerifiedPayment）。

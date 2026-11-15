@@ -2,12 +2,12 @@
 //! 校验、套餐查找、计价配置转换、报价与费用预览。
 //! 语义基准：旧仓库 internal/domain/charging/scheme.go，逐条对齐（错误文案与旧版一致）。
 
-use crate::charging_actual::{ActualMeter, Rule};
-use crate::charging_cost::{Fee, cutoff_meter};
-use crate::charging_settle::{Offer, Settlement, actual_from_meter, settle_session};
+use crate::charging::actual::{ActualMeter, Rule};
+use crate::charging::cost::{Fee, cutoff_meter};
+use crate::charging::settle::{Offer, Settlement, actual_from_meter, settle_session};
 /// 引擎计价配置：与本模块的存储包装 Spec（SpecSnapshot 别名）区分。
-use crate::charging_spec::Spec as EngineSpec;
-use crate::charging_spec::{
+use crate::charging::spec::Spec as EngineSpec;
+use crate::charging::spec::{
     BillingError, ChargeMode, TimeCharge, validate_spec as engine_validate_spec,
 };
 use serde::{Deserialize, Serialize};
@@ -49,7 +49,7 @@ pub struct Scheme {
 pub struct AmountMode {
     pub algorithm: ChargeMode,
     #[serde(default)]
-    pub periods: Vec<crate::charging_spec::Period>,
+    pub periods: Vec<crate::charging::spec::Period>,
 }
 
 /// 电量套餐固定单价，单位分/kWh（旧版 EnergyMode）。
@@ -109,7 +109,7 @@ pub struct DisplayLine {
 }
 
 /// spec_json 的存储包装：新版只读写 `scheme`，历史遗留字段经 `extra` 原样往返不丢失。
-/// 计费引擎使用 [`crate::charging_spec::Spec`]（计价配置），两者由 [`Scheme::spec_for`] 衔接。
+/// 计费引擎使用 [`crate::charging::spec::Spec`]（计价配置），两者由 [`Scheme::spec_for`] 衔接。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SpecSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -176,7 +176,7 @@ impl Scheme {
             }
             let spec = EngineSpec {
                 mode: amount.algorithm.clone(),
-                electric: Some(crate::charging_spec::ElectricLine {
+                electric: Some(crate::charging::spec::ElectricLine {
                     basis: amount
                         .algorithm
                         .basis_for()
@@ -295,7 +295,7 @@ impl Scheme {
             "amount" => {
                 if let Some(amount) = &s.amount {
                     spec.mode = amount.algorithm.clone();
-                    spec.electric = Some(crate::charging_spec::ElectricLine {
+                    spec.electric = Some(crate::charging::spec::ElectricLine {
                         basis: amount
                             .algorithm
                             .basis_for()
@@ -459,7 +459,7 @@ impl Scheme {
                 }
                 prefix.segments = meter.segments[..=i].to_vec();
                 prefix.charged_wh = prefix.segments.iter().map(|s| s.energy_wh).sum();
-                match crate::charging_actual::price_actual(&rule, &prefix) {
+                match crate::charging::actual::price_actual(&rule, &prefix) {
                     Ok(fee) => {
                         if fee.total_cents >= p.price_cents {
                             meter = prefix;
@@ -498,7 +498,7 @@ impl Scheme {
                 spec: raw_spec.clone(),
                 ..Default::default()
             };
-            if let Ok(raw) = crate::charging_actual::price_actual(&rule, &meter) {
+            if let Ok(raw) = crate::charging::actual::price_actual(&rule, &meter) {
                 result.raw_fee = Some(raw);
             }
             let rule2 = Rule {
@@ -507,7 +507,7 @@ impl Scheme {
                 spec,
                 ..Default::default()
             };
-            if let Ok(adjusted) = crate::charging_actual::price_actual(&rule2, &meter) {
+            if let Ok(adjusted) = crate::charging::actual::price_actual(&rule2, &meter) {
                 result.policy_fee = Some(adjusted);
             }
         }
@@ -644,4 +644,4 @@ impl Scheme {
     }
 }
 
-// 兼容说明：计价纯函数 price_actual 位于 crate::charging_actual，由预览路径经 settle_session 间接使用。
+// 兼容说明：计价纯函数 price_actual 位于 crate::charging::actual，由预览路径经 settle_session 间接使用。

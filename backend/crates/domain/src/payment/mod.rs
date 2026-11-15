@@ -2,9 +2,9 @@
 //! 意图状态词表、支付前预估量计算、迟到判定与两套业务单号格式都在这里；
 //! 事务编排与表访问在 modules/payment 与 modules/order。
 
-use crate::charging_scheme::{Package, Scheme};
-use crate::charging_settle::Estimate;
-use crate::charging_spec::beijing;
+use crate::charging::scheme::{Package, Scheme};
+use crate::charging::settle::Estimate;
+use crate::charging::spec::beijing;
 use crate::wordlist::wordlist_enum;
 
 wordlist_enum!(
@@ -79,7 +79,7 @@ pub fn intent_estimate(
     Ok(Estimate {
         estimated_kwh: "0.000".to_string(),
         estimated_minutes: minutes,
-        mode: crate::charging_spec::ChargeMode::default(),
+        mode: crate::charging::spec::ChargeMode::default(),
         basis: String::new(),
         electric_cents: 0,
         service_cents: 0,

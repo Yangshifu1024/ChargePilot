@@ -86,7 +86,7 @@ impl StartDispatcher {
         .bind(&device_id)
         .bind(port_no)
         .bind(&port_code)
-        .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Pending)
+        .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Pending)
         .bind(charge_mode)
         .bind(quantity as i64)
         .bind(id as i64)
@@ -105,7 +105,7 @@ impl StartDispatcher {
         // 端口占用不在受理时写：与旧版一致，成功回执（apply_start_receipt）
         // 才占 active_port_charge，结束回执按订单释放。
         sqlx::query("UPDATE `charge_command` SET `status` = ?, `sent_at` = UTC_TIMESTAMP(3) WHERE `command_id` = ?")
-            .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Sent)
+            .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Sent)
             .bind(&command_id)
             .execute(&mut *conn)
             .await?;
@@ -148,7 +148,7 @@ impl StartDispatcher {
                 sqlx::query(
                     "UPDATE `charge_command` SET `status` = ?, `error` = ? WHERE `command_id` = ?",
                 )
-                .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Rejected)
+                .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Rejected)
                 .bind(&e)
                 .bind(&cmd.command_id)
                 .execute(&self.pool)

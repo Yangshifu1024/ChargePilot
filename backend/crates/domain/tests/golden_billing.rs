@@ -9,17 +9,17 @@
 //! 覆盖：Cost / PriceActual / SettleSession / MeasuredSegments / Estimate /
 //! BudgetStop / CutoffMeter / DecideStop / ValidateSpec / Scheme 校验。
 
-use chargepilot_domain::charging_actual::{ActualMeter, MeterSegment, Rule, price_actual};
-use chargepilot_domain::charging_cost::Fee;
-use chargepilot_domain::charging_measured::{
+use chargepilot_domain::charging::actual::{ActualMeter, MeterSegment, Rule, price_actual};
+use chargepilot_domain::charging::cost::Fee;
+use chargepilot_domain::charging::measured::{
     Reading, ReadingSample, SessionSpan, measured_segments,
 };
-use chargepilot_domain::charging_scheme::Scheme;
-use chargepilot_domain::charging_settle::{
+use chargepilot_domain::charging::scheme::Scheme;
+use chargepilot_domain::charging::settle::{
     ControlInstruction, Offer, SessionActual, Settlement, budget_stop_at_meter, decide_stop,
     estimate_charge, settle_session,
 };
-use chargepilot_domain::charging_spec::{BillingError, Spec, Usage, validate_spec};
+use chargepilot_domain::charging::spec::{BillingError, Spec, Usage, validate_spec};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
@@ -115,7 +115,7 @@ impl WireUsage {
             samples: self
                 .samples
                 .into_iter()
-                .map(|s| chargepilot_domain::charging_spec::Sample {
+                .map(|s| chargepilot_domain::charging::spec::Sample {
                     power_known: s.power_known,
                     start: s.start,
                     end: s.end,
@@ -266,7 +266,7 @@ fn run_case(c: &GoldenCase) {
         "cost" => {
             let spec = parse_spec(&c.input["spec"]);
             let usage: WireUsage = serde_json::from_value(c.input["usage"].clone()).expect("usage");
-            let got = chargepilot_domain::charging_cost::cost(&spec, &usage.into_usage());
+            let got = chargepilot_domain::charging::cost::cost(&spec, &usage.into_usage());
             match (&got, want_err_of(&c.want_err)) {
                 (Ok(fee), None) => assert_fee_eq(&c.id, fee, &c.want),
                 (got, _want) => assert_err(&c.id, got.clone().map(|_| ()), &c.want_err),
@@ -344,7 +344,7 @@ fn run_case(c: &GoldenCase) {
             let got = estimate_charge(&rule, energy, minutes, start, prepaid);
             match (&got, want_err_of(&c.want_err)) {
                 (Ok(e), None) => {
-                    let want: chargepilot_domain::charging_settle::Estimate =
+                    let want: chargepilot_domain::charging::settle::Estimate =
                         serde_json::from_value(c.want.clone()).expect("want Estimate");
                     assert_eq!(e, &want, "[{}] Estimate 不一致", c.id);
                 }
@@ -404,8 +404,11 @@ fn run_case(c: &GoldenCase) {
             let meter: WireMeter = serde_json::from_value(c.input["meter"].clone()).expect("meter");
             let cutoff: DateTime<Utc> =
                 serde_json::from_value(c.input["cutoff"].clone()).expect("cutoff");
-            let got =
-                chargepilot_domain::charging_cost::cutoff_meter(&spec, &meter.into_meter(), cutoff);
+            let got = chargepilot_domain::charging::cost::cutoff_meter(
+                &spec,
+                &meter.into_meter(),
+                cutoff,
+            );
             match (&got, want_err_of(&c.want_err)) {
                 (Ok(m), None) => {
                     let want: WireMeter =
@@ -565,7 +568,7 @@ struct WireReading {
 
 /// StopPlan 需要 PartialEq（差分比较）；此处不新增方法，直接引用派生。
 #[allow(unused_imports)]
-use chargepilot_domain::charging_settle as _settle_reexports;
+use chargepilot_domain::charging::settle as _settle_reexports;
 
 /// 每条黄金样本一个独立测试（失败时精确定位）。
 #[test]
@@ -595,8 +598,8 @@ fn golden_differential_all_cases() {
 #[test]
 fn control_instruction_validity() {
     let mut c = ControlInstruction {
-        mode: chargepilot_domain::charging_spec::ChargeMode::new(
-            chargepilot_domain::charging_spec::ChargeMode::DEVICE_DURATION,
+        mode: chargepilot_domain::charging::spec::ChargeMode::new(
+            chargepilot_domain::charging::spec::ChargeMode::DEVICE_DURATION,
         ),
         minutes: 60,
         ..Default::default()
@@ -606,8 +609,8 @@ fn control_instruction_validity() {
     assert!(!c.valid());
     c.minutes = 0;
     assert!(!c.valid());
-    c.mode = chargepilot_domain::charging_spec::ChargeMode::new(
-        chargepilot_domain::charging_spec::ChargeMode::DEVICE_POWER,
+    c.mode = chargepilot_domain::charging::spec::ChargeMode::new(
+        chargepilot_domain::charging::spec::ChargeMode::DEVICE_POWER,
     );
     c.balance_cents = 500;
     c.tier_cents_per_hour = vec![30, 50];

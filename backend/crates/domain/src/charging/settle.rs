@@ -1,9 +1,9 @@
 //! 结算与停止决策：SettleSession 金额拆分、预算停机、购买报价与套餐 Offer。
 //! 语义基准：旧仓库 internal/domain/charging/{device,offer,offer_actual,budget_stop,estimate}.go，逐行对齐。
 
-use crate::charging_actual::{ActualMeter, Rule, StopPlan, price_actual};
-use crate::charging_cost::cost;
-use crate::charging_spec::{
+use crate::charging::actual::{ActualMeter, Rule, StopPlan, price_actual};
+use crate::charging::cost::cost;
+use crate::charging::spec::{
     BillingError, ChargeExecutor, ChargeMode, MAX_RATE_CENTS, MAX_SLICES, Spec, Usage, div_prec16,
     energy_pattern_ok, int_part, parse_energy, validate_spec,
 };
@@ -328,7 +328,7 @@ pub fn settle_session(
 }
 
 /// 把一个已计价的结果按新的总额重新分摊，并保证两项之和正好等于它（旧版 splitFee）。
-pub fn split_fee(fee: &crate::charging_cost::Fee, total: i64) -> (i64, i64) {
+pub fn split_fee(fee: &crate::charging::cost::Fee, total: i64) -> (i64, i64) {
     if fee.total_cents <= 0 {
         return (0, total);
     }
@@ -383,9 +383,9 @@ pub fn price_offer_actual(
     rule: &Rule,
     offer: &Offer,
     meter: &ActualMeter,
-) -> Result<crate::charging_cost::Fee, BillingError> {
+) -> Result<crate::charging::cost::Fee, BillingError> {
     let settlement = settle_session(&rule.spec, meter, Some(offer), None)?;
-    Ok(crate::charging_cost::Fee {
+    Ok(crate::charging::cost::Fee {
         electric_cents: settlement.electric_cents,
         service_cents: settlement.service_cents,
         total_cents: settlement.total_cents,
@@ -415,7 +415,7 @@ pub fn budget_stop_at_meter(
     rule: &Rule,
     offer: Option<&Offer>,
     meter: &ActualMeter,
-) -> Result<(StopPlan, Option<crate::charging_cost::Fee>), BillingError> {
+) -> Result<(StopPlan, Option<crate::charging::cost::Fee>), BillingError> {
     let offer = match offer {
         Some(o) if o.valid() && o.mode == "amount" && rule.spec.mode.server_billed() => o,
         _ => return Err(BillingError::InvalidPricing),
@@ -461,7 +461,7 @@ pub fn budget_stop_at_meter(
     let (electric, service) = split_fee(&fee, offer.price_cents);
     Ok((
         plan,
-        Some(crate::charging_cost::Fee {
+        Some(crate::charging::cost::Fee {
             electric_cents: electric,
             service_cents: service,
             total_cents: electric + service,
@@ -475,8 +475,8 @@ fn budget_bound(
     rule: &Rule,
     meter: &ActualMeter,
     upper: bool,
-) -> Result<crate::charging_cost::Fee, BillingError> {
-    use crate::charging_spec::ChargeMode as CM;
+) -> Result<crate::charging::cost::Fee, BillingError> {
+    use crate::charging::spec::ChargeMode as CM;
     if validate_spec(&rule.spec).is_err() {
         return Err(BillingError::InvalidPricing);
     }
@@ -620,7 +620,7 @@ pub fn estimate_charge(
         if i < remainder {
             energy += 1;
         }
-        usage.samples.push(crate::charging_spec::Sample {
+        usage.samples.push(crate::charging::spec::Sample {
             start: start + Duration::minutes(i),
             end: start + Duration::minutes(i + 1),
             energy_wh: energy as u64,

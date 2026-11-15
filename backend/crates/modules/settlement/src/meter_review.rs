@@ -4,8 +4,8 @@
 //! 2. 直接登记最终金额（合计不超过套餐价格，重排队按人工金额入账）。
 //!    权限与审计由 HTTP 层负责；首审人实时权限由调用方传入。
 
-use chargepilot_domain::charging_actual::price_actual;
-use chargepilot_domain::charging_actual::{ActualMeter, EndMeter, Rule};
+use chargepilot_domain::charging::actual::price_actual;
+use chargepilot_domain::charging::actual::{ActualMeter, EndMeter, Rule};
 use chargepilot_domain::settlement::{BillingJobStatus, MeterReviewStatus};
 use chargepilot_mod_payment::checkout::PricingSnapshot;
 use serde::Serialize;
@@ -383,7 +383,7 @@ pub async fn propose_meter_review(
     let corrected = EndMeter {
         segments: segments
             .iter()
-            .map(|s| chargepilot_domain::charging_actual::MeterSegment {
+            .map(|s| chargepilot_domain::charging::actual::MeterSegment {
                 started_at: s.started_at,
                 ended_at: s.ended_at,
                 energy_wh: s.energy_wh,

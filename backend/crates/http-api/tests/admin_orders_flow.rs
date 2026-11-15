@@ -95,14 +95,14 @@ fn month() -> chrono::NaiveDate {
 
 /// 从快照结构生成与 checkout 冻结一致的 PricingSnapshot JSON（结算批次同款）。
 fn frozen_snapshot_json(rule_id: u64, station_id: u64) -> anyhow::Result<String> {
-    let snap: chargepilot_domain::charging_scheme::SpecSnapshot =
+    let snap: chargepilot_domain::charging::scheme::SpecSnapshot =
         serde_json::from_value(json!({"scheme": test_scheme()})).expect("方案应可解析");
     let scheme = snap.scheme.expect("方案存在");
     let package = scheme.package(1).expect("套餐存在");
     let engine_spec = scheme.spec_for(&package);
-    let estimate = chargepilot_domain::payment_intent::intent_estimate(&scheme, &package, 1000)
+    let estimate = chargepilot_domain::payment::intent_estimate(&scheme, &package, 1000)
         .map_err(|e| anyhow::anyhow!(format!("{e:?}")))?;
-    let offer = chargepilot_domain::charging_settle::Offer {
+    let offer = chargepilot_domain::charging::settle::Offer {
         id: rule_id * 100 + 1,
         station_id,
         name: "1元".to_string(),
@@ -113,7 +113,7 @@ fn frozen_snapshot_json(rule_id: u64, station_id: u64) -> anyhow::Result<String>
     };
     assert!(offer.valid(), "种子套餐应满足校验");
     let snapshot = chargepilot_mod_payment::checkout::PricingSnapshot {
-        rule: chargepilot_domain::charging_actual::Rule {
+        rule: chargepilot_domain::charging::actual::Rule {
             id: rule_id,
             station_id,
             version: 1,

@@ -2,7 +2,7 @@
 //! 语义基准：旧仓库 internal/domain/devices/telemetry.go 与
 //! internal/domain/charging/measured_segments.go，逐行对齐。
 
-use crate::charging_actual::MeterSegment;
+use crate::charging::actual::MeterSegment;
 use chrono::{DateTime, Duration, Utc};
 
 /// 某端口的累计电量与瞬时功率读数（旧版 devices.Reading）。

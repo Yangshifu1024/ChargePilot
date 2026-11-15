@@ -30,7 +30,7 @@ async fn preview_scheme(
             &rid,
         );
     };
-    let scheme: chargepilot_domain::charging_scheme::Scheme =
+    let scheme: chargepilot_domain::charging::scheme::Scheme =
         match serde_json::from_value(v["scheme"].clone()) {
             Ok(s) => s,
             Err(e) => {
@@ -42,7 +42,7 @@ async fn preview_scheme(
                 );
             }
         };
-    let meter: chargepilot_domain::charging_actual::ActualMeter =
+    let meter: chargepilot_domain::charging::actual::ActualMeter =
         match serde_json::from_value(v["meter"].clone()) {
             Ok(m) => m,
             Err(e) => {
@@ -75,8 +75,8 @@ async fn preview_scheme(
 
 /// 补齐计量缺省：起止时刻缺省时以当前时刻构造零时长会话（旧版 ActualMeter 零值语义）。
 fn normalize_meter(
-    mut meter: chargepilot_domain::charging_actual::ActualMeter,
-) -> chargepilot_domain::charging_actual::ActualMeter {
+    mut meter: chargepilot_domain::charging::actual::ActualMeter,
+) -> chargepilot_domain::charging::actual::ActualMeter {
     let now = chrono::Utc::now();
     if meter.started_at.is_none() {
         meter.started_at = Some(now);

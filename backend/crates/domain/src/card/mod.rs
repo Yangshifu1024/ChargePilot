@@ -1,7 +1,7 @@
 //! 在线卡词表与刷卡准入纯规则（旧版 domain/card 与 card.CanExtend 的单体对应物）。
 //! 语义基准：旧仓库 internal/domain/card/*.go 与 internal/card/extension.go，逐行对齐。
 
-use crate::charging_scheme::Package;
+use crate::charging::scheme::Package;
 use crate::wordlist::wordlist_enum;
 
 wordlist_enum!(

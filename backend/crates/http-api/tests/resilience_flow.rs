@@ -418,7 +418,7 @@ async fn restart_replays_end_receipt_idempotently() {
     .await
     .unwrap();
 
-    let meter = chargepilot_domain::charging_actual::EndMeter {
+    let meter = chargepilot_domain::charging::actual::EndMeter {
         segments: vec![],
         charged_wh: 500,
         charged_seconds: 600,

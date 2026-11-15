@@ -162,12 +162,12 @@ async fn execute_one(
                 .await?;
         let refunding = order_status
             .and_then(|st| {
-                chargepilot_domain::charging_state::evidence_of(
-                    chargepilot_domain::charging_state::OrderId(biz_id),
+                chargepilot_domain::charging::state::evidence_of(
+                    chargepilot_domain::charging::state::OrderId(biz_id),
                     st,
                 )
             })
-            .and_then(chargepilot_domain::charging_state::StateEvidence::into_refunding);
+            .and_then(chargepilot_domain::charging::state::StateEvidence::into_refunding);
         if let Some(evidence) = refunding {
             // 证据链：refunding → refunded（迁移 5）。
             let _refunded = evidence.settle_refunded();

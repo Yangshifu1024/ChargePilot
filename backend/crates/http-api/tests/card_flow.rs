@@ -486,8 +486,8 @@ async fn card_swipe_full_flow() {
             stop_command_id: stop_command_id.clone(),
             device_id: device_id.clone(),
             port_no: 1,
-            meter: chargepilot_domain::charging_actual::EndMeter {
-                segments: vec![chargepilot_domain::charging_actual::MeterSegment {
+            meter: chargepilot_domain::charging::actual::EndMeter {
+                segments: vec![chargepilot_domain::charging::actual::MeterSegment {
                     started_at,
                     ended_at: started_at + chrono::Duration::minutes(30),
                     energy_wh: 0,
@@ -520,7 +520,7 @@ async fn card_swipe_full_flow() {
 fn card_rules_smoke() {
     assert!(chargepilot_domain::card::valid_card_no("12345678"));
     assert!(!chargepilot_domain::card::valid_card_no("0123"));
-    let p = chargepilot_domain::charging_scheme::Package {
+    let p = chargepilot_domain::charging::scheme::Package {
         id: 2,
         name: "60分钟".into(),
         mode: "duration".into(),

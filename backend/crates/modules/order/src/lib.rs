@@ -77,7 +77,7 @@ pub async fn new_charge_order_no_tx(
     device: &str,
     port_no: u8,
 ) -> Result<String, OrderError> {
-    let no = chargepilot_domain::payment_intent::charge_order_no(at_unix_micros, device, port_no)
+    let no = chargepilot_domain::payment::charge_order_no(at_unix_micros, device, port_no)
         .map_err(|_| OrderError::NumberConflict)?;
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM `charge_order` WHERE `order_no` = ? AND `created_month` = ?",
@@ -263,7 +263,7 @@ async fn read_state_evidence(
     tx: &mut MySqlConnection,
     charge_order_id: u64,
     order_no: &str,
-) -> Result<Option<chargepilot_domain::charging_state::StateEvidence>, OrderError> {
+) -> Result<Option<chargepilot_domain::charging::state::StateEvidence>, OrderError> {
     let status: Option<ChargeOrderStatus> =
         sqlx::query_scalar("SELECT `status` FROM `charge_order` WHERE `id` = ? AND `order_no` = ?")
             .bind(charge_order_id as i64)
@@ -271,8 +271,8 @@ async fn read_state_evidence(
             .fetch_optional(tx)
             .await?;
     Ok(status.and_then(|st| {
-        chargepilot_domain::charging_state::evidence_of(
-            chargepilot_domain::charging_state::OrderId(charge_order_id),
+        chargepilot_domain::charging::state::evidence_of(
+            chargepilot_domain::charging::state::OrderId(charge_order_id),
             st,
         )
     }))
@@ -286,10 +286,10 @@ pub async fn mark_charging_tx(
     charge_order_id: u64,
     order_no: &str,
     started_at: chrono::DateTime<chrono::Utc>,
-) -> Result<chargepilot_domain::charging_state::ChargingOrder, OrderError> {
+) -> Result<chargepilot_domain::charging::state::ChargingOrder, OrderError> {
     let paid = read_state_evidence(tx, charge_order_id, order_no)
         .await?
-        .and_then(chargepilot_domain::charging_state::StateEvidence::into_paid)
+        .and_then(chargepilot_domain::charging::state::StateEvidence::into_paid)
         .ok_or(OrderError::NumberConflict)?;
     // 证据链：paid → charging（迁移 1）；条件 UPDATE 谓词保留为存储层双保险。
     let charging = paid.activate();
@@ -321,10 +321,10 @@ pub async fn mark_start_rejected_tx(
     charge_order_id: u64,
     order_no: &str,
     reason: &str,
-) -> Result<chargepilot_domain::charging_state::RefundingOrder, OrderError> {
+) -> Result<chargepilot_domain::charging::state::RefundingOrder, OrderError> {
     let paid = read_state_evidence(tx, charge_order_id, order_no)
         .await?
-        .and_then(chargepilot_domain::charging_state::StateEvidence::into_paid)
+        .and_then(chargepilot_domain::charging::state::StateEvidence::into_paid)
         .ok_or(OrderError::NumberConflict)?;
     // 证据链：paid → refunding（迁移 2）。
     let refunding = paid.mark_start_rejected(reason);
@@ -357,10 +357,10 @@ pub async fn complete_tx(
     ended_at: chrono::DateTime<chrono::Utc>,
     charged_kwh: &str,
     charged_seconds: i64,
-) -> Result<chargepilot_domain::charging_state::CompletedOrder, OrderError> {
+) -> Result<chargepilot_domain::charging::state::CompletedOrder, OrderError> {
     let charging = read_state_evidence(tx, charge_order_id, order_no)
         .await?
-        .and_then(chargepilot_domain::charging_state::StateEvidence::into_charging)
+        .and_then(chargepilot_domain::charging::state::StateEvidence::into_charging)
         .ok_or(OrderError::NumberConflict)?;
     // 证据链：charging → completed（迁移 3）。
     let completed = charging.complete();

@@ -2,9 +2,9 @@
 //! 语义基准：旧仓库 internal/domain/charging/order_package.go，逐行对齐；
 //! 快照读取由仓储负责，快照损坏时不能用当前模板补齐。
 
-use crate::charging_actual::Rule;
-use crate::charging_settle::Offer;
-use crate::charging_spec::ChargeMode;
+use crate::charging::actual::Rule;
+use crate::charging::settle::Offer;
+use crate::charging::spec::ChargeMode;
 use serde::Deserialize;
 
 /// 订单在创建支付意图时冻结下来的完整计费规则（旧版 OrderPackage）。
@@ -13,7 +13,7 @@ pub struct OrderPackage {
     /// 购买套餐及冻结价格，不能由当前模板替换。
     pub offer: Offer,
     /// 完整冻结计价方案，旧计价规则可能缺失。
-    pub scheme: Option<crate::charging_scheme::Scheme>,
+    pub scheme: Option<crate::charging::scheme::Scheme>,
     /// 既有规则的计费执行方式。
     pub billing_mode: ChargeMode,
     /// 冻结规则版本。

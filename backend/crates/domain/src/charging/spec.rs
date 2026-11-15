@@ -268,7 +268,7 @@ pub struct TimeCharge {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Spec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scheme: Option<super::charging_scheme::Scheme>,
+    pub scheme: Option<super::scheme::Scheme>,
     pub mode: ChargeMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub electric: Option<ElectricLine>,
@@ -295,7 +295,7 @@ pub struct Spec {
     #[serde(default, skip_serializing_if = "is_zero_u16")]
     pub card_max_minutes: u16,
     #[serde(default)]
-    pub display: super::charging_scheme::Display,
+    pub display: super::scheme::Display,
 }
 
 /// 连续区间的用量样本：功率计费由 Cost 按时段切分，电量计费要求区间内费率不变。

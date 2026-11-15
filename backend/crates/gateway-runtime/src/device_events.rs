@@ -119,7 +119,7 @@ impl DeviceEventDispatcher {
         )
         .bind(device_id)
         .bind(port)
-        .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Sent)
+        .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Sent)
         .fetch_optional(&self.pool)
         .await?;
         let Some((command_id, charge_order_id, order_no, dev, port_no)) = row else {
@@ -163,15 +163,15 @@ impl DeviceEventDispatcher {
              WHERE `device_id` = ? AND `port_no` = ? AND `status` IN (?, ?)",
         )
         .bind(if success {
-            chargepilot_domain::charging_command::ChargeStopCommandStatus::Acked
+            chargepilot_domain::charging::command::ChargeStopCommandStatus::Acked
         } else {
-            chargepilot_domain::charging_command::ChargeStopCommandStatus::Rejected
+            chargepilot_domain::charging::command::ChargeStopCommandStatus::Rejected
         })
         .bind(result_code)
         .bind(device_id)
         .bind(port)
-        .bind(chargepilot_domain::charging_command::ChargeStopCommandStatus::Pending)
-        .bind(chargepilot_domain::charging_command::ChargeStopCommandStatus::Sent)
+        .bind(chargepilot_domain::charging::command::ChargeStopCommandStatus::Pending)
+        .bind(chargepilot_domain::charging::command::ChargeStopCommandStatus::Sent)
         .execute(&self.pool)
         .await?
         .rows_affected();
@@ -251,7 +251,7 @@ impl DeviceEventDispatcher {
                 stop_command_id,
                 device_id: device_id.to_string(),
                 port_no,
-                meter: chargepilot_domain::charging_actual::EndMeter {
+                meter: chargepilot_domain::charging::actual::EndMeter {
                     segments: vec![],
                     charged_wh,
                     charged_seconds,

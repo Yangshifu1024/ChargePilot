@@ -115,11 +115,11 @@ impl StopService {
                 .bind(&active.device_id)
                 .bind(active.port_no)
                 .bind(active.charge_order_id as i64)
-                .bind(chargepilot_domain::charging_command::ChargeStopCommandStatus::Pending)
+                .bind(chargepilot_domain::charging::command::ChargeStopCommandStatus::Pending)
                 .execute(&mut *c)
                 .await?;
                 sqlx::query("UPDATE `charge_command` SET `status` = ? WHERE `charge_order_id` = ?")
-                    .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Stopping)
+                    .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Stopping)
                     .bind(active.charge_order_id as i64)
                     .execute(&mut *c)
                     .await?;
@@ -137,7 +137,7 @@ impl StopService {
             "UPDATE `charge_stop_command` SET `status` = ?, `sent_at` = UTC_TIMESTAMP(3) \
              WHERE `command_id` = ?",
         )
-        .bind(chargepilot_domain::charging_command::ChargeStopCommandStatus::Sent)
+        .bind(chargepilot_domain::charging::command::ChargeStopCommandStatus::Sent)
         .bind(&stop_command_id)
         .execute(&self.pool)
         .await?;

@@ -142,15 +142,15 @@ async fn seed_completed_charge(
         .bind(charge_order_id as i64).bind(&order_no).bind(user_id as i64).bind(&device_id)
         .bind(payment_id as i64).bind(month)
         .execute(db).await.unwrap();
-    let snap: chargepilot_domain::charging_scheme::SpecSnapshot =
+    let snap: chargepilot_domain::charging::scheme::SpecSnapshot =
         serde_json::from_value(json!({"scheme": test_scheme()})).expect("方案应可解析");
     let scheme = snap.scheme.expect("方案存在");
     let package = scheme.package(1).expect("套餐存在");
-    let estimate = chargepilot_domain::payment_intent::intent_estimate(&scheme, &package, 100)
+    let estimate = chargepilot_domain::payment::intent_estimate(&scheme, &package, 100)
         .map_err(|e| anyhow::anyhow!(format!("{e:?}")))
         .expect("预估应成功");
     let snapshot = chargepilot_mod_payment::checkout::PricingSnapshot {
-        rule: chargepilot_domain::charging_actual::Rule {
+        rule: chargepilot_domain::charging::actual::Rule {
             id: rule_id,
             station_id,
             version: 1,
@@ -158,7 +158,7 @@ async fn seed_completed_charge(
             ..Default::default()
         },
         estimate,
-        offer: chargepilot_domain::charging_settle::Offer {
+        offer: chargepilot_domain::charging::settle::Offer {
             id: rule_id * 100 + 1,
             station_id,
             name: "1元".to_string(),

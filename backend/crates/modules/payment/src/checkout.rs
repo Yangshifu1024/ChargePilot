@@ -4,10 +4,10 @@
 
 use super::channel::PrepayRequest;
 use super::scan::{ScanError, ScanResult};
-use chargepilot_domain::charging_actual::Rule;
-use chargepilot_domain::charging_settle::{Estimate, Offer};
+use chargepilot_domain::charging::actual::Rule;
+use chargepilot_domain::charging::settle::{Estimate, Offer};
 use chargepilot_domain::money::{BizType, PayMethod, PaymentOrderStatus};
-use chargepilot_domain::payment_intent::{IntentError, PaymentIntentStatus, intent_estimate};
+use chargepilot_domain::payment::{IntentError, PaymentIntentStatus, intent_estimate};
 use chargepilot_platform::ids::SegmentAllocator;
 use sqlx::{Acquire, MySqlPool};
 
@@ -77,7 +77,7 @@ pub struct CheckoutOffers {
     /// 在售套餐（旧版 Offers）。
     pub items: Vec<Offer>,
     /// 用户端呈现配置。
-    pub display: chargepilot_domain::charging_scheme::Display,
+    pub display: chargepilot_domain::charging::scheme::Display,
     /// 是否"充满自停"。
     pub stop_when_full: bool,
 }
@@ -364,7 +364,7 @@ impl CheckoutService {
         port: &ScanResult,
         active: &chargepilot_mod_pricing::metering::ActiveRule,
         offer: &Offer,
-        package: &chargepilot_domain::charging_scheme::Package,
+        package: &chargepilot_domain::charging::scheme::Package,
         estimate: &Estimate,
     ) -> Result<FrozenIntent, CheckoutError> {
         let scan_port = port.port.clone().ok_or(CheckoutError::PortBusy)?;
@@ -593,7 +593,7 @@ fn rule_stub(active: &chargepilot_mod_pricing::metering::ActiveRule, port: &Scan
         station_id: port.station_id,
         device_id: port.device_id.clone(),
         version: active.version as u32,
-        spec: chargepilot_domain::charging_spec::Spec::default(),
+        spec: chargepilot_domain::charging::spec::Spec::default(),
         channel: String::new(),
     }
 }

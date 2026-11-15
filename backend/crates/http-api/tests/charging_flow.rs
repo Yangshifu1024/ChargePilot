@@ -315,8 +315,8 @@ async fn state_machine_full_flow() {
     .await
     .unwrap();
     let now = chrono::Utc::now();
-    let meter = chargepilot_domain::charging_actual::EndMeter {
-        segments: vec![chargepilot_domain::charging_actual::MeterSegment {
+    let meter = chargepilot_domain::charging::actual::EndMeter {
+        segments: vec![chargepilot_domain::charging::actual::MeterSegment {
             started_at: now - chrono::Duration::minutes(10),
             ended_at: now,
             energy_wh: 100,
@@ -376,8 +376,8 @@ async fn state_machine_full_flow() {
     assert_eq!(ended_event, 1, "结束出站事件应已写入");
 
     // 6. 结束回执重放：同内容静默确认。
-    let meter2 = chargepilot_domain::charging_actual::EndMeter {
-        segments: vec![chargepilot_domain::charging_actual::MeterSegment {
+    let meter2 = chargepilot_domain::charging::actual::EndMeter {
+        segments: vec![chargepilot_domain::charging::actual::MeterSegment {
             started_at: now - chrono::Duration::minutes(10),
             ended_at: now,
             energy_wh: 100,

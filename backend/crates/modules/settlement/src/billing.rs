@@ -3,9 +3,9 @@
 //! settle_session）→ 资金同事务：费用回执幂等、订单费用列、余款退款登记、
 //! 事件出站；计量/快照无效转人工，存储错误退避重试。
 
-use chargepilot_domain::charging_actual::{ActualMeter, EndMeter};
-use chargepilot_domain::charging_settle::settle_session;
-use chargepilot_domain::charging_spec::BillingError;
+use chargepilot_domain::charging::actual::{ActualMeter, EndMeter};
+use chargepilot_domain::charging::settle::settle_session;
+use chargepilot_domain::charging::spec::BillingError;
 use chargepilot_domain::money::{BizType, ExecutionPolicy, PaymentOrderStatus, RefundStatus};
 use sqlx::{Acquire, MySqlPool};
 
@@ -106,7 +106,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     .fetch_optional(pool)
     .await?;
     let settlement = if let Some((electric, service, _request)) = manual {
-        chargepilot_domain::charging_settle::Settlement {
+        chargepilot_domain::charging::settle::Settlement {
             electric_cents: electric,
             service_cents: service,
             total_cents: electric + service,
@@ -302,12 +302,12 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
                 .await?;
         let completed = order_status
             .and_then(|st| {
-                chargepilot_domain::charging_state::evidence_of(
-                    chargepilot_domain::charging_state::OrderId(charge_order_id),
+                chargepilot_domain::charging::state::evidence_of(
+                    chargepilot_domain::charging::state::OrderId(charge_order_id),
                     st,
                 )
             })
-            .and_then(chargepilot_domain::charging_state::StateEvidence::into_completed);
+            .and_then(chargepilot_domain::charging::state::StateEvidence::into_completed);
         if let Some(evidence) = completed {
             // 证据链：completed → refunding（迁移 4）。
             let _refunding = evidence.request_channel_refund();

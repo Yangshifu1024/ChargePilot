@@ -3,7 +3,7 @@
 //! 单体内不再经网关 HTTP：目标设备行直接在库内核对。
 
 use crate::{PricingError, PricingResult};
-use chargepilot_domain::charging_scheme::Scheme;
+use chargepilot_domain::charging::scheme::Scheme;
 use chargepilot_mod_ops::Profile;
 use chargepilot_mod_ops::repo;
 use serde::Deserialize;

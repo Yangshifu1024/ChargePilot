@@ -2,7 +2,7 @@
 //! charging/finish/result_repo.go 对齐；本批覆盖微信支付路径，卡随批 6）。
 //! 幂等（红线）：同命令同内容重放静默确认，不同内容报冲突。
 
-use chargepilot_domain::charging_actual::{EndMeter, same_segments};
+use chargepilot_domain::charging::actual::{EndMeter, same_segments};
 use sqlx::{Acquire, MySqlPool};
 
 /// 启动回执输入（旧版 StartResult）。
@@ -169,7 +169,7 @@ pub async fn apply_start_receipt(
         // 刷卡首购操作确认（非刷卡订单无行，天然幂等）。
         chargepilot_mod_card::confirm_start_operation_tx(&mut *c, id).await?;
         sqlx::query("UPDATE `charge_command` SET `status` = ?, `result_code` = 0, `ack_at` = ?, `result_reported` = 1 WHERE `charge_order_id` = ?")
-            .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Acked)
+            .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Acked)
             .bind(occurred_at)
             .bind(id as i64)
             .execute(&mut *c)
@@ -219,7 +219,7 @@ pub async fn apply_start_receipt(
     .execute(&mut *c)
     .await?;
     sqlx::query("UPDATE `charge_command` SET `status` = ?, `result_code` = ?, `result_reported` = 1, `error` = ? WHERE `charge_order_id` = ?")
-        .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Rejected)
+        .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Rejected)
         .bind(input.result_code)
         .bind(&reason)
         .bind(id as i64)
@@ -231,9 +231,9 @@ pub async fn apply_start_receipt(
     sqlx::query(
         "UPDATE `charge_payment_intent` SET `status` = ? WHERE `charge_order_id` = ? AND `status` = ?",
     )
-    .bind(chargepilot_domain::payment_intent::PaymentIntentStatus::RefundRequired)
+    .bind(chargepilot_domain::payment::PaymentIntentStatus::RefundRequired)
     .bind(id as i64)
-    .bind(chargepilot_domain::payment_intent::PaymentIntentStatus::Paid)
+    .bind(chargepilot_domain::payment::PaymentIntentStatus::Paid)
     .execute(&mut *c)
     .await?;
     chargepilot_mod_order::append_domain_event_tx(

@@ -7,9 +7,9 @@ use crate::repo::{active_session_count, find_card_charge};
 use chargepilot_domain::card::{
     CardOperationKind, CardOperationStatus, CardStatus, can_extend, valid_card_no,
 };
-use chargepilot_domain::charging_actual::Rule;
-use chargepilot_domain::charging_settle::{Estimate, Offer};
-use chargepilot_domain::charging_spec::ChargeMode;
+use chargepilot_domain::charging::actual::Rule;
+use chargepilot_domain::charging::settle::{Estimate, Offer};
+use chargepilot_domain::charging::spec::ChargeMode;
 use chargepilot_mod_order::{
     PaidOrderDraft, append_domain_event_tx, append_event_in_tx, create_paid_in_tx,
     freeze_pricing_in_tx, new_charge_order_no_tx, new_payment_order_no,
@@ -337,12 +337,12 @@ impl SwipeService {
         let (kind, order_id, package, status): (
             String,
             u64,
-            chargepilot_domain::charging_scheme::Package,
+            chargepilot_domain::charging::scheme::Package,
             String,
         ) = match session {
             Some((order_id, session_card_id, purchased, max_minutes, package_json)) => {
                 // 续购：沿用冻结套餐，不读当前价格。
-                let package: chargepilot_domain::charging_scheme::Package =
+                let package: chargepilot_domain::charging::scheme::Package =
                     serde_json::from_str(&package_json).map_err(|_| SwipeError::CardDeclined)?;
                 // 刷卡订单投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
                 type SwipeOrderRow = (
@@ -563,7 +563,7 @@ async fn start_purchase_in_tx(
     user_id: u64,
     openid: &[u8],
     active: &chargepilot_mod_pricing::metering::ActiveRule,
-    package: &chargepilot_domain::charging_scheme::Package,
+    package: &chargepilot_domain::charging::scheme::Package,
     operation_id: &str,
     wallet: &mut chargepilot_mod_wallet::ledger::WalletRow,
     now_micros: i64,
@@ -571,7 +571,7 @@ async fn start_purchase_in_tx(
     (
         String,
         u64,
-        chargepilot_domain::charging_scheme::Package,
+        chargepilot_domain::charging::scheme::Package,
         String,
     ),
     SwipeError,

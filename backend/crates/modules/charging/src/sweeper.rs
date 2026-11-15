@@ -25,8 +25,8 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
            AND cmd.`created_at` < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? MINUTE) \
          FOR UPDATE",
     )
-    .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Pending)
-    .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Sent)
+    .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Pending)
+    .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Sent)
     .bind(chargepilot_domain::order::ChargeOrderStatus::Paid)
     .bind(timeout_minutes)
     .fetch_all(pool)
@@ -53,12 +53,12 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
             .await?;
         let paid = order_status
             .and_then(|st| {
-                chargepilot_domain::charging_state::evidence_of(
-                    chargepilot_domain::charging_state::OrderId(id),
+                chargepilot_domain::charging::state::evidence_of(
+                    chargepilot_domain::charging::state::OrderId(id),
                     st,
                 )
             })
-            .and_then(chargepilot_domain::charging_state::StateEvidence::into_paid);
+            .and_then(chargepilot_domain::charging::state::StateEvidence::into_paid);
         let updated = if let Some(evidence) = paid {
             let _refunding = evidence.mark_start_rejected(reason);
             sqlx::query(
@@ -105,11 +105,11 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
                 "UPDATE `charge_command` SET `status` = ?, `error` = ?, `result_reported` = 1 \
                  WHERE `charge_order_id` = ? AND `status` IN (?, ?)",
             )
-            .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Rejected)
+            .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Rejected)
             .bind(reason)
             .bind(id as i64)
-            .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Pending)
-            .bind(chargepilot_domain::charging_command::ChargeCommandStatus::Sent)
+            .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Pending)
+            .bind(chargepilot_domain::charging::command::ChargeCommandStatus::Sent)
             .execute(&mut *tx)
             .await?;
             // 释放端口与意图（同事务）。
@@ -123,9 +123,9 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
                 "UPDATE `charge_payment_intent` SET `status` = ? \
                  WHERE `charge_order_id` = ? AND `status` = ?",
             )
-            .bind(chargepilot_domain::payment_intent::PaymentIntentStatus::RefundRequired)
+            .bind(chargepilot_domain::payment::PaymentIntentStatus::RefundRequired)
             .bind(id as i64)
-            .bind(chargepilot_domain::payment_intent::PaymentIntentStatus::Paid)
+            .bind(chargepilot_domain::payment::PaymentIntentStatus::Paid)
             .execute(&mut *tx)
             .await?;
             let cleaned = command_id.replace('-', "");

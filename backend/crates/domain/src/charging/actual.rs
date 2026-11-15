@@ -1,8 +1,8 @@
 //! 实测计量：分段电量/功率证据、计价入口与时长/费用上限判断。
 //! 语义基准：旧仓库 internal/domain/charging/{actual,segments,end_meter}.go，逐行对齐。
 
-use crate::charging_cost::cost;
-use crate::charging_spec::{
+use crate::charging::cost::cost;
+use crate::charging::spec::{
     BillingError, ChargeMode, MAX_SLICES, Spec, Usage, spec_is_uniform_over, validate_spec,
 };
 use chrono::{DateTime, Duration, Utc};
@@ -156,7 +156,7 @@ pub fn usage_from_meter(rule: &Rule, meter: &ActualMeter) -> Result<Usage, Billi
         {
             return Err(BillingError::MeterReview);
         }
-        usage.samples.push(crate::charging_spec::Sample {
+        usage.samples.push(crate::charging::spec::Sample {
             start: segment.started_at,
             end: segment.ended_at,
             energy_wh: segment.energy_wh as u64,
@@ -175,7 +175,7 @@ pub fn usage_from_meter(rule: &Rule, meter: &ActualMeter) -> Result<Usage, Billi
 pub fn price_actual(
     rule: &Rule,
     meter: &ActualMeter,
-) -> Result<crate::charging_cost::Fee, BillingError> {
+) -> Result<crate::charging::cost::Fee, BillingError> {
     let usage = usage_from_meter(rule, meter)?;
     cost(&rule.spec, &usage)
 }
@@ -198,7 +198,7 @@ pub fn stop_at_meter(rule: &Rule, meter: &ActualMeter) -> Result<StopPlan, Billi
     let started_at = meter.started_at.ok_or(BillingError::MeterReview)?;
     let ended_at = meter.ended_at.ok_or(BillingError::MeterReview)?;
     let elapsed = ended_at - started_at;
-    crate::charging_settle::decide_stop(&rule.spec, &usage, elapsed)
+    crate::charging::settle::decide_stop(&rule.spec, &usage, elapsed)
 }
 
 fn is_zero_u32(v: &u32) -> bool {
