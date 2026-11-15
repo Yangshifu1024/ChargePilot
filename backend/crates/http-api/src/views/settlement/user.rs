@@ -6,13 +6,13 @@
 //! 挂载行：.merge(user_settlement::router())
 //! （lib.rs build_router 中与其余 user 路由并列；模块声明 pub mod user_settlement;）
 
+use crate::errormap::{rid_of, user_invoice_error};
 use crate::params::UserPaging;
 use crate::state::ApiDeps;
 use crate::user_guard::UserGuard;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_settlement::UserInvoiceError;
 use chargepilot_mod_settlement::user_invoice::{self, InvoiceInput};
 use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
@@ -33,10 +33,6 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
             axum::routing::post(invoice_apply),
         )
         .route("/api/v1/user/invoice/my", axum::routing::get(invoice_my))
-}
-
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
 }
 
 /// 路径账单 ID 解析：非法或为零一律 400（旧版 strconv.ParseUint + id==0 校验）。
@@ -192,58 +188,11 @@ async fn invoice_apply(
             }),
             &rid,
         ),
-        Err(e) => invoice_error(&e, &rid),
+        Err(e) => user_invoice_error(&e, &rid),
     }
 }
 
 /// 发票域错误 → HTTP（旧版 applyInvoice 的 switch 字面量契约）。
-fn invoice_error(e: &UserInvoiceError, rid: &str) -> Response {
-    match e {
-        UserInvoiceError::Unbilled => crate::respond(
-            409,
-            Code::Conflict as i64,
-            "订单尚未计费，暂不能申请发票",
-            rid,
-        ),
-        UserInvoiceError::OrderNotFound => {
-            crate::respond(404, Code::NotFound as i64, "订单不存在", rid)
-        }
-        UserInvoiceError::OrderLookup(_) => crate::respond(
-            503,
-            Code::ServiceUnavailable as i64,
-            "订单暂时无法读取",
-            rid,
-        ),
-        UserInvoiceError::Unfinished => crate::respond(
-            409,
-            Code::Conflict as i64,
-            "订单尚未完成，暂不能申请发票",
-            rid,
-        ),
-        UserInvoiceError::ZeroFee => crate::respond(
-            409,
-            Code::Conflict as i64,
-            "订单金额为零，暂不能申请发票",
-            rid,
-        ),
-        UserInvoiceError::Duplicate => {
-            crate::respond(409, Code::Conflict as i64, "该订单已申请过发票", rid)
-        }
-        UserInvoiceError::InvalidInput => {
-            crate::respond(400, Code::BadRequest as i64, "发票申请无效", rid)
-        }
-        UserInvoiceError::Storage(m) => {
-            tracing::warn!(error = %m, "发票申请保存失败");
-            crate::respond(
-                503,
-                Code::ServiceUnavailable as i64,
-                "数据暂时无法保存，请稍后重试",
-                rid,
-            )
-        }
-    }
-}
-
 /// GET /api/v1/user/invoice/my：分页返回当前用户的发票申请。
 async fn invoice_my(
     State(deps): State<Arc<ApiDeps>>,

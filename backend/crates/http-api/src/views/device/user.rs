@@ -3,39 +3,19 @@
 //! 后台路由：设备管理、导入、故障工单、告警认领；
 //! C 端路由：故障提交/查询、站点附近/详情（无需登录的部分公开）。
 
+use crate::errormap::{device_error, rid_of, scan_error};
 use crate::params::UserPaging;
 use crate::state::ApiDeps;
 use crate::user_guard::UserGuard;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_device::{DeviceError, fault, user_station};
+use chargepilot_mod_device::{fault, user_station};
 use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
-
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
-}
-
-fn device_error(e: DeviceError, rid: &str) -> Response {
-    match &e {
-        DeviceError::Input(msg) => crate::respond(400, Code::BadRequest as i64, msg, rid),
-        DeviceError::Forbidden => crate::respond(403, Code::Forbidden as i64, "没有操作权限", rid),
-        DeviceError::NotFound => {
-            crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid)
-        }
-        DeviceError::Conflict(msg) => crate::respond(409, Code::Conflict as i64, msg, rid),
-        DeviceError::Storage(_) => crate::respond(
-            503,
-            Code::ServiceUnavailable as i64,
-            "数据暂时无法读取或保存，请稍后重试",
-            rid,
-        ),
-    }
-}
 
 #[derive(Deserialize)]
 struct NearbyQuery {
@@ -209,23 +189,6 @@ fn canonical_scan_code(raw: &str) -> Option<String> {
 }
 
 /// 扫码错误映射（旧版 handle：404 1004 not found，其余 503 5001）。
-fn scan_error(e: chargepilot_mod_device::ScanError, rid: &str) -> Response {
-    match e {
-        chargepilot_mod_device::ScanError::NotFound => {
-            crate::respond(404, Code::NotFound as i64, "scan code not found", rid)
-        }
-        chargepilot_mod_device::ScanError::Storage(err) => {
-            tracing::warn!(cause = %err, "扫码查询失败");
-            crate::respond(
-                503,
-                Code::DependencyFailed as i64,
-                "device lookup unavailable",
-                rid,
-            )
-        }
-    }
-}
-
 /// 扫码解析：裸码或 HTTPS 二维码链接 → 设备或端口（匿名）。
 async fn scan_resolve(
     State(deps): State<Arc<ApiDeps>>,

@@ -1,12 +1,13 @@
 //! 定价域后台门面（票 18：先归位方案预览；admin_pricing_device 热区批并入）。
-use crate::errormap::ops_error;
+use crate::errormap::pricing_error;
+use crate::errormap::rid_of;
 use crate::guard::AdminGuard;
+use crate::guard::deny;
 use crate::state::ApiDeps;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_ops::OpsError;
-use chargepilot_mod_pricing::{PricingError, publication, templates};
+use chargepilot_mod_pricing::{publication, templates};
 use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde_json::{Value, json};
@@ -95,18 +96,6 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
     )
 }
 
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
-}
-
-fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
-    if guard.has(permission) {
-        None
-    } else {
-        Some(ops_error(OpsError::Permission, rid))
-    }
-}
-
 // ---------------------------------------------------------------------------
 // 反馈工单
 // ---------------------------------------------------------------------------
@@ -116,30 +105,6 @@ fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
 // 后台路由：计费方案（模板/发布/继承/生效）、站点、厂商。
 // 权限码与路径对齐旧版（pricing.read、pricing.rule.create|update、station.*、vendor.*）。
 
-fn pricing_error(e: PricingError, rid: &str) -> Response {
-    match &e {
-        PricingError::InvalidScheme(msg) => crate::respond(409, Code::Conflict as i64, msg, rid),
-        PricingError::VersionConflict | PricingError::PublishMismatch => {
-            crate::respond(409, Code::Conflict as i64, &e.to_string(), rid)
-        }
-        PricingError::Forbidden => crate::respond(403, Code::Forbidden as i64, "没有操作权限", rid),
-        PricingError::NotFound => {
-            crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid)
-        }
-        PricingError::RuleUnavailable => {
-            crate::respond(409, Code::Conflict as i64, &e.to_string(), rid)
-        }
-        PricingError::Storage(_) => {
-            tracing::warn!(cause = %e, "pricing 存储失败");
-            crate::respond(
-                503,
-                Code::ServiceUnavailable as i64,
-                "数据暂时无法读取或保存，请稍后重试",
-                rid,
-            )
-        }
-    }
-}
 // ---------------------------------------------------------------------------
 // 计费方案
 // ---------------------------------------------------------------------------

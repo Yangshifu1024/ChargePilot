@@ -223,4 +223,4 @@ async fn not_found(headers: axum::http::HeaderMap) -> Response {
 
 // 票 17 收编：bearer/respond/identity_error 定义归 errormap（下方 re-export
 // 保持既有 crate::respond / crate::bearer 引用路径不变）。
-pub use errormap::{bearer, identity_error, respond};
+pub use errormap::{bearer, identity_error, phone_error, respond};

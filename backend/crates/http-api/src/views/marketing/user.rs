@@ -1,14 +1,13 @@
 //! 营销域用户端门面（票 18 冷区批：原 user_marketing.rs 归位）。
 
+use crate::errormap::{coupon_query_error, rid_of};
 use crate::params::UserPaging;
 use crate::state::ApiDeps;
 use crate::user_guard::UserGuard;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_marketing::CouponQueryError;
 use chargepilot_mod_marketing::query::{available, mine};
-use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::json;
@@ -20,26 +19,7 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
         .route("/api/v1/user/coupons", axum::routing::get(list_available))
 }
 
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
-}
-
 /// 券视图错误 → HTTP（旧版 myCoupons 的映射：输入 400，其余 503 固定文案）。
-fn query_error(e: CouponQueryError, rid: &str) -> Response {
-    match &e {
-        CouponQueryError::Input(m) => crate::respond(400, Code::BadRequest as i64, m, rid),
-        CouponQueryError::Storage(_) => {
-            tracing::warn!(error = %e, "优惠券查询处理失败");
-            crate::respond(
-                503,
-                Code::ServiceUnavailable as i64,
-                "优惠券暂时无法读取",
-                rid,
-            )
-        }
-    }
-}
-
 #[derive(Deserialize)]
 struct MyCouponQuery {
     status: Option<String>,
@@ -69,7 +49,7 @@ async fn my_coupons(
             let body = serde_json::to_value(&out).unwrap_or(json!({}));
             httpx::ok(body, &rid)
         }
-        Err(e) => query_error(e, &rid),
+        Err(e) => coupon_query_error(e, &rid),
     }
 }
 
@@ -81,6 +61,6 @@ async fn list_available(
     let rid = rid_of(&headers);
     match available(&deps.db, uid).await {
         Ok(items) => httpx::ok(json!({"items": items}), &rid),
-        Err(e) => query_error(e, &rid),
+        Err(e) => coupon_query_error(e, &rid),
     }
 }

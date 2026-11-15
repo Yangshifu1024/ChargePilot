@@ -6,15 +6,15 @@
 //! finance.refund.read、order.refund.review、finance.refund.retry、order.refund.create），
 //! 审核类角色与权限的最终判定在服务层事务内复核。
 
-use crate::errormap::ops_error;
+use crate::errormap::{invoice_admin_error, meter_error, refund_admin_error, rid_of};
 use crate::guard::AdminGuard;
+use crate::guard::deny;
 use crate::params::AdminPaging;
 use crate::state::ApiDeps;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_ops::OpsError;
 use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
@@ -71,18 +71,6 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
             "/api/v1/admin/orders/{id}/refunds",
             axum::routing::post(manual_refund),
         )
-}
-
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
-}
-
-fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
-    if guard.has(permission) {
-        None
-    } else {
-        Some(ops_error(OpsError::Permission, rid))
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -199,34 +187,11 @@ async fn review_invoice(
     .await
     {
         Ok(status) => httpx::ok(json!({ "review_status": status }), &rid),
-        Err(e) => invoice_error(e, &rid),
+        Err(e) => invoice_admin_error(e, &rid),
     }
 }
 
 /// 发票审核错误映射（旧版 AdminResourceFailure + asConflict 契约）。
-fn invoice_error(e: chargepilot_mod_settlement::InvoiceAdminError, rid: &str) -> Response {
-    use chargepilot_mod_settlement::InvoiceAdminError as E;
-    match &e {
-        E::Conflict => crate::respond(
-            409,
-            Code::Conflict as i64,
-            "当前记录状态不允许此操作，请刷新后重试",
-            rid,
-        ),
-        E::NotFound => crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid),
-        E::Forbidden => crate::respond(403, Code::Forbidden as i64, "没有操作权限", rid),
-        E::Storage(m) => {
-            tracing::warn!(error = %m, "发票审核处理失败");
-            crate::respond(
-                503,
-                Code::ServiceUnavailable as i64,
-                "数据暂时无法读取或保存，请稍后重试",
-                rid,
-            )
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // 计量核实（旧版 meter_reviews.go 契约）
 // ---------------------------------------------------------------------------
@@ -532,34 +497,6 @@ async fn resolve_meter_amount(
 }
 
 /// 计量核实错误映射（旧版 meterFailure 文案契约）。
-fn meter_error(e: chargepilot_mod_settlement::ReviewError, rid: &str) -> Response {
-    use chargepilot_mod_settlement::ReviewError as E;
-    match &e {
-        E::Conflict => crate::respond(
-            409,
-            2009,
-            "计量核实状态已变化、原始数据不一致或审核人重复，请刷新后重试",
-            rid,
-        ),
-        E::InvalidSource => crate::respond(
-            400,
-            1005,
-            "计量分段须连续覆盖原始时段、总电量一致，且各段不得跨不同费率；价格快照必须有效",
-            rid,
-        ),
-        E::NotFound => crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid),
-        E::Storage(m) => {
-            tracing::warn!(error = %m, "计量核实处理失败");
-            crate::respond(
-                503,
-                Code::ServiceUnavailable as i64,
-                "数据暂时无法读取或保存，请稍后重试",
-                rid,
-            )
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // 人工退款（旧版 refunds.go / refund.go 契约）
 // ---------------------------------------------------------------------------
@@ -721,7 +658,7 @@ async fn review_refund(
             };
             httpx::ok(json!({ "review_status": status }), &rid)
         }
-        Err(e) => refund_error(e, &rid),
+        Err(e) => refund_admin_error(e, &rid),
     }
 }
 
@@ -769,7 +706,7 @@ async fn retry_refund(
     .await
     {
         Ok(_) => httpx::ok(json!({ "scheduled": true }), &rid),
-        Err(e) => refund_error(e, &rid),
+        Err(e) => refund_admin_error(e, &rid),
     }
 }
 
@@ -844,36 +781,7 @@ async fn manual_refund(
             "订单尚未完成费用结算，请结算后再申请退款",
             &rid,
         ),
-        Err(e) => refund_error(e, &rid),
-    }
-}
-
-/// 退款错误映射（旧版 asConflict → ErrConflict 的 409 文案契约）。
-fn refund_error(e: chargepilot_mod_settlement::RefundAdminError, rid: &str) -> Response {
-    use chargepilot_mod_settlement::RefundAdminError as E;
-    match &e {
-        E::Conflict => crate::respond(
-            409,
-            Code::Conflict as i64,
-            "当前记录状态不允许此操作，请刷新后重试",
-            rid,
-        ),
-        E::NotFound => crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid),
-        E::NotSettled => crate::respond(
-            409,
-            Code::StateConflict as i64,
-            "订单尚未完成费用结算，请结算后再申请退款",
-            rid,
-        ),
-        E::Storage(m) => {
-            tracing::warn!(error = %m, "人工退款处理失败");
-            crate::respond(
-                503,
-                Code::ServiceUnavailable as i64,
-                "数据暂时无法读取或保存，请稍后重试",
-                rid,
-            )
-        }
+        Err(e) => refund_admin_error(e, &rid),
     }
 }
 

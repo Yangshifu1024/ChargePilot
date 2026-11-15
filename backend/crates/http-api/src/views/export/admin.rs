@@ -1,12 +1,12 @@
 //! 导出域后台门面（票 18 冷区批：原 admin_export.rs 归位）。
 
+use crate::errormap::{export_error, rid_of};
 use crate::guard::AdminGuard;
 use crate::params::AdminPaging;
 use crate::state::ApiDeps;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_export::ExportError;
 use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
@@ -36,44 +36,7 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
         )
 }
 
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
-}
-
 /// 导出错误 → HTTP（旧版 failure 映射：400/403/409/410/其他存储）。
-fn export_error(e: ExportError, rid: &str) -> Response {
-    match &e {
-        ExportError::Input(m) => crate::respond(400, Code::BadRequest as i64, m, rid),
-        ExportError::Forbidden(m) => crate::respond(403, Code::Forbidden as i64, m, rid),
-        ExportError::Credentials => crate::respond(
-            401,
-            Code::Unauthorized as i64,
-            "登录已失效，请重新登录",
-            rid,
-        ),
-        ExportError::Download { message, expired } => {
-            if *expired {
-                crate::respond(410, Code::ResourceExpired as i64, message, rid)
-            } else {
-                crate::respond(409, Code::Conflict as i64, message, rid)
-            }
-        }
-        ExportError::NotFound => {
-            crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid)
-        }
-        ExportError::Conflict => crate::respond(409, Code::Conflict as i64, "导出请求冲突", rid),
-        ExportError::Storage(_) => {
-            tracing::warn!(error = %e, "导出请求处理失败");
-            crate::respond(
-                503,
-                Code::ServiceUnavailable as i64,
-                "数据暂时无法读取或保存，请稍后重试",
-                rid,
-            )
-        }
-    }
-}
-
 #[derive(Deserialize)]
 struct TaskListQuery {
     status: Option<String>,

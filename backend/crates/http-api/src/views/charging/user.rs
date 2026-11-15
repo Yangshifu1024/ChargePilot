@@ -1,5 +1,6 @@
 //! 充电域用户端门面（票 18 冷区批：原 user_charging.rs 归位）。
 
+use crate::errormap::{QueryFail, query_failure};
 use crate::state::{ApiDeps, ChargingStopState};
 use crate::user_guard::UserGuard;
 use axum::extract::{Path, Query, State};
@@ -59,44 +60,6 @@ pub fn stop_router() -> axum::Router<Arc<ApiDeps>> {
 // ---------------------------------------------------------------------------
 // 查询错误映射（旧版 queryFailure）
 // ---------------------------------------------------------------------------
-
-/// 查询失败分类（对齐旧版 queryFailure 的状态码与文案）。
-enum QueryFail {
-    /// 输入校验（400 1005）。
-    Input(&'static str),
-    /// 窗口或时间冲突（409 2009）。
-    Conflict(&'static str),
-    /// 超过保留期（422 2018）。
-    Expired(&'static str),
-    /// 订单缺失或越权（404 1004，与缺失共用同一文案，不泄漏他人订单）。
-    NotFound,
-    /// 读取失败（503 5003）。
-    Storage(sqlx::Error),
-}
-
-impl From<sqlx::Error> for QueryFail {
-    fn from(e: sqlx::Error) -> Self {
-        QueryFail::Storage(e)
-    }
-}
-
-fn query_failure(f: QueryFail, rid: &str) -> Response {
-    match f {
-        QueryFail::Input(m) => crate::respond(400, Code::BadRequest as i64, m, rid),
-        QueryFail::Conflict(m) => crate::respond(409, Code::Conflict as i64, m, rid),
-        QueryFail::Expired(m) => crate::respond(422, Code::QueryExpired as i64, m, rid),
-        QueryFail::NotFound => crate::respond(404, Code::NotFound as i64, "充电订单不存在", rid),
-        QueryFail::Storage(e) => {
-            tracing::warn!(error = %e, "用户订单查询失败");
-            crate::respond(
-                503,
-                Code::ServiceUnavailable as i64,
-                "订单暂时无法读取",
-                rid,
-            )
-        }
-    }
-}
 
 /// 订单号参数解析（旧版 queryOrderNo：order_id 优先，其次 order_no）。
 /// 收两个字段而非查询结构体，供 OrderNoQuery 与 WindowQuery 两类端点共用。

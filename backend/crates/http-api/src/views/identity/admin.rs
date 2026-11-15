@@ -6,28 +6,17 @@
 //! 最终判定在各服务函数内复核（与旧版 actor 实时权限语义一致）。
 
 use crate::errormap::ops_error;
+use crate::errormap::{admin_user_error, rid_of};
 use crate::guard::AdminGuard;
+use crate::guard::deny;
 use crate::state::ApiDeps;
 use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_identity::AdminUserError;
 use chargepilot_mod_ops::OpsError;
 use chargepilot_platform::httpx;
 use std::collections::HashMap;
 use std::sync::Arc;
-
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
-}
-
-fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
-    if guard.has(permission) {
-        None
-    } else {
-        Some(ops_error(OpsError::Permission, rid))
-    }
-}
 
 /// 400/1005 参数错误（旧版 httpapi.BadRequest）。
 fn bad_request(message: &str, rid: &str) -> Response {
@@ -43,19 +32,6 @@ fn path_id(raw: &str, rid: &str) -> Result<u64, Response> {
 }
 
 /// 用户查询错误映射（旧版 AdminResourceFailure 的身份侧子集）。
-fn user_error(e: AdminUserError, rid: &str) -> Response {
-    match &e {
-        AdminUserError::Forbidden => ops_error(OpsError::Permission, rid),
-        AdminUserError::NotFound => {
-            ops_error(OpsError::NotFound("记录不存在或已删除".to_string()), rid)
-        }
-        AdminUserError::Storage(_) => {
-            tracing::warn!(error = %e, "后台用户查询失败");
-            ops_error(OpsError::Storage(anyhow::anyhow!(e.to_string())), rid)
-        }
-    }
-}
-
 async fn list_users(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
@@ -87,7 +63,7 @@ async fn list_users(
     .await
     {
         Ok(paged) => httpx::ok(paged, &rid),
-        Err(e) => user_error(e, &rid),
+        Err(e) => admin_user_error(e, &rid),
     }
 }
 
@@ -109,7 +85,7 @@ async fn user_detail(
         .await
     {
         Ok(detail) => httpx::ok(detail, &rid),
-        Err(e) => user_error(e, &rid),
+        Err(e) => admin_user_error(e, &rid),
     }
 }
 
@@ -158,7 +134,7 @@ async fn user_recharges(
     if let Err(resp) =
         chargepilot_mod_identity::admin_query::require_user_exists(&deps.db, user_id).await
     {
-        return user_error(resp, &rid);
+        return admin_user_error(resp, &rid);
     }
     match chargepilot_mod_wallet::recharge_history::admin_recharges(
         &deps.db, user_id, page, page_size,

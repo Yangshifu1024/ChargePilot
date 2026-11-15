@@ -5,29 +5,18 @@
 //! （与旧版 actor 实时权限语义一致）。
 
 use crate::errormap::ops_error;
+use crate::errormap::{card_error, rid_of};
 use crate::guard::AdminGuard;
+use crate::guard::deny;
 use crate::state::ApiDeps;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_card::CardAdminError;
 use chargepilot_mod_ops::OpsError;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
-
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
-}
-
-fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
-    if guard.has(permission) {
-        None
-    } else {
-        Some(ops_error(OpsError::Permission, rid))
-    }
-}
 
 fn bad_request(message: &str, rid: &str) -> Response {
     ops_error(OpsError::Input(message.to_string()), rid)
@@ -41,20 +30,17 @@ fn path_id(raw: &str, rid: &str) -> Result<u64, Response> {
         .ok_or_else(|| bad_request("ID 必须为正整数", rid))
 }
 
-fn card_error(e: CardAdminError, input_message: &str, rid: &str) -> Response {
-    match &e {
-        CardAdminError::Input => bad_request(input_message, rid),
-        CardAdminError::Forbidden => ops_error(OpsError::Permission, rid),
-        CardAdminError::Conflict(msg) => ops_error(OpsError::Conflict(msg.clone()), rid),
-        CardAdminError::NotFound => {
-            ops_error(OpsError::NotFound("记录不存在或已删除".to_string()), rid)
-        }
-        CardAdminError::Storage(_) => {
-            tracing::warn!(error = %e, "在线卡管理失败");
-            ops_error(OpsError::Storage(anyhow::anyhow!(e.to_string())), rid)
-        }
-    }
+#[derive(Deserialize)]
+struct BindBody {
+    card_no: String,
+    /// 完整用户主键，大整数由十进制字符串保留精度（旧版 DecimalID）。
+    user_id: String,
+    /// 人工核验依据。
+    reason: String,
 }
+
+const BIND_INPUT_MESSAGE: &str = "请填写32位十进制卡号、用户及核验绑定依据";
+
 async fn list_online_cards(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
@@ -72,17 +58,6 @@ async fn list_online_cards(
         Err(e) => card_error(e, "卡状态与依据无效", &rid),
     }
 }
-
-#[derive(Deserialize)]
-struct BindBody {
-    card_no: String,
-    /// 完整用户主键，大整数由十进制字符串保留精度（旧版 DecimalID）。
-    user_id: String,
-    /// 人工核验依据。
-    reason: String,
-}
-
-const BIND_INPUT_MESSAGE: &str = "请填写32位十进制卡号、用户及核验绑定依据";
 
 async fn bind_online_card(
     State(deps): State<Arc<ApiDeps>>,

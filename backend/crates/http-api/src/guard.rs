@@ -20,6 +20,17 @@ impl AdminGuard {
     }
 }
 
+/// 权限判定（原 9 份 views 局部 deny 副本合一）。403 文案走 ops_error
+/// 契约（「没有操作权限」）；marketing 门面的「无权执行此操作」域差异
+/// 副本保留在其原文件。
+pub fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
+    if guard.has(permission) {
+        None
+    } else {
+        Some(ops_error(OpsError::Permission, rid))
+    }
+}
+
 impl axum::extract::FromRequestParts<Arc<ApiDeps>> for AdminGuard {
     type Rejection = Response;
 

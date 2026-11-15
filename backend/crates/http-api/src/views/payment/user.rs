@@ -1,5 +1,6 @@
 //! 支付域用户端门面（票 18 冷区批：原 user_payment.rs 归位）。
 
+use crate::errormap::{checkout_error, rid_of};
 use crate::state::{ApiDeps, PaymentState};
 use crate::user_guard::UserGuard;
 use axum::Json as AxumJson;
@@ -35,10 +36,6 @@ pub fn simulation_router() -> axum::Router<Arc<ApiDeps>> {
         "/api/v1/user/development/payments/confirm",
         axum::routing::post(payment_simulation_confirm),
     )
-}
-
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
 }
 
 #[derive(Deserialize)]
@@ -168,29 +165,5 @@ async fn wallet_recharge(
     match recharge.create(uid, &input).await {
         Ok(v) => httpx::ok(serde_json::to_value(v).unwrap_or(json!(null)), &rid),
         Err(e) => crate::errormap::wallet_error(e, &rid),
-    }
-}
-
-/// 下单错误映射（对齐旧版 CheckoutError Kind → 状态码/文案）。
-fn checkout_error(e: chargepilot_mod_payment::CheckoutError, rid: &str) -> Response {
-    use chargepilot_mod_payment::CheckoutError as E;
-    match &e {
-        E::InvalidInput => crate::respond(400, Code::BadRequest as i64, "请求参数无效", rid),
-        E::NotFound => crate::respond(404, Code::NotFound as i64, "设备或端口不存在", rid),
-        E::Paused => crate::respond(409, Code::Conflict as i64, "设备已停用", rid),
-        E::PortBusy => crate::respond(409, Code::Conflict as i64, "端口已被占用", rid),
-        E::OfferUnavailable => crate::respond(409, Code::Conflict as i64, "套餐不可售", rid),
-        E::Pricing => crate::respond(409, Code::Conflict as i64, "计费方案不可用", rid),
-        E::Conflict => crate::respond(409, Code::Conflict as i64, "支付申请冲突", rid),
-        E::Provider => crate::respond(502, Code::ChannelInteraction as i64, "支付渠道不可用", rid),
-        E::Storage(m) => {
-            tracing::warn!(error = %m, "下单处理失败");
-            crate::respond(
-                503,
-                Code::ServiceUnavailable as i64,
-                "下单暂不可用，请稍后重试",
-                rid,
-            )
-        }
     }
 }

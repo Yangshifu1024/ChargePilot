@@ -1,5 +1,6 @@
 //! 营销域后台门面（票 18 冷区批：原 admin_marketing.rs 归位）。
 
+use crate::errormap::{coupon_error, rid_of};
 use crate::guard::AdminGuard;
 use crate::params::AdminPaging;
 use crate::state::ApiDeps;
@@ -7,7 +8,6 @@ use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_domain::marketing::ActivityRuleInput;
-use chargepilot_mod_marketing::CouponError;
 use chargepilot_mod_marketing::activity::{
     create_activity_rule, has_activity_read, list_activity_rules, update_activity_rule,
 };
@@ -49,10 +49,6 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
         )
 }
 
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
-}
-
 fn real_ip(headers: &HeaderMap) -> String {
     headers
         .get("x-real-ip")
@@ -75,28 +71,6 @@ fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
 }
 
 /// 券域错误 → HTTP（映射对齐旧版 failure + AdminResourceFailure）。
-fn coupon_error(e: CouponError, rid: &str) -> Response {
-    match &e {
-        CouponError::Input(m) => crate::respond(400, Code::BadRequest as i64, m, rid),
-        CouponError::Forbidden => {
-            crate::respond(403, Code::Forbidden as i64, "无权执行此操作", rid)
-        }
-        CouponError::Conflict(m) => crate::respond(409, Code::Conflict as i64, m, rid),
-        CouponError::NotFound => {
-            crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid)
-        }
-        CouponError::Storage(_) => {
-            tracing::warn!(error = %e, "优惠券请求处理失败");
-            crate::respond(
-                503,
-                Code::ServiceUnavailable as i64,
-                "数据暂时无法读取或保存，请稍后重试",
-                rid,
-            )
-        }
-    }
-}
-
 async fn list_coupons_handler(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,

@@ -4,15 +4,15 @@
 //! finance.refund.read、order.refund.review、finance.refund.retry、order.refund.create），
 //! 审核类角色与权限的最终判定在服务层事务内复核。
 
-use crate::errormap::ops_error;
+use crate::errormap::{rid_of, risk_error};
 use crate::guard::AdminGuard;
+use crate::guard::deny;
 use crate::params::AdminPaging;
 use crate::state::ApiDeps;
 use axum::Json as AxumJson;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_ops::OpsError;
 use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
@@ -35,18 +35,6 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
             "/api/v1/admin/billing/wallet-risks/{request_id}/release",
             axum::routing::post(release_wallet_risk),
         )
-}
-
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
-}
-
-fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
-    if guard.has(permission) {
-        None
-    } else {
-        Some(ops_error(OpsError::Permission, rid))
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -151,28 +139,5 @@ async fn release_wallet_risk(
     {
         Ok(response) => httpx::ok(response, &rid),
         Err(e) => risk_error(e, &rid),
-    }
-}
-
-fn risk_error(e: chargepilot_mod_wallet::WalletError, rid: &str) -> Response {
-    use chargepilot_mod_wallet::WalletError as E;
-    match &e {
-        E::Forbidden => ops_error(OpsError::Permission, rid),
-        E::RequestConflict | E::NotFound => {
-            ops_error(OpsError::bad_input("业务状态冲突".to_string()), rid)
-        }
-        E::Frozen | E::InsufficientBalance => {
-            ops_error(OpsError::bad_input("业务状态冲突".to_string()), rid)
-        }
-        E::Identity
-        | E::PrepayNotConfigured
-        | E::PrepayUnavailable
-        | E::Inactive
-        | E::InvalidBalance
-        | E::Storage(_) => {
-            tracing::warn!(error = %e, "风控请求处理失败");
-            let api = chargepilot_platform::error::ApiError::from(anyhow::anyhow!(e.to_string()));
-            httpx::error(&api, rid)
-        }
     }
 }

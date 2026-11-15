@@ -1,13 +1,13 @@
 //! 设备域后台门面（票 18：先归位设备能力；admin_pricing_device/device_and_user 热区批并入）。
-use crate::errormap::ops_error;
+use crate::errormap::{capability_error, device_error, rid_of};
 use crate::guard::AdminGuard;
+use crate::guard::deny;
 use crate::params::AdminPaging;
 use crate::state::ApiDeps;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_device::{DeviceError, alert, fault, import, management, station, vendor};
-use chargepilot_mod_ops::OpsError;
+use chargepilot_mod_device::{alert, fault, import, management, station, vendor};
 use chargepilot_mod_ops::management::Page;
 use chargepilot_mod_pricing::metering;
 use chargepilot_platform::error::Code;
@@ -51,44 +51,12 @@ async fn device_capabilities(
 }
 
 /// 能力查询错误映射（旧版 pricingFailure：InputError→400、其余按资源失败）。
-fn capability_error(e: DeviceError, rid: &str) -> Response {
-    match &e {
-        DeviceError::Input(msg) => crate::respond(400, Code::BadRequest as i64, msg, rid),
-        DeviceError::NotFound => {
-            crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid)
-        }
-        DeviceError::Forbidden => crate::respond(403, Code::Forbidden as i64, "没有操作权限", rid),
-        DeviceError::Conflict(msg) => crate::respond(409, Code::Conflict as i64, msg, rid),
-        DeviceError::Storage(_) => {
-            tracing::warn!(cause = %e, "设备能力查询失败");
-            crate::respond(
-                503,
-                Code::ServiceUnavailable as i64,
-                "数据暂时无法读取或保存，请稍后重试",
-                rid,
-            )
-        }
-    }
-}
-
 /// 设备能力路由（票 18：原 admin_misc 区块归位）。
 pub fn router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new().route(
         "/api/v1/admin/settings/device-capabilities",
         axum::routing::get(device_capabilities),
     )
-}
-
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
-}
-
-fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
-    if guard.has(permission) {
-        None
-    } else {
-        Some(ops_error(OpsError::Permission, rid))
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -100,25 +68,6 @@ fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
 // 后台路由：计费方案（模板/发布/继承/生效）、站点、厂商。
 // 权限码与路径对齐旧版（pricing.read、pricing.rule.create|update、station.*、vendor.*）。
 
-fn device_error(e: DeviceError, rid: &str) -> Response {
-    match &e {
-        DeviceError::Input(msg) => crate::respond(400, Code::BadRequest as i64, msg, rid),
-        DeviceError::Forbidden => crate::respond(403, Code::Forbidden as i64, "没有操作权限", rid),
-        DeviceError::NotFound => {
-            crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid)
-        }
-        DeviceError::Conflict(msg) => crate::respond(409, Code::Conflict as i64, msg, rid),
-        DeviceError::Storage(_) => {
-            tracing::warn!(cause = %e, "设备域存储操作失败");
-            crate::respond(
-                503,
-                Code::ServiceUnavailable as i64,
-                "数据暂时无法读取或保存，请稍后重试",
-                rid,
-            )
-        }
-    }
-}
 #[derive(Deserialize)]
 struct PagingQuery {
     keyword: Option<String>,

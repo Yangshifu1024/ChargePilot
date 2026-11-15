@@ -1,6 +1,8 @@
 //! 订单域后台门面（票 18：先归位反馈工单区块；admin_orders 热区批并入）。
 use crate::errormap::ops_error;
+use crate::errormap::{feedback_error, order_storage_error, rid_of};
 use crate::guard::AdminGuard;
+use crate::guard::deny;
 use crate::params::AdminPaging;
 use crate::state::ApiDeps;
 use axum::extract::{Path, Query, State};
@@ -87,31 +89,6 @@ async fn reply_feedback(
     }
 }
 
-/// 反馈错误映射（旧版 AdminResourceFailure + FeedbackInputError）。
-fn feedback_error(e: chargepilot_mod_order::FeedbackError, rid: &str) -> Response {
-    use chargepilot_mod_order::FeedbackError as E;
-    match &e {
-        E::Input(msg) => crate::respond(400, Code::BadRequest as i64, msg, rid),
-        E::Conflict => crate::respond(
-            409,
-            Code::Conflict as i64,
-            "当前记录状态不允许此操作，请刷新后重试",
-            rid,
-        ),
-        E::NotFound => crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid),
-        E::Forbidden => crate::respond(403, Code::Forbidden as i64, "没有操作权限", rid),
-        E::Storage(_) => {
-            tracing::warn!(cause = %e, "反馈请求处理失败");
-            crate::respond(
-                503,
-                Code::ServiceUnavailable as i64,
-                "数据暂时无法读取或保存，请稍后重试",
-                rid,
-            )
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // 审计日志
 // ---------------------------------------------------------------------------
@@ -124,18 +101,6 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
             "/api/v1/admin/feedback/{id}/reply",
             axum::routing::post(reply_feedback),
         )
-}
-
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
-}
-
-fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
-    if guard.has(permission) {
-        None
-    } else {
-        Some(ops_error(OpsError::Permission, rid))
-    }
 }
 
 fn real_ip(headers: &HeaderMap) -> String {
@@ -210,11 +175,6 @@ pub fn admin_router() -> axum::Router<Arc<ApiDeps>> {
 }
 
 /// 存储层错误统一映射（旧版 AdminResourceFailure 的 503 分支文案）。
-fn storage_error(e: sqlx::Error, rid: &str) -> Response {
-    tracing::warn!(cause = %e, "后台订单查询失败");
-    ops_error(OpsError::Storage(anyhow::anyhow!(e.to_string())), rid)
-}
-
 /// 路径参数 :id 解析（旧版 AdminPathID）：非负整数或零均拒绝。
 fn parse_path_id(raw: &str, rid: &str) -> Result<u64, Response> {
     match raw.parse::<u64>() {
@@ -374,7 +334,7 @@ async fn list_orders(
             }),
             &rid,
         ),
-        Err(e) => storage_error(e, &rid),
+        Err(e) => order_storage_error(e, &rid),
     }
 }
 
@@ -401,7 +361,7 @@ async fn order_detail(
         Ok(None) => {
             return ops_error(OpsError::not_found("记录不存在或已删除"), &rid);
         }
-        Err(e) => return storage_error(e, &rid),
+        Err(e) => return order_storage_error(e, &rid),
     };
     // 冻结套餐、名称与站点名称（缺失快照或无效套餐保持 null，不读当前价格）。
     match admin_query::order_selection(&deps.db, order_id).await {
@@ -410,13 +370,13 @@ async fn order_detail(
             row.selected_package_name = admin_query::selected_package_name(selected.as_ref());
             row.selected_package = selected;
         }
-        Err(e) => return storage_error(e, &rid),
+        Err(e) => return order_storage_error(e, &rid),
     }
     match admin_query::order_calculation_no(&deps.db, order_id).await {
         Ok(calculation_no) => {
             row.billing = Some(json!({"calculation_no": calculation_no}));
         }
-        Err(e) => return storage_error(e, &rid),
+        Err(e) => return order_storage_error(e, &rid),
     }
     // 仅对实时持有退款创建权限的操作人回填申请人，供界面显示退款入口（旧版语义）。
     if guard.has("order.refund.create") {
@@ -455,11 +415,11 @@ async fn order_timeline(
         Ok(false) => {
             return ops_error(OpsError::not_found("记录不存在或已删除"), &rid);
         }
-        Err(e) => return storage_error(e, &rid),
+        Err(e) => return order_storage_error(e, &rid),
     }
     match admin_query::list_order_events(&deps.db, order_id).await {
         Ok(timeline) => httpx::ok(json!({"order_id": order_id, "timeline": timeline}), &rid),
-        Err(e) => storage_error(e, &rid),
+        Err(e) => order_storage_error(e, &rid),
     }
 }
 
@@ -512,7 +472,7 @@ async fn order_process(
         Ok(None) => {
             return ops_error(OpsError::not_found("记录不存在或已删除"), &rid);
         }
-        Err(e) => return storage_error(e, &rid),
+        Err(e) => return order_storage_error(e, &rid),
     };
     // 读取失败统一为过程暂不可用（旧版 ErrProcessUnavailable 语义），不泄露底层错误。
     match admin_query::list_process_points(&deps.db, &identity, after_id, limit).await {
@@ -552,14 +512,14 @@ async fn order_refunds(
         Ok(false) => {
             return ops_error(OpsError::not_found("记录不存在或已删除"), &rid);
         }
-        Err(e) => return storage_error(e, &rid),
+        Err(e) => return order_storage_error(e, &rid),
     }
     match admin_query::list_order_refunds(&deps.db, order_id).await {
         Ok(items) => httpx::ok(
             json!({"order_id": order_id, "items": items, "total": items.len()}),
             &rid,
         ),
-        Err(e) => storage_error(e, &rid),
+        Err(e) => order_storage_error(e, &rid),
     }
 }
 
@@ -667,6 +627,6 @@ async fn payment_orders(
             }),
             &rid,
         ),
-        Err(e) => storage_error(e, &rid),
+        Err(e) => order_storage_error(e, &rid),
     }
 }

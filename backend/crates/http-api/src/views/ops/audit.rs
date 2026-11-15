@@ -1,13 +1,12 @@
 //! 运营域后台门面·审计与 MFA（票 18：原 admin_misc.rs 的审计/MFA 区块）。
-use crate::errormap::ops_error;
+use crate::errormap::{mfa_error, rid_of};
 use crate::guard::AdminGuard;
+use crate::guard::deny;
 use crate::params::AdminPaging;
 use crate::state::ApiDeps;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_ops::MfaError;
-use chargepilot_mod_ops::OpsError;
 use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;
 use serde::Deserialize;
@@ -158,62 +157,6 @@ async fn self_mfa_settings(
 }
 
 /// MFA 错误映射（旧版 mfaSettingsFailure + AdminManagementFailure）。
-fn mfa_error(e: MfaError, rid: &str) -> Response {
-    match &e {
-        MfaError::Input | MfaError::InputMsg(_) => {
-            crate::respond(400, Code::BadRequest as i64, &e.to_string(), rid)
-        }
-        MfaError::Proof => crate::respond(
-            400,
-            Code::VerificationFailed as i64,
-            "密码或验证码校验失败",
-            rid,
-        ),
-        MfaError::UsedTotp => crate::respond(
-            400,
-            Code::VerificationFailed as i64,
-            "该验证码已使用，请等待下一个验证码",
-            rid,
-        ),
-        MfaError::Pending | MfaError::State | MfaError::Busy => {
-            crate::respond(409, Code::Conflict as i64, &e.to_string(), rid)
-        }
-        MfaError::Rate => {
-            let mut resp = crate::respond(
-                429,
-                Code::LoginRateLimited as i64,
-                "安全验证过于频繁，请稍后重试",
-                rid,
-            );
-            resp.headers_mut()
-                .insert("retry-after", axum::http::HeaderValue::from_static("60"));
-            resp
-        }
-        MfaError::SelfMfa => crate::respond(
-            409,
-            Code::Conflict as i64,
-            "请使用本人账号的安全设置修改双因素认证",
-            rid,
-        ),
-        MfaError::Credentials => crate::respond(
-            401,
-            Code::Unauthorized as i64,
-            "用户名或密码错误，或登录已失效",
-            rid,
-        ),
-        MfaError::NotFound => crate::respond(404, Code::NotFound as i64, "记录不存在或已删除", rid),
-        MfaError::Storage(_) => {
-            tracing::warn!(cause = %e, "MFA 请求处理失败");
-            crate::respond(
-                503,
-                Code::ServiceUnavailable as i64,
-                "数据暂时无法读取或保存，请稍后重试",
-                rid,
-            )
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // 方案预览与设备能力
 /// 审计与 MFA 路由（票 18：原 admin_misc 区块归位）。
@@ -231,18 +174,6 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
             "/api/v1/admin/auth/mfa-settings",
             axum::routing::get(self_mfa_status).post(self_mfa_settings),
         )
-}
-
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
-}
-
-fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
-    if guard.has(permission) {
-        None
-    } else {
-        Some(ops_error(OpsError::Permission, rid))
-    }
 }
 
 fn real_ip(headers: &HeaderMap) -> String {

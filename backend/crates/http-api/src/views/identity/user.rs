@@ -3,15 +3,15 @@
 //! C 端身份路由（路径与响应形状为前端契约，逐字节对齐旧版）：
 //! POST /api/v1/user/auth/login | refresh | logout，GET /api/v1/user/profile。
 
+use crate::errormap::rid_of;
 use crate::state::ApiDeps;
 use crate::user_guard::UserGuard;
-use crate::{bearer, identity_error, respond};
+use crate::{bearer, identity_error, phone_error, respond};
 use axum::Json as AxumJson;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_mod_identity::IdentityError;
-use chargepilot_mod_identity::PhoneError;
 use chargepilot_mod_identity::phone::{self, PhoneInput};
 use chargepilot_mod_identity::service::SessionService;
 use chargepilot_platform::error::Code;
@@ -145,52 +145,7 @@ type _EnvelopeCheck = Envelope<serde_json::Value>;
 // wechat 仅收授权 code，正式号码交换能力接入前统一按「暂不可用」拒绝
 // （旧版 ErrPhoneUnavailable 语义）。在线卡状态 C 端仅可写 lost/unbound。
 
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
-}
-
 /// 手机号域错误 → HTTP（码值与文案沿用旧版字面量契约）。
-fn phone_error(e: PhoneError, rid: &str) -> Response {
-    match &e {
-        PhoneError::Authorization => crate::respond(
-            400,
-            Code::BadRequest as i64,
-            "请使用微信手机号授权凭证",
-            rid,
-        ),
-        PhoneError::Unavailable => crate::respond(
-            503,
-            Code::ServiceUnavailable as i64,
-            "手机号授权暂不可用",
-            rid,
-        ),
-        PhoneError::Exchange => crate::respond(
-            400,
-            Code::NotFound as i64,
-            "手机号授权失败，请重新授权",
-            rid,
-        ),
-        PhoneError::Input => crate::respond(
-            400,
-            Code::BadRequest as i64,
-            "请输入有效的中国大陆手机号",
-            rid,
-        ),
-        PhoneError::Taken => {
-            crate::respond(409, Code::Conflict as i64, "该手机号已绑定其他账号", rid)
-        }
-        PhoneError::Storage(_) => {
-            tracing::warn!(error = %e, "手机号保存失败");
-            crate::respond(
-                503,
-                Code::ServiceUnavailable as i64,
-                "数据暂时无法保存，请稍后重试",
-                rid,
-            )
-        }
-    }
-}
-
 #[derive(Deserialize)]
 struct PhoneBody {
     #[serde(default)]

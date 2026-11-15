@@ -2,6 +2,7 @@
 //!
 //! 在线卡 C 端仅可写 lost/unbound（旧版 card/api.go 语义）。
 
+use crate::errormap::rid_of;
 use crate::state::ApiDeps;
 use crate::user_guard::UserGuard;
 use axum::Json as AxumJson;
@@ -13,10 +14,6 @@ use chargepilot_platform::httpx;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
-
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
-}
 
 async fn cards(
     State(deps): State<Arc<ApiDeps>>,

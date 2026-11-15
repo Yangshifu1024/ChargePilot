@@ -1,7 +1,9 @@
 //! 运营域后台门面（票 18 冷区批）：账号管理（原 admin_management.rs）。
 
 use crate::errormap::ops_error;
+use crate::errormap::rid_of;
 use crate::guard::AdminGuard;
+use crate::guard::deny;
 use crate::params::AdminPaging;
 use crate::state::ApiDeps;
 use axum::extract::{Path, Query, State};
@@ -53,18 +55,6 @@ pub fn management_router() -> axum::Router<Arc<ApiDeps>> {
             axum::routing::get(list_announcements).post(publish_announcement),
         )
         .route("/api/v1/admin/dashboard", axum::routing::get(dashboard))
-}
-
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
-}
-
-fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
-    if guard.has(permission) {
-        None
-    } else {
-        Some(ops_error(OpsError::Permission, rid))
-    }
 }
 
 #[derive(Deserialize)]

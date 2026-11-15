@@ -1,5 +1,6 @@
 //! 钱包域用户端门面（票 18 冷区批：原 user_wallet.rs 归位）。
 
+use crate::errormap::rid_of;
 use crate::params::UserPaging;
 use crate::state::{ApiDeps, WalletState};
 use crate::user_guard::UserGuard;
@@ -38,10 +39,6 @@ pub fn refund_router() -> axum::Router<Arc<ApiDeps>> {
             "/api/v1/user/wallet/refund",
             axum::routing::post(wallet_refund),
         )
-}
-
-fn rid_of(headers: &HeaderMap) -> String {
-    httpx::request_id_from(headers)
 }
 
 #[derive(Deserialize)]
