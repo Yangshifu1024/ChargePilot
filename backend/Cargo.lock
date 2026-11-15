@@ -432,6 +432,7 @@ dependencies = [
  "chrono",
  "metrics",
  "rand 0.9.5",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "sqlx",
@@ -487,6 +488,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chargepilot-domain",
+ "chargepilot-events",
  "chargepilot-mod-ops",
  "chargepilot-mod-order",
  "chargepilot-mod-payment",
@@ -629,6 +631,7 @@ dependencies = [
  "anyhow",
  "base64",
  "chargepilot-domain",
+ "chargepilot-events",
  "chargepilot-mod-marketing",
  "chargepilot-mod-order",
  "chargepilot-mod-pricing",
@@ -669,6 +672,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chargepilot-domain",
+ "chargepilot-events",
  "chargepilot-mod-ops",
  "chargepilot-mod-order",
  "chargepilot-mod-payment",
@@ -734,6 +738,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "serde",
 ]
 
 [[package]]
