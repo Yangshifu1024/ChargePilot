@@ -2,8 +2,8 @@
 //! 首购写入已付余额支付单与意图，续购累计已付金额；钱包实际扣款与这些写入
 //! 由 card 用例在同一事务原子提交，本模块不扣钱包、不调用支付渠道。
 
-use crate::channel::futures_bounds::BoxFuture;
 use crate::error::CardFundingConflict;
+use crate::service::channel::futures_bounds::BoxFuture;
 use chargepilot_domain::money::PaymentOrderStatus;
 
 /// 在事务内创建刷卡首购的已付余额支付单，返回支付单主键（旧版 CreateCardPaymentInTx）。

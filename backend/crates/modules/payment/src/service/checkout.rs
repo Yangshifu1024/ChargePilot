@@ -1,14 +1,17 @@
 //! 下单与支付准备（旧版 CheckoutService 对齐）：套餐查询、支付意图冻结与
 //! 预支付参数。下单即冻结计费快照（红线层语义照搬）；预支付失败保留申请，
-//! 相同 client_request_id 可原单号恢复。
+//! 相同 client_request_id 可原单号恢复。SQL 在 repo/checkout.rs。
 
 use super::channel::PrepayRequest;
 use super::scan::ScanResult;
 use crate::error::CheckoutError;
+use crate::repo::{
+    checkout as repo, find_prepay_params, insert_ignore_prepay_tx, set_read_committed,
+};
 use chargepilot_domain::charging::actual::Rule;
 use chargepilot_domain::charging::settle::{Estimate, Offer};
-use chargepilot_domain::money::{BizType, PayMethod, PaymentOrderStatus};
-use chargepilot_domain::payment::{PaymentIntentStatus, intent_estimate};
+
+use chargepilot_domain::payment::intent_estimate;
 use chargepilot_platform::ids::SegmentAllocator;
 use sqlx::{Acquire, MySqlPool};
 
@@ -205,40 +208,9 @@ impl CheckoutService {
         user_id: u64,
         input: &CheckoutInput,
     ) -> Result<Option<FrozenIntent>, CheckoutError> {
-        // 意图冻结投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
-        type FrozenIntentRow = (
-            String,
-            String,
-            u64,
-            String,
-            u8,
-            u64,
-            i64,
-            i64,
-            i64,
-            i64,
-            u16,
-            u16,
-            u64,
-            u64,
-            chrono::DateTime<chrono::Utc>,
-            serde_json::Value,
-        );
-        let row: Option<FrozenIntentRow> = sqlx::query_as(
-            "SELECT CAST(i.`intent_id` AS CHAR), i.`merchant_order_no`, i.`station_id`, i.`device_id`, \
-                    i.`port_no`, i.`offer_id`, i.`discount_cents`, i.`electric_cents`, \
-                    i.`service_cents`, i.`total_cents`, i.`estimated_minutes`, \
-                    i.`charge_quantity`, i.`payment_order_id`, CAST(COALESCE(i.`coupon_grant_id`, 0) AS UNSIGNED), \
-                    i.`expires_at`, i.`pricing_snapshot` \
-             FROM `charge_payment_intent` i \
-             WHERE i.`user_id` = ? AND i.`client_request_id` = ? AND i.`status` = ? LIMIT 1",
-        )
-        .bind(user_id as i64)
-        .bind(&input.client_request_id)
-        .bind(PaymentIntentStatus::Initiated)
-        .fetch_optional(&self.pool)
-        .await?;
-        let Some(row) = row else {
+        let Some(row) =
+            repo::find_frozen_intent(&self.pool, user_id, &input.client_request_id).await?
+        else {
             return Ok(None);
         };
         let (
@@ -335,49 +307,19 @@ impl CheckoutService {
 
         // 先设隔离级别再开事务（READ COMMITTED：等锁后的重读能看到前次提交）。
         let mut conn = self.pool.acquire().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-            .execute(&mut *conn)
-            .await?;
+        set_read_committed(&mut conn).await?;
         let mut tx = conn.begin().await?;
         let conn = tx.acquire().await?;
 
         // 仅释放本端口已过期的预占，与新意图创建同事务（旧版语义）。
-        sqlx::query(
-            "UPDATE `charge_payment_intent` SET `status` = ? \
-             WHERE `port_code` = ? AND `status` = ? AND `expires_at` <= UTC_TIMESTAMP(3)",
-        )
-        .bind(PaymentIntentStatus::Expired)
-        .bind(&scan_port.port_id)
-        .bind(PaymentIntentStatus::Initiated)
-        .execute(&mut *conn)
-        .await?;
+        repo::expire_stale_intents_tx(&mut *conn, &scan_port.port_id).await?;
         // 端口可用性：有效预占或进行中订单存在即冲突（旧版 CheckoutPortAvailable）。
-        let busy: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM `charge_payment_intent` i \
-             LEFT JOIN `charge_order` c ON c.`id` = i.`charge_order_id` \
-             WHERE i.`port_code` = ? AND ((i.`status` = ? AND i.`expires_at` > UTC_TIMESTAMP(3)) \
-               OR (i.`status` = ? AND c.`status` IN (?, ?)))",
-        )
-        .bind(&scan_port.port_id)
-        .bind(PaymentIntentStatus::Initiated)
-        .bind(PaymentIntentStatus::Paid)
-        .bind(chargepilot_domain::order::ChargeOrderStatus::Paid)
-        .bind(chargepilot_domain::order::ChargeOrderStatus::Charging)
-        .fetch_one(&mut *conn)
-        .await?;
+        let busy = repo::port_busy_count_tx(&mut *conn, &scan_port.port_id).await?;
         if busy != 0 {
             return Err(CheckoutError::PortBusy);
         }
         // 付款人微信身份（不公开；varbinary 列读取侧 CAST AS CHAR）。
-        let openid: Option<String> = sqlx::query_scalar(
-            "SELECT CAST(`openid` AS CHAR) FROM `user` \
-             WHERE `id` = ? AND `status` = 'active' AND `deleted_at` IS NULL LIMIT 1",
-        )
-        .bind(user_id as i64)
-        .fetch_optional(&mut *conn)
-        .await?
-        .flatten();
-        let Some(openid) = openid else {
+        let Some(openid) = repo::user_openid_tx(&mut *conn, user_id).await? else {
             return Err(CheckoutError::Conflict);
         };
         // 套餐下单不支持优惠券（旧版互斥约束，start 已拦截）：优惠额恒 0；
@@ -385,56 +327,40 @@ impl CheckoutService {
         let discount_cents = 0i64;
         let payable = estimate.total_cents - discount_cents;
         let month = chargepilot_mod_order::month_start_of(chrono::Utc::now());
-        let payment_id: u64 = sqlx::query(
-            "INSERT INTO `payment_order` \
-             (`order_no`, `biz_type`, `biz_id`, `user_id`, `pay_method`, `total_cents`, \
-              `status`, `expired_at`, `created_month`) \
-             VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)",
+        let payment_id = repo::insert_pay_order_tx(
+            &mut *conn,
+            &merchant_order_no,
+            user_id,
+            payable,
+            expires_at,
+            month,
         )
-        .bind(&merchant_order_no)
-        .bind(BizType::Charge)
-        .bind(user_id as i64)
-        .bind(PayMethod::Wechat)
-        .bind(payable)
-        .bind(PaymentOrderStatus::Initiated)
-        .bind(expires_at)
-        .bind(month)
-        .execute(&mut *conn)
-        .await?
-        .last_insert_id() as u64;
-        let inserted = sqlx::query(
-            "INSERT INTO `charge_payment_intent` \
-             (`intent_id`, `client_request_id`, `merchant_order_no`, `payment_order_id`, `user_id`, \
-              `openid`, `device_id`, `port_no`, `port_code`, `station_id`, `pricing_rule_id`, \
-              `pricing_rule_version`, `pricing_snapshot`, `estimated_kwh`, `estimated_minutes`, \
-              `electric_cents`, `service_cents`, `total_cents`, `charge_mode`, `charge_quantity`, \
-              `status`, `expires_at`, `offer_id`) \
-             VALUES (?, ?, ?, ?, ?, CAST(? AS BINARY), ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        .await?;
+        let inserted = repo::insert_intent_tx(
+            &mut *conn,
+            &intent_id,
+            &input.client_request_id,
+            &merchant_order_no,
+            payment_id,
+            user_id,
+            &openid,
+            &port.device_id,
+            scan_port.port_no,
+            &scan_port.port_id,
+            port.station_id,
+            active.rule_id,
+            active.version,
+            &snapshot_json,
+            &estimate.estimated_kwh,
+            estimate.estimated_minutes,
+            estimate.electric_cents,
+            estimate.service_cents,
+            estimate.total_cents,
+            estimate.charge_mode,
+            estimate.charge_quantity,
+            offer.id,
+            expires_at,
         )
-        .bind(&intent_id)
-        .bind(&input.client_request_id)
-        .bind(&merchant_order_no)
-        .bind(payment_id as i64)
-        .bind(user_id as i64)
-        .bind(&openid)
-        .bind(&port.device_id)
-        .bind(scan_port.port_no)
-        .bind(&scan_port.port_id)
-        .bind(port.station_id as i64)
-        .bind(active.rule_id as i64)
-        .bind(active.version as i64)
-        .bind(&snapshot_json)
-        .bind(&estimate.estimated_kwh)
-        .bind(estimate.estimated_minutes as i64)
-        .bind(estimate.electric_cents)
-        .bind(estimate.service_cents)
-        .bind(estimate.total_cents)
-        .bind(estimate.charge_mode)
-        .bind(estimate.charge_quantity as i64)
-        .bind(PaymentIntentStatus::Initiated)
-        .bind(expires_at)
-        .bind(offer.id as i64)
-        .execute(&mut *conn)
         .await;
         match inserted {
             Err(sqlx::Error::Database(db)) if db.code().as_deref() == Some("23000") => {
@@ -463,13 +389,7 @@ impl CheckoutService {
     /// 为意图复用或首写预支付参数；失败不撤销已提交申请（旧版 prepare）。
     /// 保存后重读首次参数，避免并发请求返回不同的支付参数。
     async fn prepare(&self, intent: FrozenIntent) -> Result<CheckoutResult, CheckoutError> {
-        let params_json = match sqlx::query_scalar::<_, String>(
-            "SELECT CAST(`params_json` AS CHAR) FROM `charge_prepay` WHERE `payment_order_id` = ?",
-        )
-        .bind(intent.payment_order_id as i64)
-        .fetch_optional(&self.pool)
-        .await?
-        {
+        let params_json = match find_prepay_params(&self.pool, intent.payment_order_id).await? {
             Some(saved) => saved,
             None => {
                 let params = self
@@ -487,26 +407,20 @@ impl CheckoutService {
                 }
                 let body = serde_json::to_string(&params)
                     .map_err(|e| CheckoutError::Storage(e.to_string()))?;
-                let saved = sqlx::query(
-                    "INSERT IGNORE INTO `charge_prepay` (`payment_order_id`, `params_json`, `prepay_id`) \
-                     VALUES (?, CAST(? AS JSON), ?)",
+                let saved = insert_ignore_prepay_tx(
+                    &self.pool,
+                    intent.payment_order_id,
+                    &body,
+                    &params.prepay_id,
                 )
-                .bind(intent.payment_order_id as i64)
-                .bind(&body)
-                .bind(&params.prepay_id)
-                .execute(&self.pool)
-                .await?
-                .rows_affected();
+                .await?;
                 if saved == 1 {
                     body
                 } else {
                     // 并发者已保存：以先到者为准（旧版重读语义）。
-                    sqlx::query_scalar::<_, String>(
-                        "SELECT CAST(`params_json` AS CHAR) FROM `charge_prepay` WHERE `payment_order_id` = ?",
-                    )
-                    .bind(intent.payment_order_id as i64)
-                    .fetch_one(&self.pool)
-                    .await?
+                    find_prepay_params(&self.pool, intent.payment_order_id)
+                        .await?
+                        .ok_or(CheckoutError::Storage("预支付参数读取失败".to_string()))?
                 }
             }
         };

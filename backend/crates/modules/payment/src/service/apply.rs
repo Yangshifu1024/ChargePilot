@@ -1,9 +1,12 @@
 //! 支付成功处理（旧版 CallbackService.Apply 对齐）：回调与模拟确认共用的
 //! 状态机入口。READ COMMITTED 单事务完成支付锁定 → 幂等摘要 → 状态推进 →
 //! （charge 业务）订单创建 + 快照冻结 + 事件出站；钱包充值走钱包入账。
-//! 每一步幂等：重放同报文返回相同回执，不同报文报冲突。
+//! 每一步幂等：重放同报文返回相同回执，不同报文报冲突。SQL 在 repo/。
 
 use crate::error::ApplyError;
+use crate::repo::{
+    apply as repo, find_callback_digest, insert_callback_digest_tx, set_read_committed,
+};
 use chargepilot_domain::money::{BizType, PaymentOrderStatus};
 use chargepilot_domain::payment::{PaymentIntentStatus, is_late_payment};
 use sqlx::{Acquire, MySqlPool};
@@ -51,6 +54,7 @@ fn payment_digest(payment: &VerifiedPayment) -> String {
 }
 
 /// 支付成功处理（旧版 Apply；charge 与 wallet_recharge 分流共用）。
+#[allow(clippy::too_many_lines)]
 pub async fn apply_payment(
     pool: &MySqlPool,
     payment: &VerifiedPayment,
@@ -69,33 +73,11 @@ pub async fn apply_payment(
 
     // 先设隔离级别再开事务（SET 在事务内执行会被 MySQL 拒绝）。
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await?;
+    set_read_committed(&mut conn).await?;
     let mut tx = conn.begin().await?;
     let conn = tx.acquire().await?;
 
     // 先按渠道商户单号锁定支付订单，再按业务类型分流。
-    // 锁读投影元组（列序即 SELECT 顺序）——type_complexity 要求具名；
-    // 词表列直接解出枚举（票 06 手写 sqlx Type）。
-    type PayOrderRow = (
-        u64,
-        BizType,
-        u64,
-        u64,
-        i64,
-        PaymentOrderStatus,
-        Option<String>,
-        chrono::NaiveDate,
-    );
-    let order: Option<PayOrderRow> = sqlx::query_as(
-        "SELECT `id`, `biz_type`, `biz_id`, `user_id`, `total_cents`, `status`, \
-                    `wechat_transaction_id`, `created_month` \
-             FROM `payment_order` WHERE `order_no` = ? FOR UPDATE",
-    )
-    .bind(&payment.merchant_order_no)
-    .fetch_optional(&mut *conn)
-    .await?;
     let Some((
         order_id,
         biz_type,
@@ -105,7 +87,7 @@ pub async fn apply_payment(
         order_status,
         existing_txn,
         _month,
-    )) = order
+    )) = repo::lock_pay_order_tx(&mut *conn, &payment.merchant_order_no).await?
     else {
         return Err(ApplyError::Conflict);
     };
@@ -113,13 +95,8 @@ pub async fn apply_payment(
     if biz_type == BizType::WalletRecharge {
         // 钱包充值分支（旧版 settleWalletRecharge）：支付单推进 paid 后
         // 经钱包入账事务落余额与流水；摘要即流水号。
-        let previous: Option<(String,)> = sqlx::query_as(
-            "SELECT `request_digest` FROM `payment_callback_idempotent` WHERE `wechat_transaction_id` = ?",
-        )
-        .bind(&payment.transaction_id)
-        .fetch_optional(&mut *conn)
-        .await?;
-        if let Some((previous_digest,)) = &previous
+        let previous = find_callback_digest(&mut *conn, &payment.transaction_id).await?;
+        if let Some(previous_digest) = &previous
             && previous_digest != &digest
         {
             return Err(ApplyError::Conflict);
@@ -140,38 +117,21 @@ pub async fn apply_payment(
         {
             return Err(ApplyError::Conflict);
         }
-        sqlx::query(
-            "INSERT INTO `payment_callback_idempotent` (`wechat_transaction_id`, `request_digest`) VALUES (?, ?)",
+        insert_callback_digest_tx(&mut *conn, &payment.transaction_id, &digest).await?;
+        let updated = repo::mark_wallet_order_paid_tx(
+            &mut *conn,
+            order_id,
+            payment.paid_cents,
+            &payment.transaction_id,
+            paid_at,
         )
-        .bind(&payment.transaction_id)
-        .bind(&digest)
-        .execute(&mut *conn)
         .await?;
-        let updated = sqlx::query(
-            "UPDATE `payment_order` SET `status` = ?, `paid_cents` = ?, \
-             `wechat_transaction_id` = ?, `paid_at` = ? \
-             WHERE `id` = ? AND `status` = ? AND `paid_cents` = 0",
-        )
-        .bind(PaymentOrderStatus::Paid)
-        .bind(payment.paid_cents)
-        .bind(&payment.transaction_id)
-        .bind(paid_at)
-        .bind(order_id as i64)
-        .bind(PaymentOrderStatus::Initiated)
-        .execute(&mut *conn)
-        .await?
-        .rows_affected();
         if updated != 1 {
             return Err(ApplyError::Conflict);
         }
-        let request_id: String = sqlx::query_scalar(
-            "SELECT CAST(`request_id` AS CHAR) FROM `wallet_recharge_request` \
-             WHERE `payment_order_id` = ? LIMIT 1",
-        )
-        .bind(order_id as i64)
-        .fetch_optional(&mut *conn)
-        .await?
-        .unwrap_or_default();
+        let request_id = repo::recharge_request_id_tx(&mut *conn, order_id)
+            .await?
+            .unwrap_or_default();
         if request_id.is_empty() {
             return Err(ApplyError::Conflict);
         }
@@ -191,33 +151,6 @@ pub async fn apply_payment(
     }
 
     // 锁定支付意图并核对归属、付款人与金额。
-    // 锁读投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
-    type IntentRow = (
-        String,
-        u64,
-        u64,
-        String,
-        i64,
-        i64,
-        u8,
-        u16,
-        i64,
-        String,
-        Option<u64>,
-        chrono::DateTime<chrono::Utc>,
-        u64,
-        i64,
-    );
-    let intent: Option<IntentRow> = sqlx::query_as(
-        "SELECT CAST(`intent_id` AS CHAR), `user_id`, `payment_order_id`, CAST(`openid` AS CHAR), \
-                    `electric_cents`, `service_cents`, `charge_mode`, `charge_quantity`, \
-                    `total_cents`, `port_code`, `charge_order_id`, `expires_at`, \
-                    CAST(COALESCE(`coupon_grant_id`, 0) AS UNSIGNED), `discount_cents` \
-             FROM `charge_payment_intent` WHERE `merchant_order_no` = ? FOR UPDATE",
-    )
-    .bind(&payment.merchant_order_no)
-    .fetch_optional(&mut *conn)
-    .await?;
     let Some((
         intent_id,
         intent_user,
@@ -233,7 +166,7 @@ pub async fn apply_payment(
         expires_at,
         intent_coupon_grant_id,
         intent_discount_cents,
-    )) = intent
+    )) = repo::lock_intent_tx(&mut *conn, &payment.merchant_order_no).await?
     else {
         return Err(ApplyError::Conflict);
     };
@@ -248,14 +181,8 @@ pub async fn apply_payment(
     }
 
     // 回调幂等：同渠道交易号必须同摘要（旧版 PaymentCallbackDigestRecord）。
-    let previous: Option<(String,)> = sqlx::query_as(
-        "SELECT `request_digest` FROM `payment_callback_idempotent` \
-         WHERE `wechat_transaction_id` = ?",
-    )
-    .bind(&payment.transaction_id)
-    .fetch_optional(&mut *conn)
-    .await?;
-    if let Some((previous_digest,)) = &previous
+    let previous = find_callback_digest(&mut *conn, &payment.transaction_id).await?;
+    if let Some(previous_digest) = &previous
         && previous_digest != &digest
     {
         return Err(ApplyError::Conflict);
@@ -272,12 +199,7 @@ pub async fn apply_payment(
         }
         // 迟到退款登记后的重放：意图仍 refund_required → 原样返回。
         if intent_order_id.is_none() {
-            let current_status: PaymentIntentStatus = sqlx::query_scalar(
-                "SELECT `status` FROM `charge_payment_intent` WHERE `intent_id` = ?",
-            )
-            .bind(&intent_id)
-            .fetch_one(&mut *conn)
-            .await?;
+            let current_status = repo::intent_status_tx(&mut *conn, &intent_id).await?;
             if current_status == PaymentIntentStatus::RefundRequired {
                 tx.commit().await?;
                 return Ok(ApplyResult {
@@ -289,13 +211,7 @@ pub async fn apply_payment(
             return Err(ApplyError::Conflict);
         }
         let charge_order_id = biz_id;
-        let order_no: String = sqlx::query_scalar(
-            "SELECT `order_no` FROM `charge_order` WHERE `id` = ? AND `payment_order_id` = ?",
-        )
-        .bind(charge_order_id as i64)
-        .bind(order_id as i64)
-        .fetch_one(&mut *conn)
-        .await?;
+        let order_no = repo::charge_order_no_tx(&mut *conn, charge_order_id, order_id).await?;
         tx.commit().await?;
         return Ok(ApplyResult {
             charge_order_id,
@@ -308,31 +224,18 @@ pub async fn apply_payment(
     if order_status != PaymentOrderStatus::Initiated || biz_id != 0 || previous.is_some() {
         return Err(ApplyError::Conflict);
     }
-    sqlx::query(
-        "INSERT INTO `payment_callback_idempotent` (`wechat_transaction_id`, `request_digest`) VALUES (?, ?)",
-    )
-    .bind(&payment.transaction_id)
-    .bind(&digest)
-    .execute(&mut *conn)
-    .await?;
+    insert_callback_digest_tx(&mut *conn, &payment.transaction_id, &digest).await?;
 
     // 条件更新到 paid：并发竞争失败即冲突（旧版 RowsAffected == 1）。
-    let updated = sqlx::query(
-        "UPDATE `payment_order` SET `status` = ?, `paid_cents` = ?, \
-         `wechat_transaction_id` = ?, `paid_at` = ? \
-         WHERE `id` = ? AND `order_no` = ? AND `status` = ? AND `total_cents` = ? AND `paid_cents` = 0",
+    let updated = repo::mark_charge_order_paid_tx(
+        &mut *conn,
+        order_id,
+        &payment.merchant_order_no,
+        payment.paid_cents,
+        &payment.transaction_id,
+        paid_at,
     )
-    .bind(PaymentOrderStatus::Paid)
-    .bind(payment.paid_cents)
-    .bind(&payment.transaction_id)
-    .bind(paid_at)
-    .bind(order_id as i64)
-    .bind(&payment.merchant_order_no)
-    .bind(PaymentOrderStatus::Initiated)
-    .bind(payment.paid_cents)
-    .execute(&mut *conn)
-    .await?
-    .rows_affected();
+    .await?;
     if updated != 1 {
         return Err(ApplyError::Conflict);
     }
@@ -345,35 +248,20 @@ pub async fn apply_payment(
     );
     if late {
         // 意图 → refund_required；退款编号由摘要稳定派生，失败整体回滚。
-        let intent_updated = sqlx::query(
-            "UPDATE `charge_payment_intent` SET `status` = ? \
-             WHERE `intent_id` = ? AND `status` = ? AND `charge_order_id` IS NULL",
-        )
-        .bind(PaymentIntentStatus::RefundRequired)
-        .bind(&intent_id)
-        .bind(PaymentIntentStatus::Initiated)
-        .execute(&mut *conn)
-        .await?
-        .rows_affected();
+        let intent_updated = repo::mark_intent_refund_required_tx(&mut *conn, &intent_id).await?;
         if intent_updated != 1 {
             return Err(ApplyError::Conflict);
         }
-        let refund_no = super::apply::late_refund_no(&digest);
-        sqlx::query(
-            "INSERT INTO `refund_record` (`refund_no`, `payment_order_id`, `user_id`, `biz_type`, \
-             `biz_id`, `refund_cents`, `reason`, `status`, `execution_policy`, `created_month`) \
-             VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)",
+        let refund_no = late_refund_no(&digest);
+        repo::insert_late_refund_tx(
+            &mut *conn,
+            &refund_no,
+            order_id,
+            order_user,
+            payment.paid_cents,
+            "支付迟到，自动原路退款",
+            chargepilot_mod_order::month_start_of(now),
         )
-        .bind(&refund_no)
-        .bind(order_id as i64)
-        .bind(order_user)
-        .bind(BizType::Charge)
-        .bind(payment.paid_cents)
-        .bind("支付迟到，自动原路退款")
-        .bind(chargepilot_domain::money::RefundStatus::Pending)
-        .bind(chargepilot_domain::money::ExecutionPolicy::Automatic)
-        .bind(chargepilot_mod_order::month_start_of(now))
-        .execute(&mut *conn)
         .await?;
         let event_id = format!("P{}", &digest[..32.min(digest.len())]);
         chargepilot_mod_order::append_domain_event_tx(
@@ -414,16 +302,8 @@ pub async fn apply_payment(
     }
 
     // 支付确认到账：创建充电订单（paid）并冻结快照（旧版首段）。
-    let device_id: String =
-        sqlx::query_scalar("SELECT `device_id` FROM `charge_payment_intent` WHERE `intent_id` = ?")
-            .bind(&intent_id)
-            .fetch_one(&mut *conn)
-            .await?;
-    let port_no: u8 =
-        sqlx::query_scalar("SELECT `port_no` FROM `charge_payment_intent` WHERE `intent_id` = ?")
-            .bind(&intent_id)
-            .fetch_one(&mut *conn)
-            .await?;
+    let device_id = repo::intent_device_id_tx(&mut *conn, &intent_id).await?;
+    let port_no = repo::intent_port_no_tx(&mut *conn, &intent_id).await?;
     let charge_no = chargepilot_mod_order::new_charge_order_no_tx(
         &mut *conn,
         payment.paid_at_unix_micros,
@@ -449,12 +329,7 @@ pub async fn apply_payment(
     let charge_order_id = chargepilot_mod_order::create_paid_in_tx(&mut *conn, &draft)
         .await
         .map_err(|e| ApplyError::Storage(e.to_string()))?;
-    let snapshot_json: String = sqlx::query_scalar(
-        "SELECT CAST(`pricing_snapshot` AS CHAR) FROM `charge_payment_intent` WHERE `intent_id` = ?",
-    )
-    .bind(&intent_id)
-    .fetch_one(&mut *conn)
-    .await?;
+    let snapshot_json = repo::intent_snapshot_tx(&mut *conn, &intent_id).await?;
     chargepilot_mod_order::freeze_pricing_in_tx(
         &mut *conn,
         charge_order_id,
@@ -467,30 +342,11 @@ pub async fn apply_payment(
     .await
     .map_err(|e| ApplyError::Storage(e.to_string()))?;
     // 绑定业务 ID 与意图（条件更新，RowsAffected == 1）。
-    let bound = sqlx::query(
-        "UPDATE `payment_order` SET `biz_id` = ? WHERE `id` = ? AND `biz_id` = 0 AND `status` = ?",
-    )
-    .bind(charge_order_id as i64)
-    .bind(order_id as i64)
-    .bind(PaymentOrderStatus::Paid)
-    .execute(&mut *conn)
-    .await?
-    .rows_affected();
+    let bound = repo::bind_charge_order_tx(&mut *conn, order_id, charge_order_id).await?;
     if bound != 1 {
         return Err(ApplyError::Conflict);
     }
-    let paid = sqlx::query(
-        "UPDATE `charge_payment_intent` SET `status` = ?, `paid_at` = ?, `charge_order_id` = ? \
-         WHERE `intent_id` = ? AND `status` = ? AND `charge_order_id` IS NULL",
-    )
-    .bind(PaymentIntentStatus::Paid)
-    .bind(paid_at)
-    .bind(charge_order_id as i64)
-    .bind(&intent_id)
-    .bind(PaymentIntentStatus::Initiated)
-    .execute(&mut *conn)
-    .await?
-    .rows_affected();
+    let paid = repo::mark_intent_paid_tx(&mut *conn, &intent_id, paid_at, charge_order_id).await?;
     if paid != 1 {
         return Err(ApplyError::Conflict);
     }

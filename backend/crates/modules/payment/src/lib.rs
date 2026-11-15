@@ -12,19 +12,16 @@
 
 pub use error::{ApplyError, CardFundingConflict, CheckoutError, ScanError, SimulationError};
 
-pub mod apply;
-pub mod card_funding;
-pub mod channel;
-pub mod checkout;
 pub mod error;
-pub mod recharge_bridge;
-pub mod scan;
-pub mod simulation;
-pub mod sources;
-pub mod wechat;
-#[cfg(test)]
-mod wechat_test;
+pub mod repo;
+pub mod service;
+
+// 表访问模块（card_funding/sources 本身即原语形态，随 repo/ 归位）。
+pub use repo::{card_funding, sources};
+
+// 业务用例与渠道适配（顶级模块路径保持既有外部引用）。
+pub use service::{apply, channel, checkout, recharge_bridge, scan, simulation, wechat};
 
 pub use channel::{PayMode, PayProvider, PrepayParams, PrepayRequest};
 pub use checkout::{CheckoutInput, CheckoutOffers, CheckoutResult, CheckoutService};
-pub use scan::{PortScanner, ScanResult};
+pub use scan::{PortScanner, ScanPort, ScanResult};
