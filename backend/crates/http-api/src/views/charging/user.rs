@@ -1,6 +1,7 @@
 //! 充电域用户端门面（票 18 冷区批：原 user_charging.rs 归位）。
 
-use crate::state::{ApiDeps, ChargingStopState, UserSessionBase};
+use crate::state::{ApiDeps, ChargingStopState};
+use crate::user_guard::UserGuard;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
@@ -156,14 +157,10 @@ struct HistoryQuery {
 /// 充电中订单（旧版 ongoing：无记录输出空状态，不报错）。
 async fn charge_ongoing(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
 ) -> Response {
     let rid = httpx::request_id_from(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(u) => u,
-        Err(resp) => return resp,
-    };
     match user_query::ongoing_order(&deps.db, uid).await {
         Ok(Some(r)) => httpx::ok(
             json!({
@@ -184,15 +181,11 @@ async fn charge_ongoing(
 /// 历史订单分页（旧版 history：状态词表校验 + 费用批量回填）。
 async fn charge_history(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Query(q): Query<HistoryQuery>,
 ) -> Response {
     let rid = httpx::request_id_from(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(u) => u,
-        Err(resp) => return resp,
-    };
     // 旧版 ReadPaging：page 默认 1 上限 100000，page_size 默认 20 上限 100。
     let page = q.page.unwrap_or(1);
     let size = q.page_size.unwrap_or(20);
@@ -235,15 +228,11 @@ async fn charge_history(
 /// 订单详情（旧版 Detail：base + 支付摘要 + 退款列表）。
 async fn charge_detail(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Path(order_no): Path<String>,
 ) -> Response {
     let rid = httpx::request_id_from(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(u) => u,
-        Err(resp) => return resp,
-    };
     let row = match resolve_or_fail(&deps, uid, &order_no).await {
         Ok(r) => r,
         Err(f) => return query_failure(f, &rid),
@@ -270,15 +259,11 @@ async fn charge_detail(
 /// 实时快照（旧版 Snapshot：轮询提示 + 两分钟窗口观测 + 估费提示）。
 async fn charge_snapshot(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Query(q): Query<OrderNoQuery>,
 ) -> Response {
     let rid = httpx::request_id_from(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(u) => u,
-        Err(resp) => return resp,
-    };
     let row = match resolve_or_fail(&deps, uid, &order_param(&q.order_id, &q.order_no)).await {
         Ok(r) => r,
         Err(f) => return query_failure(f, &rid),
@@ -375,15 +360,11 @@ async fn build_snapshot(deps: &ApiDeps, row: &OrderRecord) -> Result<Value, sqlx
 /// 实时曲线窗口（旧版 Curve：last_30min/last_2h/last_24h）。
 async fn charge_curve(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Query(q): Query<WindowQuery>,
 ) -> Response {
     let rid = httpx::request_id_from(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(u) => u,
-        Err(resp) => return resp,
-    };
     let row = match resolve_or_fail(&deps, uid, &order_param(&q.order_id, &q.order_no)).await {
         Ok(r) => r,
         Err(f) => return query_failure(f, &rid),
@@ -434,16 +415,12 @@ async fn charge_curve(
 /// 历史曲线（旧版 HistoricalCurve：聚合粒度与点数校验 + 摘要）。
 async fn charge_history_curve(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Path(order_no): Path<String>,
     Query(q): Query<GranularityQuery>,
 ) -> Response {
     let rid = httpx::request_id_from(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(u) => u,
-        Err(resp) => return resp,
-    };
     let row = match resolve_or_fail(&deps, uid, &order_no).await {
         Ok(r) => r,
         Err(f) => return query_failure(f, &rid),
@@ -513,15 +490,17 @@ async fn charge_history_curve(
 async fn user_stop(
     State(st): State<ChargingStopState>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Path(order_no): Path<String>,
 ) -> Response {
-    run_stop(&st, &headers, &order_no).await
+    run_stop(&st, &headers, uid, &order_no).await
 }
 
 /// 旧版请求体形状：POST /charge/stop，体 {order_no}（必填、最长 64）。
 async fn user_stop_body(
     State(st): State<ChargingStopState>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = httpx::request_id_from(&headers);
@@ -536,18 +515,20 @@ async fn user_stop_body(
     if order_no.is_empty() || order_no.len() > 64 {
         return crate::respond(400, Code::BadRequest as i64, "invalid order number", &rid);
     }
-    run_stop(&st, &headers, &order_no).await
+    run_stop(&st, &headers, uid, &order_no).await
 }
 
 /// 停止链：归属校验 + 计费截止冻结 + 停止命令下发。
-/// 域服务经 ChargingStopState 必达（票 17：路由注册绑定装配开关）。
-async fn run_stop(st: &ChargingStopState, headers: &HeaderMap, order_no: &str) -> Response {
+/// 域服务经 ChargingStopState 必达（票 17：路由注册绑定装配开关）；
+/// 会话鉴权由调用方提取器完成，本函数只消费 user_id。
+async fn run_stop(
+    st: &ChargingStopState,
+    headers: &HeaderMap,
+    uid: u64,
+    order_no: &str,
+) -> Response {
     let rid = httpx::request_id_from(headers);
     let stop = &st.stop;
-    let uid = match crate::user_guard::user_id_from(&st.base, headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     match stop.stop(order_no, uid).await {
         Ok(active) => httpx::ok(
             json!({

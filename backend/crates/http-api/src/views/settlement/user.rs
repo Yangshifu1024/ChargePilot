@@ -6,7 +6,8 @@
 //! 挂载行：.merge(user_settlement::router())
 //! （lib.rs build_router 中与其余 user 路由并列；模块声明 pub mod user_settlement;）
 
-use crate::state::{ApiDeps, UserSessionBase};
+use crate::state::ApiDeps;
+use crate::user_guard::UserGuard;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
@@ -67,15 +68,11 @@ fn bill_id_of(raw: &str, rid: &str) -> Result<u64, Response> {
 /// GET /api/v1/user/bills：分页返回当前用户的账单。
 async fn bill_list(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Query(q): Query<Paging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let (page, size) = paging(&q);
     match chargepilot_mod_settlement::bill::list_user_bills(&deps.db, uid, page, size).await {
         Ok((items, total)) => httpx::ok(
@@ -97,15 +94,11 @@ async fn bill_list(
 /// GET /api/v1/user/bills/:id：按账单 ID 与当前用户查询详情；越权与不存在统一 404。
 async fn bill_detail(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Path(id): Path<String>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let bill_id = match bill_id_of(&id, &rid) {
         Ok(v) => v,
         Err(resp) => return resp,
@@ -123,15 +116,11 @@ async fn bill_detail(
 /// POST /api/v1/user/bills/:id/read：幂等已读标记；查不到 404，保存失败 503。
 async fn bill_mark_read(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Path(id): Path<String>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let bill_id = match bill_id_of(&id, &rid) {
         Ok(v) => v,
         Err(resp) => return resp,
@@ -169,15 +158,11 @@ struct InvoiceApplyBody {
 /// 错误映射对齐旧版 applyInvoice 的字面量契约（状态码、业务码与文案）。
 async fn invoice_apply(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     body: Option<axum::Json<InvoiceApplyBody>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let Some(axum::Json(body)) = body else {
         return crate::respond(400, Code::BadRequest as i64, "发票申请无效", &rid);
     };
@@ -276,15 +261,11 @@ fn invoice_error(e: &UserInvoiceError, rid: &str) -> Response {
 /// GET /api/v1/user/invoice/my：分页返回当前用户的发票申请。
 async fn invoice_my(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Query(q): Query<Paging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let (page, size) = paging(&q);
     match user_invoice::list_user_invoices(&deps.db, uid, page, size).await {
         Ok((items, total)) => httpx::ok(

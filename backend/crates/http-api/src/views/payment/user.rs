@@ -1,6 +1,7 @@
 //! 支付域用户端门面（票 18 冷区批：原 user_payment.rs 归位）。
 
-use crate::state::{ApiDeps, PaymentState, UserSessionBase};
+use crate::state::{ApiDeps, PaymentState};
+use crate::user_guard::UserGuard;
 use axum::Json as AxumJson;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -81,14 +82,11 @@ struct StartBody {
 async fn payment_start(
     State(st): State<PaymentState>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     AxumJson(body): AxumJson<StartBody>,
 ) -> Response {
     let rid = rid_of(&headers);
     let checkout = &st.checkout;
-    let uid = match crate::user_guard::user_id_from(&st.base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let input = chargepilot_mod_payment::checkout::CheckoutInput {
         client_request_id: body.client_request_id,
         port_code: body.port_code,
@@ -114,18 +112,14 @@ struct ConfirmBody {
 /// 模拟确认当前用户的支付（旧版 DevelopmentAPI.confirm；走支付成功事务）。
 async fn payment_simulation_confirm(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     AxumJson(body): AxumJson<ConfirmBody>,
 ) -> Response {
     let rid = rid_of(&headers);
     if !deps.simulation_payment {
         return crate::respond(404, Code::NotFound as i64, "未开放模拟支付", &rid);
     }
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     if body.merchant_order_no.is_empty() || body.merchant_order_no.len() > 64 {
         return crate::respond(400, Code::BadRequest as i64, "请求参数无效", &rid);
     }
@@ -162,14 +156,11 @@ struct RechargeBody {
 async fn wallet_recharge(
     State(st): State<PaymentState>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     AxumJson(body): AxumJson<RechargeBody>,
 ) -> Response {
     let rid = rid_of(&headers);
     let recharge = &st.wallet_recharge;
-    let uid = match crate::user_guard::user_id_from(&st.base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let input = chargepilot_mod_wallet::recharge::RechargeInput {
         request_id: body.request_id,
         amount_cents: body.amount_cents,

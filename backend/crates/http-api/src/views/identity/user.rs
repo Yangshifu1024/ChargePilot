@@ -3,7 +3,8 @@
 //! C 端身份路由（路径与响应形状为前端契约，逐字节对齐旧版）：
 //! POST /api/v1/user/auth/login | refresh | logout，GET /api/v1/user/profile。
 
-use crate::state::{ApiDeps, UserSessionBase};
+use crate::state::ApiDeps;
+use crate::user_guard::UserGuard;
 use crate::{bearer, identity_error, respond};
 use axum::Json as AxumJson;
 use axum::extract::State;
@@ -201,15 +202,11 @@ struct PhoneBody {
 /// 绑定手机号：成功只返回掩码（旧版 PhoneAPI.bind）。
 async fn phone_bind(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     body: Option<AxumJson<PhoneBody>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     // 严格 JSON 输入：缺失或类型不符按请求无效处理（旧版 ShouldBindJSON）。
     let Some(AxumJson(body)) = body else {
         return crate::respond(400, Code::BadRequest as i64, "手机号请求无效", &rid);
@@ -227,14 +224,10 @@ async fn phone_bind(
 /// 解除手机号绑定（旧版 PhoneAPI.unbind；重复解绑同样成功）。
 async fn phone_unbind(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     match phone::unbind(&deps.db, uid).await {
         Ok(()) => httpx::ok(json!({"bound": false, "unbound": true}), &rid),
         Err(e) => phone_error(e, &rid),

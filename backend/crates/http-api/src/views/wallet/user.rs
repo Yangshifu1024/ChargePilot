@@ -1,6 +1,7 @@
 //! 钱包域用户端门面（票 18 冷区批：原 user_wallet.rs 归位）。
 
-use crate::state::{ApiDeps, UserSessionBase, WalletState};
+use crate::state::{ApiDeps, WalletState};
+use crate::user_guard::UserGuard;
 use axum::Json as AxumJson;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
@@ -58,14 +59,10 @@ fn paging(q: &Paging) -> (u32, u32) {
 
 async fn wallet_balance(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     match chargepilot_mod_wallet::query::balance(&deps.db, uid).await {
         Ok(v) => httpx::ok(serde_json::to_value(v).unwrap_or(json!(null)), &rid),
         Err(e) => crate::errormap::wallet_error(e, &rid),
@@ -74,15 +71,11 @@ async fn wallet_balance(
 
 async fn wallet_txns(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Query(q): Query<Paging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let (page, size) = paging(&q);
     let direction = q.direction.as_deref().filter(|d| !d.is_empty());
     match chargepilot_mod_wallet::query::transactions(&deps.db, uid, direction, page, size).await {
@@ -96,15 +89,11 @@ async fn wallet_txns(
 
 async fn wallet_recharges(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Query(q): Query<Paging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let (page, size) = paging(&q);
     match chargepilot_mod_wallet::query::recharges(&deps.db, uid, page, size, chrono::Utc::now())
         .await
@@ -119,15 +108,11 @@ async fn wallet_recharges(
 
 async fn wallet_refunds(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Query(q): Query<Paging>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let (page, size) = paging(&q);
     match chargepilot_mod_wallet::query::refunds(&deps.db, uid, page, size).await {
         Ok(p) => httpx::ok(
@@ -150,13 +135,10 @@ struct RefundBody {
 async fn wallet_refund(
     State(st): State<WalletState>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     AxumJson(body): AxumJson<RefundBody>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&st.base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let wallet = &st.wallet;
     let input = chargepilot_mod_wallet::refund::RefundInput {
         request_id: body.request_id,

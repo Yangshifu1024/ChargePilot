@@ -4,7 +4,8 @@
 //! 路径、码值与文案逐字对齐旧版（internal/http/user/identity/phone.go、
 //! card/api.go、order/feedback.go）。
 
-use crate::state::{ApiDeps, UserSessionBase};
+use crate::state::ApiDeps;
+use crate::user_guard::UserGuard;
 use axum::Json as AxumJson;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -22,16 +23,12 @@ fn rid_of(headers: &HeaderMap) -> String {
 
 async fn feedback_submit(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Path(order_id): Path<String>,
     body: Option<AxumJson<FeedbackSubmitInput>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let oid =
         match chargepilot_mod_order::feedback::resolve_reference(&deps.db, uid, &order_id).await {
             Ok(id) => id,

@@ -1,6 +1,7 @@
 //! 营销域用户端门面（票 18 冷区批：原 user_marketing.rs 归位）。
 
-use crate::state::{ApiDeps, UserSessionBase};
+use crate::state::ApiDeps;
+use crate::user_guard::UserGuard;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
@@ -48,15 +49,11 @@ struct MyCouponQuery {
 
 async fn my_coupons(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Query(q): Query<MyCouponQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     match mine(
         &deps.db,
         uid,
@@ -78,14 +75,10 @@ async fn my_coupons(
 
 async fn list_available(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     match available(&deps.db, uid).await {
         Ok(items) => httpx::ok(json!({"items": items}), &rid),
         Err(e) => query_error(e, &rid),

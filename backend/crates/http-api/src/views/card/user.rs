@@ -2,7 +2,8 @@
 //!
 //! 在线卡 C 端仅可写 lost/unbound（旧版 card/api.go 语义）。
 
-use crate::state::{ApiDeps, UserSessionBase};
+use crate::state::ApiDeps;
+use crate::user_guard::UserGuard;
 use axum::Json as AxumJson;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -19,14 +20,10 @@ fn rid_of(headers: &HeaderMap) -> String {
 
 async fn cards(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     match chargepilot_mod_card::user_card::list(&deps.db, uid).await {
         Ok(items) => httpx::ok(json!({"items": items}), &rid),
         Err(e) => {
@@ -45,16 +42,12 @@ struct CardStatusBody {
 /// 挂失或解绑本人卡（旧版 card.API.cardStatus；C 端仅可写 lost/unbound）。
 async fn card_status(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(uid): UserGuard,
     Path(card_no): Path<String>,
     body: Option<AxumJson<CardStatusBody>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let uid = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let status = body.and_then(|b| b.0.status).unwrap_or_default();
     match chargepilot_mod_card::user_card::change_status(&deps.db, uid, &card_no, &status).await {
         Ok(()) => httpx::ok(json!({"status": status}), &rid),

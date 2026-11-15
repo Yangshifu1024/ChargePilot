@@ -3,7 +3,8 @@
 //! 后台路由：设备管理、导入、故障工单、告警认领；
 //! C 端路由：故障提交/查询、站点附近/详情（无需登录的部分公开）。
 
-use crate::state::{ApiDeps, UserSessionBase};
+use crate::state::ApiDeps;
+use crate::user_guard::UserGuard;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
@@ -98,15 +99,11 @@ async fn station_detail(
 
 async fn report_fault(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(user_id): UserGuard,
     body: Option<axum::Json<Value>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let user_id = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(u) => u,
-        Err(resp) => return resp,
-    };
     let Some(v) = body.map(|b| b.0) else {
         return crate::respond(400, Code::BadRequest as i64, "请提供报修信息", &rid);
     };
@@ -137,15 +134,11 @@ struct MyFaultQuery {
 
 async fn my_faults(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(user_id): UserGuard,
     Query(q): Query<MyFaultQuery>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let user_id = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(u) => u,
-        Err(resp) => return resp,
-    };
     let page = q.page.unwrap_or(1).max(1);
     let size = q.page_size.unwrap_or(20).clamp(1, 100);
     match fault::list_mine(&deps.db, user_id, page, size).await {
@@ -156,15 +149,11 @@ async fn my_faults(
 
 async fn my_fault_history(
     State(deps): State<Arc<ApiDeps>>,
-    State(base): State<UserSessionBase>,
     headers: HeaderMap,
+    UserGuard(user_id): UserGuard,
     Path(id): Path<u64>,
 ) -> Response {
     let rid = rid_of(&headers);
-    let user_id = match crate::user_guard::user_id_from(&base, &headers).await {
-        Ok(u) => u,
-        Err(resp) => return resp,
-    };
     match fault::my_history(&deps.db, user_id, id).await {
         Ok(items) => httpx::ok(json!({"items": items}), &rid),
         Err(e) => device_error(e, &rid),
