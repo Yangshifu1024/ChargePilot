@@ -9,17 +9,22 @@
 //! 同事务完成扣款、订单/意图/快照写入与出站事件；拒绝统一 409/2009 语义
 //! （阶段 06 网关适配器映射协议拒绝码）。
 //! 锁序：卡 → 钱包 → 会话 → 订单（旧版一致；与退款预占的 钱包→支付 异径）。
+//!
+//! 组织（蓝图第五章）：service/ 业务用例，repo/ 表访问；既有顶级模块路径
+//! （admin/swipe/user_card）经 re-export 保持，SQL 只出现在 repo/。
 
 pub use error::{CardAdminError, SwipeError, UserCardError};
 
-pub mod admin;
 pub mod error;
 pub mod repo;
-pub mod swipe;
-pub mod user_card;
+pub mod service;
 
-pub use repo::{CardChargeRow, CardOperationRow, active_session_count, find_card_charge};
-pub use swipe::{
-    CardOperationResult, SwipeInput, SwipeService, card_charge_port_release_tx,
-    confirm_start_operation_tx, fail_start_operation_tx,
+pub use service::{admin, swipe, user_card};
+
+pub use repo::swipe::{
+    card_charge_port_release_tx, confirm_start_operation_tx, fail_start_operation_tx,
 };
+pub use repo::{
+    CardChargeRow, CardOperationRow, active_session_count, find_card_charge, find_online_card,
+};
+pub use service::swipe::{CardOperationResult, SwipeInput, SwipeService};

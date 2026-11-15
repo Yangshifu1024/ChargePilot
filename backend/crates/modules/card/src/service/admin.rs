@@ -1,12 +1,14 @@
 //! 运营后台在线卡管理：列表、核验绑定与状态变更（旧版 card/admin.go +
 //! card_admin_repo.go 对齐）。绑定与状态变更都是事务：先校验用户，
 //! 再以卡号唯一键创建或行锁核对归属；状态写入与审计同事务提交，
-//! 失败整体回滚。卡绑定用户而不绑定站点，不迁移钱包余额。
+//! 失败整体回滚。卡绑定用户而不绑定站点，不迁移钱包余额。SQL 在 repo/admin.rs。
 
 use crate::error::CardAdminError;
+use crate::repo::{admin as card_repo, set_card_status_tx, set_read_committed};
 use chargepilot_mod_ops::Profile;
-use serde::Serialize;
-use sqlx::{Acquire, MySqlConnection, MySqlPool};
+use sqlx::{Acquire, MySqlPool};
+
+pub use crate::repo::admin::OnlineCard;
 
 /// 卡号长度上限（旧版 money.MaxPANLength；数据库列长 64 不放宽业务校验）。
 const MAX_CARD_NO_LEN: usize = 19;
@@ -16,18 +18,6 @@ pub const ALREADY_BOUND: &str = "卡已绑定，须先由原用户解绑";
 
 /// 裸业务冲突文案（旧版 operations.ErrConflict.Error()，随 409 透出）。
 const CONFLICT_PLAIN: &str = "当前记录状态不允许此操作，请刷新后重试";
-
-/// 在线卡行（旧版 OnlineCard 的 JSON 契约：id 数字、user_id 十进制字符串）。
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
-pub struct OnlineCard {
-    pub id: u64,
-    /// 绑定卡号的规范十进制文本（ascii_bin 列读侧 CAST AS CHAR）。
-    pub card_no: String,
-    /// 绑定用户主键，响应按十进制字符串传输（旧版 `,string`）。
-    pub user_id: String,
-    /// online_card.status：active/lost/disabled/unbound。
-    pub status: String,
-}
 
 /// 校验规范卡号：1–19 位十进制、拒绝前导零（旧版 money.CanonicalCardNumber）。
 fn canonical_card_number(card: &str) -> bool {
@@ -64,67 +54,7 @@ pub async fn list_cards(
     actor: &Profile,
 ) -> Result<Vec<OnlineCard>, CardAdminError> {
     require_read(actor)?;
-    let rows = sqlx::query_as::<_, OnlineCard>(
-        "SELECT `id`, CAST(`card_no` AS CHAR) AS `card_no`, \
-                CAST(`user_id` AS CHAR) AS `user_id`, CAST(`status` AS CHAR) AS `status` \
-         FROM `online_card` ORDER BY `id` DESC LIMIT 500",
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows)
-}
-
-/// 事务内确认绑定目标用户未删除且启用（旧版 identity.RequireActiveUserInTx 语义）；
-/// 不符合时返回 NotFound（旧版经 gorm.ErrRecordNotFound 映射 404）。
-async fn require_active_user_tx(
-    conn: &mut MySqlConnection,
-    user_id: u64,
-) -> Result<(), CardAdminError> {
-    // id 列为 BIGINT UNSIGNED，读侧按 u64 解码。
-    let found: Option<u64> = sqlx::query_scalar(
-        "SELECT `id` FROM `user` WHERE `id` = ? AND `status` = 'active' AND `deleted_at` IS NULL",
-    )
-    .bind(user_id as i64)
-    .fetch_optional(conn)
-    .await?;
-    match found {
-        Some(_) => Ok(()),
-        None => Err(CardAdminError::NotFound),
-    }
-}
-
-/// 在已锁卡的连接中更新归属并回到 active（旧版 BindOnlineCard）。
-async fn bind_online_card_tx(
-    conn: &mut MySqlConnection,
-    id: u64,
-    user_id: u64,
-) -> Result<(), CardAdminError> {
-    sqlx::query("UPDATE `online_card` SET `user_id` = ?, `status` = 'active' WHERE `id` = ?")
-        .bind(user_id as i64)
-        .bind(id as i64)
-        .execute(&mut *conn)
-        .await?;
-    Ok(())
-}
-
-/// 在调用方事务中保存一条卡审计（旧版 AppendOnlineCardAudit）；失败随事务回滚。
-async fn append_audit_tx(
-    conn: &mut MySqlConnection,
-    card_id: u64,
-    actor_id: u64,
-    action: &str,
-    detail: &str,
-) -> Result<(), CardAdminError> {
-    sqlx::query(
-        "INSERT INTO `online_card_audit` (`card_id`, `actor_id`, `action`, `detail`) VALUES (?, ?, ?, ?)",
-    )
-    .bind(card_id as i64)
-    .bind(actor_id as i64)
-    .bind(action)
-    .bind(detail)
-    .execute(&mut *conn)
-    .await?;
-    Ok(())
+    Ok(card_repo::admin_card_rows(pool).await?)
 }
 
 /// 核验绑定（旧版 Bind）：先校验用户，再通过卡号唯一键创建或加锁核对归属；
@@ -143,32 +73,19 @@ pub async fn bind_card(
         return Err(CardAdminError::Input);
     }
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await?;
+    set_read_committed(&mut conn).await?;
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
-    require_active_user_tx(c, user_id).await?;
-    // 唯一键首次绑定：重复键不改归属（旧版 ClaimBindingInTx 的 INSERT IGNORE），
-    // 避免对缺失卡先取间隙锁后并发插入的死锁。
-    let created = sqlx::query(
-        "INSERT IGNORE INTO `online_card` (`card_no`, `user_id`, `status`) VALUES (?, ?, 'active')",
-    )
-    .bind(card_no)
-    .bind(user_id as i64)
-    .execute(&mut *c)
-    .await?
-    .rows_affected()
-        == 1;
+    // 事务内确认绑定目标用户未删除且启用（旧版 identity.RequireActiveUserInTx
+    // 语义；不符合时返回 NotFound，旧版经 gorm.ErrRecordNotFound 映射 404）。
+    if card_repo::active_user_id_tx(c, user_id).await?.is_none() {
+        return Err(CardAdminError::NotFound);
+    }
+    let created = card_repo::insert_ignore_card_tx(c, card_no, user_id).await?;
     // 行锁核对归属（旧版 LockCardByNo）：首次绑定也已插行，缺失即存储异常。
-    let row: Option<(u64, u64, chargepilot_domain::card::CardStatus)> = sqlx::query_as(
-        "SELECT `id`, `user_id`, `status` FROM `online_card` \
-         WHERE `card_no` = ? FOR UPDATE",
-    )
-    .bind(card_no)
-    .fetch_optional(&mut *c)
-    .await?;
-    let (id, locked_user, status) = row.ok_or(CardAdminError::NotFound)?;
+    let (id, locked_user, status) = card_repo::lock_card_by_no_tx(c, card_no)
+        .await?
+        .ok_or(CardAdminError::NotFound)?;
     if !created {
         if status != chargepilot_domain::card::CardStatus::Unbound {
             if locked_user == user_id && status == chargepilot_domain::card::CardStatus::Active {
@@ -180,9 +97,9 @@ pub async fn bind_card(
             return Err(CardAdminError::Conflict(ALREADY_BOUND.to_string()));
         }
         // 已解绑卡重新绑定原用户或新用户。
-        bind_online_card_tx(c, id, user_id).await?;
+        card_repo::bind_online_card_tx(c, id, user_id).await?;
     }
-    append_audit_tx(c, id, actor.id, "bind", reason).await?;
+    card_repo::append_audit_tx(c, id, actor.id, "bind", reason).await?;
     tx.commit().await?;
     Ok(id)
 }
@@ -202,27 +119,17 @@ pub async fn change_card_status(
         return Err(CardAdminError::Input);
     }
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await?;
+    set_read_committed(&mut conn).await?;
     let mut tx = conn.begin().await?;
-    let row: Option<(u64, String)> = sqlx::query_as(
-        "SELECT `id`, CAST(`status` AS CHAR) FROM `online_card` WHERE `id` = ? FOR UPDATE",
-    )
-    .bind(id as i64)
-    .fetch_optional(&mut *tx)
-    .await?;
-    let (_, current) = row.ok_or(CardAdminError::NotFound)?;
+    let (_, current) = card_repo::lock_card_status_tx(&mut tx, id)
+        .await?
+        .ok_or(CardAdminError::NotFound)?;
     if current == "unbound" && status != "unbound" {
         tx.rollback().await?;
         return Err(CardAdminError::Conflict(CONFLICT_PLAIN.to_string()));
     }
-    sqlx::query("UPDATE `online_card` SET `status` = ? WHERE `id` = ?")
-        .bind(status)
-        .bind(id as i64)
-        .execute(&mut *tx)
-        .await?;
-    append_audit_tx(&mut tx, id, actor.id, status, reason).await?;
+    set_card_status_tx(&mut tx, id, status).await?;
+    card_repo::append_audit_tx(&mut tx, id, actor.id, status, reason).await?;
     tx.commit().await?;
     Ok(())
 }

@@ -1,7 +1,33 @@
-//! 刷卡相关表的访问层（旧版 card_schema.go + card_repo.go 的读取部分）。
-//! 写入与资金由 swipe 用例在事务内编排，本模块只提供行模型与共享读取。
+//! 刷卡域表访问（蓝图第五章 repo 层）：SQL 只出现在本目录。写入与资金由
+//! swipe 用例在事务内编排，本文件只提供行模型与共享读取原语。
 
-use sqlx::{MySqlPool, Row};
+pub mod admin;
+pub mod swipe;
+pub mod user_card;
+
+use sqlx::{MySqlConnection, MySqlPool, Row};
+
+/// 连接级隔离级别设为 READ COMMITTED（写事务统一前置，后台与用户侧共用）。
+pub async fn set_read_committed(c: &mut MySqlConnection) -> Result<(), sqlx::Error> {
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        .execute(c)
+        .await?;
+    Ok(())
+}
+
+/// 写卡状态（后台运营与用户挂失/解绑共用，审计由各自事务追加）。
+pub async fn set_card_status_tx(
+    conn: &mut MySqlConnection,
+    id: u64,
+    status: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE `online_card` SET `status` = ? WHERE `id` = ?")
+        .bind(status)
+        .bind(id as i64)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
 
 /// 在线卡行（online_card）。
 #[derive(Debug, Clone)]
