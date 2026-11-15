@@ -3,6 +3,7 @@
 //! （charge 业务）订单创建 + 快照冻结 + 事件出站；钱包充值走钱包入账。
 //! 每一步幂等：重放同报文返回相同回执，不同报文报冲突。
 
+use crate::error::ApplyError;
 use chargepilot_domain::money::{BizType, PaymentOrderStatus};
 use chargepilot_domain::payment::{PaymentIntentStatus, is_late_payment};
 use sqlx::{Acquire, MySqlPool};
@@ -31,43 +32,6 @@ pub struct ApplyResult {
     pub replayed: bool,
     /// 迟到支付：只登记退款，不启动充电。
     pub refund_required: bool,
-}
-
-/// 支付处理错误。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ApplyError {
-    /// 报文与既有记录冲突或单据状态不允许（HTTP 409）。
-    Conflict,
-    /// 存储错误。
-    Storage(String),
-}
-
-impl std::fmt::Display for ApplyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ApplyError::Conflict => f.write_str("支付通知冲突"),
-            ApplyError::Storage(m) => write!(f, "支付处理存储错误: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for ApplyError {}
-
-impl From<sqlx::Error> for ApplyError {
-    fn from(e: sqlx::Error) -> Self {
-        ApplyError::Storage(e.to_string())
-    }
-}
-
-impl From<chargepilot_mod_wallet::WalletError> for ApplyError {
-    // WalletError 通配以防跨域新增变体静默漏配（wildcard_enum_match_arm）。
-    #[allow(clippy::wildcard_enum_match_arm)]
-    fn from(e: chargepilot_mod_wallet::WalletError) -> Self {
-        match e {
-            chargepilot_mod_wallet::WalletError::RequestConflict => ApplyError::Conflict,
-            other => ApplyError::Storage(other.to_string()),
-        }
-    }
 }
 
 /// 通知内容摘要（旧版 callbackDigest）：对关键字段拼接后 sha256。

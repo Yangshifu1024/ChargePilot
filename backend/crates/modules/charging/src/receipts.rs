@@ -2,6 +2,7 @@
 //! charging/finish/result_repo.go 对齐；本批覆盖微信支付路径，卡随批 6）。
 //! 幂等（红线）：同命令同内容重放静默确认，不同内容报冲突。
 
+use crate::error::ReceiptError;
 use chargepilot_domain::charging::actual::{EndMeter, same_segments};
 use sqlx::{Acquire, MySqlPool};
 
@@ -18,41 +19,6 @@ pub struct StartReceiptInput {
     pub success: bool,
     pub result_code: u8,
     pub occurred_at_unix_micros: i64,
-}
-
-/// 回执冲突（旧版 ErrStartResultConflict / ErrEndResultConflict）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReceiptError {
-    /// 回执与订单、启动回执或计量记录不符。
-    Conflict,
-    /// 存储错误。
-    Storage(String),
-}
-
-impl std::fmt::Display for ReceiptError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ReceiptError::Conflict => f.write_str("回执与订单状态不符"),
-            ReceiptError::Storage(m) => write!(f, "回执存储错误: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for ReceiptError {}
-
-impl From<sqlx::Error> for ReceiptError {
-    fn from(e: sqlx::Error) -> Self {
-        ReceiptError::Storage(e.to_string())
-    }
-}
-
-impl From<chargepilot_mod_order::OrderError> for ReceiptError {
-    fn from(e: chargepilot_mod_order::OrderError) -> Self {
-        match e {
-            chargepilot_mod_order::OrderError::NumberConflict => ReceiptError::Conflict,
-            other => ReceiptError::Storage(other.to_string()),
-        }
-    }
 }
 
 /// 应用启动回执（旧版 StartResultService.Apply，微信支付路径）。

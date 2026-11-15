@@ -203,11 +203,8 @@ async fn review_invoice(
 }
 
 /// 发票审核错误映射（旧版 AdminResourceFailure + asConflict 契约）。
-fn invoice_error(
-    e: chargepilot_mod_settlement::invoice_admin::InvoiceAdminError,
-    rid: &str,
-) -> Response {
-    use chargepilot_mod_settlement::invoice_admin::InvoiceAdminError as E;
+fn invoice_error(e: chargepilot_mod_settlement::InvoiceAdminError, rid: &str) -> Response {
+    use chargepilot_mod_settlement::InvoiceAdminError as E;
     match &e {
         E::Conflict => crate::respond(
             409,
@@ -544,8 +541,8 @@ async fn resolve_meter_amount(
 }
 
 /// 计量核实错误映射（旧版 meterFailure 文案契约）。
-fn meter_error(e: chargepilot_mod_settlement::meter_review::ReviewError, rid: &str) -> Response {
-    use chargepilot_mod_settlement::meter_review::ReviewError as E;
+fn meter_error(e: chargepilot_mod_settlement::ReviewError, rid: &str) -> Response {
+    use chargepilot_mod_settlement::ReviewError as E;
     match &e {
         E::Conflict => crate::respond(
             409,
@@ -860,24 +857,19 @@ async fn manual_refund(
             }),
             &rid,
         ),
-        Err(chargepilot_mod_settlement::refund_admin::RefundAdminError::NotSettled) => {
-            crate::respond(
-                409,
-                Code::StateConflict as i64,
-                "订单尚未完成费用结算，请结算后再申请退款",
-                &rid,
-            )
-        }
+        Err(chargepilot_mod_settlement::RefundAdminError::NotSettled) => crate::respond(
+            409,
+            Code::StateConflict as i64,
+            "订单尚未完成费用结算，请结算后再申请退款",
+            &rid,
+        ),
         Err(e) => refund_error(e, &rid),
     }
 }
 
 /// 退款错误映射（旧版 asConflict → ErrConflict 的 409 文案契约）。
-fn refund_error(
-    e: chargepilot_mod_settlement::refund_admin::RefundAdminError,
-    rid: &str,
-) -> Response {
-    use chargepilot_mod_settlement::refund_admin::RefundAdminError as E;
+fn refund_error(e: chargepilot_mod_settlement::RefundAdminError, rid: &str) -> Response {
+    use chargepilot_mod_settlement::RefundAdminError as E;
     match &e {
         E::Conflict => crate::respond(
             409,

@@ -298,10 +298,7 @@ async fn bill_issue_and_manual_refund_review() {
     )
     .await
     .expect_err("内容不同应冲突");
-    assert_eq!(
-        err,
-        chargepilot_mod_settlement::refund_admin::RefundAdminError::Conflict
-    );
+    assert_eq!(err, chargepilot_mod_settlement::RefundAdminError::Conflict);
 
     // 4. 双人审核：第一审 → awaiting_second；第二审（不同人）→ Approved 转 automatic。
     let r1 = chargepilot_mod_settlement::refund_admin::review_manual_refund(
@@ -333,10 +330,7 @@ async fn bill_issue_and_manual_refund_review() {
     )
     .await
     .expect_err("同人二审应冲突");
-    assert_eq!(
-        err,
-        chargepilot_mod_settlement::refund_admin::RefundAdminError::Conflict
-    );
+    assert_eq!(err, chargepilot_mod_settlement::RefundAdminError::Conflict);
     // 首审人权限失效冲突。
     let err = chargepilot_mod_settlement::refund_admin::review_manual_refund(
         db.as_ref(),
@@ -350,10 +344,7 @@ async fn bill_issue_and_manual_refund_review() {
     )
     .await
     .expect_err("首审人权限失效应冲突");
-    assert_eq!(
-        err,
-        chargepilot_mod_settlement::refund_admin::RefundAdminError::Conflict
-    );
+    assert_eq!(err, chargepilot_mod_settlement::RefundAdminError::Conflict);
     let r2 = chargepilot_mod_settlement::refund_admin::review_manual_refund(
         db.as_ref(),
         None,
@@ -478,10 +469,7 @@ async fn meter_review_and_manual_amount() {
     )
     .await
     .expect_err("已有人工金额且超限应冲突");
-    assert_eq!(
-        err,
-        chargepilot_mod_settlement::meter_review::ReviewError::Conflict
-    );
+    assert_eq!(err, chargepilot_mod_settlement::ReviewError::Conflict);
 
     cleanup(db.as_ref(), &[(order_b, payment_b, user_b, rule_b)]).await;
 }

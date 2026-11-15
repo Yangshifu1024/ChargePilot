@@ -3,7 +3,8 @@
 //! 清理后标为 expired；重复执行不重复计数，不接管生成中的任务。
 
 use crate::artifact;
-use crate::service::{ExportError, TASK_COLUMNS, TaskTup, task_from};
+use crate::error::ExportError;
+use crate::service::{TASK_COLUMNS, TaskTup, task_from};
 use chargepilot_domain::export::ExportStatus;
 use sqlx::{Acquire, MySqlConnection, MySqlPool};
 use std::path::Path;

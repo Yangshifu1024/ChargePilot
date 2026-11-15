@@ -10,13 +10,16 @@
 //! （阶段 06 网关适配器映射协议拒绝码）。
 //! 锁序：卡 → 钱包 → 会话 → 订单（旧版一致；与退款预占的 钱包→支付 异径）。
 
+pub use error::{CardAdminError, SwipeError, UserCardError};
+
 pub mod admin;
+pub mod error;
 pub mod repo;
 pub mod swipe;
 pub mod user_card;
 
 pub use repo::{CardChargeRow, CardOperationRow, active_session_count, find_card_charge};
 pub use swipe::{
-    CardOperationResult, SwipeError, SwipeInput, SwipeService, card_charge_port_release_tx,
+    CardOperationResult, SwipeInput, SwipeService, card_charge_port_release_tx,
     confirm_start_operation_tx, fail_start_operation_tx,
 };

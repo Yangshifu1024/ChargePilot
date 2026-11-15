@@ -4,6 +4,7 @@
 //! 密码、密钥与验证码不进审计；登记材料只存短期缓存（5 分钟）。
 
 use super::Profile;
+use crate::error::MfaError;
 use chargepilot_platform::sessiontoken::random_token;
 use serde_json::{Value, json};
 use sqlx::Acquire;
@@ -15,59 +16,6 @@ const ENROLLMENT_TTL_SECS: u64 = 5 * 60;
 const LOCK_TTL_SECS: u64 = 30;
 /// 一分钟窗口内允许的安全设置次数（第 6 次拒绝，旧版 n>5）。
 const SETTINGS_RATE_LIMIT: i64 = 5;
-
-/// MFA 业务错误（HTTP 层按旧版 mfaSettingsFailure / AdminManagementFailure 映射）。
-#[derive(Debug, thiserror::Error)]
-pub enum MfaError {
-    /// 输入不合法（400/1005）。
-    #[error("请按操作提供当前密码、绑定标识和六位验证码")]
-    Input,
-    /// 带文案的输入错误（400/1005，管理端 confirm 用）。
-    #[error("{0}")]
-    InputMsg(String),
-    /// 密码或验证码校验失败（400/1002）。
-    #[error("密码或验证码校验失败")]
-    Proof,
-    /// 验证码已被消费（400/1002；文案与旧版 ErrUsedTOTP 一致）。
-    #[error("该验证码已使用，请等待下一个验证码")]
-    UsedTotp,
-    /// 待绑定记录已过期或被替换（409/2009）。
-    #[error("绑定已过期或已被替换，请重新开始")]
-    Pending,
-    /// 当前状态不支持该动作（409/2009）。
-    #[error("双因素认证状态已改变，请刷新后重试")]
-    State,
-    /// 同账号设置租锁被占用（409/2009）。
-    #[error("账号安全设置正在处理中，请稍后重试")]
-    Busy,
-    /// 安全验证过于频繁（429/4291 + Retry-After 60）。
-    #[error("安全验证过于频繁，请稍后重试")]
-    Rate,
-    /// 凭据失效（401/1001）。
-    #[error("credentials invalid")]
-    Credentials,
-    /// 本人 MFA 只走个人安全设置（409/2009）。
-    #[error("请使用本人账号的安全设置修改双因素认证")]
-    SelfMfa,
-    /// 记录不存在或已删除（404/1004）。
-    #[error("记录不存在或已删除")]
-    NotFound,
-    /// 存储错误（503/5003）。
-    #[error(transparent)]
-    Storage(#[from] anyhow::Error),
-}
-
-impl From<sqlx::Error> for MfaError {
-    fn from(e: sqlx::Error) -> Self {
-        MfaError::Storage(anyhow::anyhow!(e.to_string()))
-    }
-}
-
-impl From<redis::RedisError> for MfaError {
-    fn from(e: redis::RedisError) -> Self {
-        MfaError::Storage(anyhow::anyhow!(e.to_string()))
-    }
-}
 
 /// MFA 事务内锁读的账号行（含密钥代际；旧版 LockActiveAdmin 全列语义）。
 #[derive(Debug, sqlx::FromRow)]

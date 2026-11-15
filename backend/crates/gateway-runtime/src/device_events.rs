@@ -8,7 +8,8 @@
 use std::sync::Arc;
 
 use chargepilot_events::{EnqueuedEvent, EventDispatcher};
-use chargepilot_mod_card::swipe::{SwipeError, SwipeInput, SwipeService};
+use chargepilot_mod_card::SwipeError;
+use chargepilot_mod_card::swipe::{SwipeInput, SwipeService};
 use chargepilot_mod_payment::scan::TablePortScanner;
 use chargepilot_platform::ids::SegmentAllocator;
 use chargepilot_protocol::{Command, CommandKind};

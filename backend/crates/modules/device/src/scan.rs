@@ -2,26 +2,10 @@
 //! 先按端口编码查询，再按设备号读取端口列表；中央运营状态补充可用性。
 //! 本查询不创建支付或会话；码值校验（裸码字符集与 HTTPS 链接提取）由 HTTP 层完成。
 
+use crate::error::ScanError;
 use chargepilot_domain::device::{DeviceStatus, VendorStatus};
 use serde::Serialize;
 use sqlx::MySqlPool;
-
-/// 扫码域错误（HTTP 层映射：NotFound → 404 1004，Storage → 503 5001）。
-#[derive(Debug, thiserror::Error)]
-pub enum ScanError {
-    /// 扫描码未匹配到可用设备或端口（旧版 ErrScanNotFound）。
-    #[error("scan code not found")]
-    NotFound,
-    /// 中央运营状态缺失或读取失败（旧版按非 NotFound 错误处理 → 503）。
-    #[error(transparent)]
-    Storage(#[from] anyhow::Error),
-}
-
-impl From<sqlx::Error> for ScanError {
-    fn from(e: sqlx::Error) -> Self {
-        ScanError::Storage(anyhow::anyhow!(e.to_string()))
-    }
-}
 
 /// 端口视图（旧版 ScanPort：port_id 是端口二维码编码，不是自增主键）。
 #[derive(Debug, Serialize)]

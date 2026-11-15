@@ -10,29 +10,10 @@
 //! → 写 status → 写 online_card_audit（action = `user_<status>`），同事务提交，
 //! 失败整体回滚；不结束现有充电，不动余额。
 
+use crate::error::UserCardError;
 use serde_json::json;
 use sqlx::Acquire;
 use sqlx::MySqlPool;
-
-/// 用户卡状态操作错误（HTTP 映射沿用旧版字面量契约）。
-#[derive(Debug, thiserror::Error)]
-pub enum UserCardError {
-    /// 状态不在 C 端可写子集（lost/unbound 之外，400/1005）。
-    #[error("card status input invalid")]
-    Input,
-    /// 卡不存在、属于他人或已解绑，统一 404 不泄露归属（404/1004）。
-    #[error("card not found")]
-    NotFound,
-    /// 存储错误（503/5001）。
-    #[error(transparent)]
-    Storage(#[from] anyhow::Error),
-}
-
-impl From<sqlx::Error> for UserCardError {
-    fn from(e: sqlx::Error) -> Self {
-        UserCardError::Storage(anyhow::anyhow!(e.to_string()))
-    }
-}
 
 /// 返回用户本人尚未解绑的卡（旧版 UserCardRepo.List）。
 /// 输出形状对齐旧版 OnlineCard JSON：`id` 数字、`card_no` 字符串、

@@ -66,17 +66,8 @@ pub struct ArtifactProof {
 }
 
 // serde derive 导入（Deserialize 用于校验文件读取）。
+use crate::error::ArtifactError;
 use serde::Deserialize;
-
-/// 校验失败分类：Unavailable→HTTP 409、Forbidden→403（旧版 DownloadError /
-/// ForbiddenError 的区分由调用方映射状态码）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ArtifactError {
-    /// 文件缺失、路径不符或校验不通过。
-    Unavailable,
-    /// 当前范围或脱敏规则无权访问该文件。
-    Forbidden,
-}
 
 /// CSV 单元格转义（RFC4180：含逗号/引号/换行/CRLF 时加引号并双写引号）。
 fn csv_cell(value: &str) -> String {

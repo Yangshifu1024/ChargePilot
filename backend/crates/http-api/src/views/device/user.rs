@@ -227,12 +227,12 @@ fn canonical_scan_code(raw: &str) -> Option<String> {
 }
 
 /// 扫码错误映射（旧版 handle：404 1004 not found，其余 503 5001）。
-fn scan_error(e: chargepilot_mod_device::scan::ScanError, rid: &str) -> Response {
+fn scan_error(e: chargepilot_mod_device::ScanError, rid: &str) -> Response {
     match e {
-        chargepilot_mod_device::scan::ScanError::NotFound => {
+        chargepilot_mod_device::ScanError::NotFound => {
             crate::respond(404, Code::NotFound as i64, "scan code not found", rid)
         }
-        chargepilot_mod_device::scan::ScanError::Storage(err) => {
+        chargepilot_mod_device::ScanError::Storage(err) => {
             tracing::warn!(cause = %err, "扫码查询失败");
             crate::respond(
                 503,

@@ -572,7 +572,7 @@ async fn coupon_quote_and_redeem() {
         .expect_err("门槛不足应拒绝");
     assert!(matches!(
         err,
-        chargepilot_mod_marketing::coupon::CouponRedeemError::Threshold
+        chargepilot_mod_marketing::CouponRedeemError::Threshold
     ));
     // 非本人券。
     let err = chargepilot_mod_marketing::coupon::quote(db.as_ref(), uid + 999, grant_id, 2000)
@@ -580,7 +580,7 @@ async fn coupon_quote_and_redeem() {
         .expect_err("非本人应拒绝");
     assert!(matches!(
         err,
-        chargepilot_mod_marketing::coupon::CouponRedeemError::NotFound
+        chargepilot_mod_marketing::CouponRedeemError::NotFound
     ));
 
     // 2. 套餐下单带券的互斥冲突断言在 payment_flow（checkout 已装配）。
@@ -697,7 +697,7 @@ async fn coupon_quote_and_redeem() {
     .expect_err("换支付单重放应拒绝");
     assert!(matches!(
         err,
-        chargepilot_mod_marketing::coupon::CouponRedeemError::Exhausted,
+        chargepilot_mod_marketing::CouponRedeemError::Exhausted,
     ));
     // 新支付单重放同一张已用券 → Exhausted。
     let payment2 = chargepilot_mod_payment::apply::VerifiedPayment {
@@ -710,10 +710,7 @@ async fn coupon_quote_and_redeem() {
     let err = chargepilot_mod_payment::apply::apply_payment(db.as_ref(), &payment2)
         .await
         .expect_err("无对应支付单应冲突");
-    assert!(matches!(
-        err,
-        chargepilot_mod_payment::apply::ApplyError::Conflict
-    ));
+    assert!(matches!(err, chargepilot_mod_payment::ApplyError::Conflict));
 
     // 清理。
     let _ = sqlx::query("DELETE FROM `charge_event_log` WHERE `charge_order_id` = ?")

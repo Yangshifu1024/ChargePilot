@@ -11,7 +11,7 @@ use crate::state::ApiDeps;
 use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_identity::admin_query::AdminUserError;
+use chargepilot_mod_identity::AdminUserError;
 use chargepilot_mod_ops::OpsError;
 use chargepilot_platform::httpx;
 use std::collections::HashMap;

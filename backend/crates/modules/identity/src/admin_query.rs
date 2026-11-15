@@ -3,29 +3,10 @@
 //! ID 批量回填，不逐用户查询；不冻结账号或改写金额。权限复核与旧版一致，
 //! 由调用方传入实时 Profile 后再次判定 user.read。
 
+use crate::error::AdminUserError;
 use chargepilot_mod_ops::Profile;
 use serde::Serialize;
 use sqlx::{MySqlPool, Row};
-
-/// 后台用户查询错误（旧版 operations 哨兵与记录缺失的组合，HTTP 层翻译状态码）。
-#[derive(Debug, thiserror::Error)]
-pub enum AdminUserError {
-    /// 实时权限不足（旧版 operations.ErrForbidden，403/1003）。
-    #[error("当前账号无权执行此操作")]
-    Forbidden,
-    /// 用户不存在或已软删（旧版 gorm.ErrRecordNotFound，404/1004）。
-    #[error("记录不存在或已删除")]
-    NotFound,
-    /// 存储不可用（503/5003）。
-    #[error("存储不可用: {0}")]
-    Storage(#[from] anyhow::Error),
-}
-
-impl From<sqlx::Error> for AdminUserError {
-    fn from(e: sqlx::Error) -> Self {
-        Self::Storage(anyhow::anyhow!(e.to_string()))
-    }
-}
 
 /// 时间列统一按旧版信封格式输出（微秒 + UTC 偏移，前端 dayjs 可解析）。
 const TS: &str = "DATE_FORMAT(%C, '%Y-%m-%dT%H:%i:%s.%f+00:00')";

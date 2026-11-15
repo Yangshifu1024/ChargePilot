@@ -11,6 +11,7 @@ use serde::Serialize;
 use sqlx::{Acquire, MySqlPool};
 
 use crate::AuditView;
+use crate::error::RefundAdminError;
 
 /// 退款列表行（旧版 GORM map 投影定形：refund_record 全列 + refund_review 右表列；
 /// 有审核记录时 created_at 取审核记录创建时间，与旧版右表覆盖行为一致）。
@@ -113,38 +114,6 @@ pub async fn list_refunds(
     list_query = list_query.bind(size.max(1)).bind(offset);
     let rows = list_query.fetch_all(db).await?;
     Ok((rows, total))
-}
-
-/// 人工退款域错误。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RefundAdminError {
-    /// 请求冲突：内容不一致、状态不允许或金额超限。
-    Conflict,
-    /// 已结束充电尚无费用回执。
-    NotSettled,
-    /// 退款单不存在。
-    NotFound,
-    /// 存储错误。
-    Storage(String),
-}
-
-impl std::fmt::Display for RefundAdminError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RefundAdminError::Conflict => f.write_str("人工退款请求冲突"),
-            RefundAdminError::NotSettled => f.write_str("实际结束的充电尚无费用回执"),
-            RefundAdminError::NotFound => f.write_str("退款单不存在"),
-            RefundAdminError::Storage(m) => write!(f, "人工退款存储错误: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for RefundAdminError {}
-
-impl From<sqlx::Error> for RefundAdminError {
-    fn from(e: sqlx::Error) -> Self {
-        RefundAdminError::Storage(e.to_string())
-    }
 }
 
 /// 退款单号：MR + request_id 的 sha256 前 16 字节十六进制（旧版 manualRefundNo）。

@@ -6,7 +6,7 @@
 //! 权限码沿用旧版：coupon.activity.read / coupon.activity.manage，
 //! 审计 module/target = "coupon_activity"。
 
-use crate::coupon::CouponError;
+use crate::error::CouponError;
 use chargepilot_domain::marketing::{
     ActivityTriggerType, CouponStatus, GrantReceipt, GrantSource, GrantStatus, activity_event_id,
     activity_grant_expiry, grant_source_for, invite_eligible, per_user_allowance,

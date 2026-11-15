@@ -5,45 +5,13 @@
 //! 模板锁之后不得反向等待用户或钱包。coupon 主键沿用 AUTO_INCREMENT
 //! （旧版 CreateCoupon 由库自增并回填响应），不走号段分配器。
 
+use crate::error::{CouponError, CouponRedeemError};
 use chargepilot_domain::marketing::GrantStatus;
 use chargepilot_mod_identity::repo as identity_repo;
 use chargepilot_mod_ops::{Profile, repo as ops_repo};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::{Acquire, MySqlPool};
-
-/// 券域错误（旧版 InputError / ErrCouponGrant / operations.ErrForbidden /
-/// gorm.ErrRecordNotFound 的映射源；HTTP 层按变体转码值）。
-#[derive(Debug, thiserror::Error)]
-pub enum CouponError {
-    /// 请求内容不合法（400/1005，文案透出）。
-    #[error("{0}")]
-    Input(String),
-    /// 权限不足（403/1003）。
-    #[error("无权执行此操作")]
-    Forbidden,
-    /// 发放条件不满足或请求冲突（409/2009，文案透出）。
-    #[error("{0}")]
-    Conflict(String),
-    /// 模板不存在（404/1004）。
-    #[error("记录不存在或已删除")]
-    NotFound,
-    /// 存储错误（503/5003）。
-    #[error("优惠券存储错误: {0}")]
-    Storage(String),
-}
-
-impl From<sqlx::Error> for CouponError {
-    fn from(e: sqlx::Error) -> Self {
-        CouponError::Storage(e.to_string())
-    }
-}
-
-impl From<anyhow::Error> for CouponError {
-    fn from(e: anyhow::Error) -> Self {
-        CouponError::Storage(e.to_string())
-    }
-}
 
 /// 券模板行（旧版 AdminCouponRow / Coupon；JSON 键名与旧版一致）。
 /// discount_percent 为应付比例百分数（80 表示八折），两位小数；
@@ -669,42 +637,6 @@ mod tests {
 }
 
 // ---------- 报价与核销（旧版 Quote / RedeemInTx + coupon_redeem_repo.go） ----------
-
-/// 券域错误的营销专用变体：HTTP 下单链路按旧版码值映射
-/// （NotFound→400、Exhausted→409/2001、Threshold→400），与通用 Conflict 区分。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CouponRedeemError {
-    /// 券不存在、不属于该用户或模板不可用。
-    NotFound,
-    /// 券已使用、已到期或状态不再为 unused。
-    Exhausted,
-    /// 原价非正或低于使用门槛。
-    Threshold,
-    /// 核销参数或冻结优惠与首次不一致。
-    Mismatch,
-    /// 存储错误。
-    Storage(String),
-}
-
-impl std::fmt::Display for CouponRedeemError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CouponRedeemError::NotFound => f.write_str("优惠券不存在或未发放给该账号"),
-            CouponRedeemError::Exhausted => f.write_str("优惠券已过期或已使用"),
-            CouponRedeemError::Threshold => f.write_str("未达到该优惠券的使用门槛"),
-            CouponRedeemError::Mismatch => f.write_str("优惠券核销信息不一致"),
-            CouponRedeemError::Storage(m) => write!(f, "优惠券存储错误: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for CouponRedeemError {}
-
-impl From<sqlx::Error> for CouponRedeemError {
-    fn from(e: sqlx::Error) -> Self {
-        CouponRedeemError::Storage(e.to_string())
-    }
-}
 
 /// 发放券组合模板规则（旧版 CouponGrant 组合行）；percent 经 CAST AS CHAR。
 #[derive(Debug, Clone)]

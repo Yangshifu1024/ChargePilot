@@ -1,34 +1,9 @@
 //! 用户停止充电（旧版 charging/stop/authorization.go 对齐）：
 //! 授权校验 → 同事务冻结计费截止（no-op upsert，重试不延长）→ 下发停止命令。
 
+use crate::error::StopError;
 use crate::sink::CommandSink;
 use sqlx::{Acquire, MySqlPool};
-
-/// 停止域错误（HTTP 层映射旧版 Err 族）。
-#[derive(Debug, thiserror::Error)]
-pub enum StopError {
-    /// 订单不存在、不属于该用户或不可停止。
-    #[error("订单不存在或不可停止")]
-    NotFound,
-    /// 端口身份缺失（无成功启动回执）。
-    #[error("端口身份缺失")]
-    PortIdentity,
-    /// 截止点持久化失败。
-    #[error("计费截止保存失败: {0}")]
-    CutoffUnavailable(String),
-    /// 命令下发失败（可重试）。
-    #[error("停止命令下发失败: {0}")]
-    SendFailed(String),
-    /// 存储错误。
-    #[error("停止处理存储错误: {0}")]
-    Storage(String),
-}
-
-impl From<sqlx::Error> for StopError {
-    fn from(e: sqlx::Error) -> Self {
-        StopError::Storage(e.to_string())
-    }
-}
 
 /// 停止服务（旧版 AuthorizationService + 网关停止受理）。
 pub struct StopService {

@@ -2,36 +2,11 @@
 //! 单体对应物）：支付前可用券列表与本人券分页。到期状态只用于展示，
 //! 不写回数据库；expired 由内存按当前时间派生。
 
+use crate::error::CouponQueryError;
 use chargepilot_domain::marketing::GrantStatus;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::MySqlPool;
-
-/// 券视图错误：输入不合法或存储不可用（旧版 InputError）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CouponQueryError {
-    /// 请求内容不合法（400/1005，文案透出）。
-    Input(String),
-    /// 存储错误（503/5003）。
-    Storage(String),
-}
-
-impl std::fmt::Display for CouponQueryError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CouponQueryError::Input(m) => f.write_str(m),
-            CouponQueryError::Storage(m) => write!(f, "优惠券查询存储错误: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for CouponQueryError {}
-
-impl From<sqlx::Error> for CouponQueryError {
-    fn from(e: sqlx::Error) -> Self {
-        CouponQueryError::Storage(e.to_string())
-    }
-}
 
 /// 支付前可用券的展示资料（旧版 AvailableCoupon；不核销券）。
 #[derive(Debug, Clone, Serialize)]

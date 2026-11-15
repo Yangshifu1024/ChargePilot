@@ -3,6 +3,7 @@
 //! checkout 只依赖本 trait，不感知数据来源。
 
 use super::channel::futures_bounds::BoxFuture;
+use crate::error::ScanError;
 use sqlx::MySqlPool;
 
 /// 扫码解析出的端口事实（旧版 money.ScanResult 的端口部分）。
@@ -29,26 +30,6 @@ pub struct ScanResult {
     pub station_id: u64,
     pub port: Option<ScanPort>,
 }
-
-/// 扫码解析错误（旧版 gatewaycontract.ErrScanNotFound 语义族）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ScanError {
-    /// 编码未命中任何端口或设备。
-    NotFound,
-    /// 网关或存储不可用。
-    Gateway(String),
-}
-
-impl std::fmt::Display for ScanError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ScanError::NotFound => f.write_str("二维码无效"),
-            ScanError::Gateway(m) => write!(f, "设备网关不可用: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for ScanError {}
 
 /// 端口扫描器（checkout 依赖的窄接口）。
 pub trait PortScanner: Send + Sync {

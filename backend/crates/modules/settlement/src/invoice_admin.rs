@@ -3,6 +3,7 @@
 //! 双审：通过须两名不同且仍有 invoice.review 权限的 customer_finance，两次提交的发票链接一致；
 //! 驳回单人即可。审核表、申请单状态与审计同事务提交；同人复核与状态不符一律冲突。
 
+use crate::error::InvoiceAdminError;
 use chargepilot_domain::settlement::{InvoiceAdminReviewStatus, InvoiceRequestReviewStatus};
 use chargepilot_mod_ops::Profile;
 use serde::Serialize;
@@ -34,38 +35,6 @@ pub struct InvoiceAdminRow {
     /// 发票链接：优先取审核表（二审登记的生效链接）。
     pub invoice_url: Option<String>,
     pub created_at: String,
-}
-
-/// 发票审核域错误（语义对齐旧版 ErrInvoiceConflict 族）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InvoiceAdminError {
-    /// 发票申请不存在或已删除。
-    NotFound,
-    /// 状态、签名或内容冲突（旧版 ErrInvoiceConflict）。
-    Conflict,
-    /// 服务内实时权限复核失败（旧版 ErrForbidden；正常请求已被 HTTP 层拦截）。
-    Forbidden,
-    /// 存储错误。
-    Storage(String),
-}
-
-impl std::fmt::Display for InvoiceAdminError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            InvoiceAdminError::NotFound => f.write_str("发票申请不存在"),
-            InvoiceAdminError::Conflict => f.write_str("发票审核状态冲突"),
-            InvoiceAdminError::Forbidden => f.write_str("当前账号无权执行此操作"),
-            InvoiceAdminError::Storage(m) => write!(f, "发票审核存储错误: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for InvoiceAdminError {}
-
-impl From<sqlx::Error> for InvoiceAdminError {
-    fn from(e: sqlx::Error) -> Self {
-        InvoiceAdminError::Storage(e.to_string())
-    }
 }
 
 /// 全量倒序读取未删除发票申请及人工队列结论（旧版 ListInvoiceRequests）。

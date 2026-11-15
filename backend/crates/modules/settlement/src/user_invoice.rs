@@ -3,31 +3,11 @@
 //! 金额；一单只允许一份申请（uk_invoice_active），同号同内容重放幂等复用。
 //! 可开票状态与计费任务共用同一判定：completed / refunding / refunded。
 
+use crate::error::UserInvoiceError;
 use chargepilot_domain::money::BizType;
 use chargepilot_domain::settlement::{InvoiceRequestReviewStatus, InvoiceType};
 use serde_json::json;
 use sqlx::{Acquire, MySqlPool};
-
-/// 用户端发票域错误（语义对齐旧版 ErrInvoiceInput 族，HTTP 映射在路由层）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UserInvoiceError {
-    /// 申请内容无效（旧版 ErrInvoiceInput；正常请求已被 HTTP 层前置校验）。
-    InvalidInput,
-    /// 本人订单不存在（旧版 ErrInvoiceOrderLookup + gorm.ErrRecordNotFound）。
-    OrderNotFound,
-    /// 订单读取故障（旧版 ErrInvoiceOrderLookup；事务内锁定读取失败）。
-    OrderLookup(String),
-    /// 订单尚未完成，暂不能申请（旧版 ErrInvoiceUnfinished）。
-    Unfinished,
-    /// 计费回执缺失（旧版 ErrInvoiceUnbilled）。
-    Unbilled,
-    /// 已确认费用未确定或非正数（旧版 ErrInvoiceZero）。
-    ZeroFee,
-    /// 订单已有申请，或同号申请的身份与内容不一致（旧版 ErrInvoiceDuplicate）。
-    Duplicate,
-    /// 存储错误。
-    Storage(String),
-}
 
 /// 申请结果：固定 pending，金额为回执确定总额。
 #[derive(Debug, Clone, serde::Serialize)]

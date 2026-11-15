@@ -10,7 +10,7 @@ use crate::state::ApiDeps;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use chargepilot_mod_card::admin::CardAdminError;
+use chargepilot_mod_card::CardAdminError;
 use chargepilot_mod_ops::OpsError;
 use chargepilot_platform::httpx;
 use serde::Deserialize;

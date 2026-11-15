@@ -3,71 +3,14 @@
 //! 相同 client_request_id 可原单号恢复。
 
 use super::channel::PrepayRequest;
-use super::scan::{ScanError, ScanResult};
+use super::scan::ScanResult;
+use crate::error::CheckoutError;
 use chargepilot_domain::charging::actual::Rule;
 use chargepilot_domain::charging::settle::{Estimate, Offer};
 use chargepilot_domain::money::{BizType, PayMethod, PaymentOrderStatus};
-use chargepilot_domain::payment::{IntentError, PaymentIntentStatus, intent_estimate};
+use chargepilot_domain::payment::{PaymentIntentStatus, intent_estimate};
 use chargepilot_platform::ids::SegmentAllocator;
 use sqlx::{Acquire, MySqlPool};
-
-/// 下单域错误（HTTP 层映射旧版 CheckoutError 的 Kind 族）。
-/// 下单与支付准备错误（语义分类 → HTTP 映射在 views/payment 门面）。
-#[derive(Debug, thiserror::Error)]
-pub enum CheckoutError {
-    /// 输入不合法。
-    #[error("请求参数无效")]
-    InvalidInput,
-    /// 端口或设备不存在。
-    #[error("设备或端口不存在")]
-    NotFound,
-    /// 设备已停用。
-    #[error("设备已停用")]
-    Paused,
-    /// 端口不可用（被预占或非空闲）。
-    #[error("端口已被占用")]
-    PortBusy,
-    /// 套餐不可售。
-    #[error("套餐不可售")]
-    OfferUnavailable,
-    /// 计费方案不可用或与设备能力不兼容。
-    #[error("计费方案不可用")]
-    Pricing,
-    /// 支付申请冲突（并发或重放不一致）。
-    #[error("支付申请冲突")]
-    Conflict,
-    /// 渠道不可用。
-    #[error("支付渠道不可用")]
-    Provider,
-    /// 存储错误。
-    #[error("支付存储错误: {0}")]
-    Storage(String),
-}
-
-impl From<sqlx::Error> for CheckoutError {
-    fn from(e: sqlx::Error) -> Self {
-        CheckoutError::Storage(e.to_string())
-    }
-}
-
-impl From<ScanError> for CheckoutError {
-    fn from(e: ScanError) -> Self {
-        match e {
-            ScanError::NotFound => CheckoutError::NotFound,
-            ScanError::Gateway(m) => CheckoutError::Storage(m),
-        }
-    }
-}
-
-impl From<IntentError> for CheckoutError {
-    fn from(e: IntentError) -> Self {
-        match e {
-            IntentError::Conflict => CheckoutError::Conflict,
-            IntentError::OfferUnavailable => CheckoutError::OfferUnavailable,
-            IntentError::InvalidPricing => CheckoutError::Pricing,
-        }
-    }
-}
 
 /// 端口当前套餐与展示配置（旧版 CheckoutOffers）。
 #[derive(Debug, Clone, serde::Serialize)]

@@ -4,9 +4,12 @@
 //! 阶段 02 交付：后台登录（密码+MFA）、会话轮换、实时权限、审计与 bootstrap。
 //! 账号/角色管理 CRUD、公告、仪表盘随第二批落地。
 
+pub use error::{MfaError, OpsError};
+
 pub mod announcement;
 pub mod audit_query;
 pub mod dashboard;
+pub mod error;
 pub mod management;
 pub mod mfa;
 pub mod repo;
@@ -55,73 +58,4 @@ pub struct Profile {
     pub mfa_enabled: bool,
     /// 权限码列表按 code 排序；前端用它决定按钮可见性。
     pub permissions: Vec<String>,
-}
-
-/// 业务错误：映射码值与文案沿用旧版。
-#[derive(Debug, thiserror::Error)]
-pub enum OpsError {
-    /// 凭据错误或登录已失效（401/1001）。
-    #[error("credentials invalid")]
-    Credentials,
-    /// 账号锁定（423/2006，文案透出锁定时长）。
-    #[error("{0}")]
-    Locked(String),
-    /// TOTP 验证码已被消费（重放，401/1001）。
-    #[error("该验证码已被使用，请等待下一个验证码")]
-    UsedTotp,
-    /// TOTP 无效或过期（401/1001）。
-    #[error("invalid totp")]
-    InvalidTotp,
-    /// MFA 挑战失效（401/1001）。
-    #[error("mfa challenge invalid")]
-    InvalidChallenge,
-    /// 登录频率超限（429/4291，Retry-After 60）。
-    #[error("登录尝试过于频繁，请稍后再试")]
-    LoginRate,
-    /// 权限不足（403/1003）。
-    #[error("没有操作权限")]
-    Permission,
-    /// 存储不可用（503/5003）。
-    #[error("storage failure: {0}")]
-    Storage(#[from] anyhow::Error),
-    /// 业务输入错误（400/1005，文案透出）。
-    #[error("{0}")]
-    Input(String),
-    /// 业务冲突（409/2009，文案透出）。
-    #[error("{0}")]
-    Conflict(String),
-    /// 资源不存在（404/1004，文案透出）。
-    #[error("{0}")]
-    NotFound(String),
-}
-
-impl OpsError {
-    pub fn bad_input(msg: impl Into<String>) -> Self {
-        OpsError::Input(msg.into())
-    }
-
-    pub fn conflict(msg: impl Into<String>) -> Self {
-        OpsError::Conflict(msg.into())
-    }
-
-    pub fn not_found(msg: impl Into<String>) -> Self {
-        OpsError::NotFound(msg.into())
-    }
-
-    pub fn forbidden(msg: impl Into<String>) -> Self {
-        let _ = msg;
-        OpsError::Permission
-    }
-}
-
-impl From<sqlx::Error> for OpsError {
-    fn from(e: sqlx::Error) -> Self {
-        OpsError::Storage(e.into())
-    }
-}
-
-impl From<redis::RedisError> for OpsError {
-    fn from(e: redis::RedisError) -> Self {
-        OpsError::Storage(e.into())
-    }
 }

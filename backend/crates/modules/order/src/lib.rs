@@ -5,6 +5,7 @@
 //! 支付成功事务由 payment 模块编排，本模块只提供订单侧的表访问。
 
 pub mod admin_query;
+pub mod error;
 pub mod feedback;
 pub mod user_query;
 
@@ -12,6 +13,7 @@ use chargepilot_domain::money::PaymentOrderStatus;
 use chargepilot_domain::order::ChargeOrderStatus;
 use chargepilot_platform::ids::SegmentAllocator;
 use chrono::Datelike;
+pub use error::{FeedbackError, FeedbackSubmitError, OrderError};
 use sqlx::MySqlConnection;
 
 /// 月分区归属日期：取给定时刻对应月份的第一天（旧版 dbutil.MonthStart）。
@@ -35,38 +37,6 @@ pub struct PaidOrderDraft {
     /// 下发设备的充电数量（分钟或 Wh，单位由 charge_mode 确定）。
     pub charge_quantity: u16,
     pub discount_cents: i64,
-}
-
-/// 订单域错误（支付成功事务中的冲突语义）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OrderError {
-    /// 业务单号冲突（同秒同设备同端口重复或编号超限）。
-    NumberConflict,
-    /// 存储错误。
-    Storage(String),
-}
-
-impl std::fmt::Display for OrderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            OrderError::NumberConflict => f.write_str("充电单号冲突"),
-            OrderError::Storage(m) => write!(f, "订单存储错误: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for OrderError {}
-
-impl From<sqlx::Error> for OrderError {
-    fn from(e: sqlx::Error) -> Self {
-        if let sqlx::Error::Database(db) = &e {
-            // 23000（MySQL 1062）：order_no 唯一键冲突（uk_order_no 按分区键组合唯一）。
-            if db.code().as_deref() == Some("23000") {
-                return OrderError::NumberConflict;
-            }
-        }
-        OrderError::Storage(e.to_string())
-    }
 }
 
 /// 生成并查重充电业务单号（旧版 NewChargeOrderNumber）。

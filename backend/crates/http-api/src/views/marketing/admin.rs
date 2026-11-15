@@ -6,12 +6,13 @@ use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use chargepilot_domain::marketing::ActivityRuleInput;
+use chargepilot_mod_marketing::CouponError;
 use chargepilot_mod_marketing::activity::{
     create_activity_rule, has_activity_read, list_activity_rules, update_activity_rule,
 };
 use chargepilot_mod_marketing::coupon::{
-    CouponError, CouponRow, CouponUpdate, GrantInput, coupon_stats, create_coupon, grant_coupon,
-    list_coupons, update_coupon,
+    CouponRow, CouponUpdate, GrantInput, coupon_stats, create_coupon, grant_coupon, list_coupons,
+    update_coupon,
 };
 use chargepilot_platform::error::Code;
 use chargepilot_platform::httpx;

@@ -3,11 +3,8 @@
 //! 由 card 用例在同一事务原子提交，本模块不扣钱包、不调用支付渠道。
 
 use crate::channel::futures_bounds::BoxFuture;
+use crate::error::CardFundingConflict;
 use chargepilot_domain::money::PaymentOrderStatus;
-
-/// 卡续购没有匹配到已付余额支付单（旧版 ErrCardFundingConflict）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CardFundingConflict;
 
 /// 在事务内创建刷卡首购的已付余额支付单，返回支付单主键（旧版 CreateCardPaymentInTx）。
 pub async fn create_card_payment_in_tx(

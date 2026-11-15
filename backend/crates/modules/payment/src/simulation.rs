@@ -2,49 +2,9 @@
 //! 装配；确认仍走支付成功事务（apply::apply_payment），用户与金额取自原支付单，
 //! 交易号为 SIM 前缀稳定编号保证幂等重放。
 
-use super::apply::{ApplyError, ApplyResult, VerifiedPayment, apply_payment};
+use super::apply::{ApplyResult, VerifiedPayment, apply_payment};
+use crate::error::SimulationError;
 use sqlx::MySqlPool;
-
-/// 模拟确认错误（HTTP 层映射旧版 Err 族）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SimulationError {
-    /// 支付单不存在或归属不符（旧版 gorm.ErrRecordNotFound → 404/1004）。
-    NotFound,
-    /// 非模拟渠道的支付（旧版 ErrNotSimulationCheckout → 409/3001）。
-    NotSimulation,
-    /// 处理冲突（旧版 ErrPaymentCallbackConflict → 409/3001）。
-    Conflict,
-    /// 存储错误。
-    Storage(String),
-}
-
-impl std::fmt::Display for SimulationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SimulationError::NotFound => f.write_str("支付单不存在"),
-            SimulationError::NotSimulation => f.write_str("支付不是模拟渠道"),
-            SimulationError::Conflict => f.write_str("模拟支付冲突"),
-            SimulationError::Storage(m) => write!(f, "模拟确认存储错误: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for SimulationError {}
-
-impl From<sqlx::Error> for SimulationError {
-    fn from(e: sqlx::Error) -> Self {
-        SimulationError::Storage(e.to_string())
-    }
-}
-
-impl From<ApplyError> for SimulationError {
-    fn from(e: ApplyError) -> Self {
-        match e {
-            ApplyError::Conflict => SimulationError::Conflict,
-            ApplyError::Storage(m) => SimulationError::Storage(m),
-        }
-    }
-}
 
 /// 读取支付单及付款人身份（旧版 FindDevelopmentPayment）。
 async fn find_development_payment(

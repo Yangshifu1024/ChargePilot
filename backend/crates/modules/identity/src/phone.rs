@@ -9,44 +9,10 @@
 //! 归属写入与旧版 UserRepo.BindPhone 一致：事务内先按 `phone + id <> + 未删除`
 //! 查重，再更新本人未删除行的 `phone`；并发同号由 `uk_phone` 唯一键最终仲裁。
 
+use crate::error::PhoneError;
 use crate::wechat::Exchanger;
 use sqlx::Acquire;
 use sqlx::MySqlPool;
-
-/// 手机号业务错误（HTTP 映射沿用旧版字面量契约，见 http-api 适配层）。
-#[derive(Debug, thiserror::Error)]
-pub enum PhoneError {
-    /// 正式路径须凭授权 code 且不得提交明文（400/1005）。
-    #[error("phone authorization input invalid")]
-    Authorization,
-    /// 正式号码交换能力未装配（503/5003）。
-    #[error("phone exchange unavailable")]
-    Unavailable,
-    /// 微信号码交换失败，不能采信客户端号码（400/1004）。
-    #[error("phone exchange failed")]
-    Exchange,
-    /// 号码不符合中国大陆手机号约束（400/1005）。
-    #[error("phone input invalid")]
-    Input,
-    /// 号码已被他人绑定（409/2009）。
-    #[error("phone already taken")]
-    Taken,
-    /// 存储错误（503/5003）。
-    #[error(transparent)]
-    Storage(#[from] anyhow::Error),
-}
-
-impl From<sqlx::Error> for PhoneError {
-    fn from(e: sqlx::Error) -> Self {
-        // 并发同号最终由 uk_phone 唯一键仲裁（旧版 1062 → ErrPhoneTaken）。
-        if let sqlx::Error::Database(db) = &e
-            && db.code().as_deref() == Some("23000")
-        {
-            return PhoneError::Taken;
-        }
-        PhoneError::Storage(anyhow::anyhow!(e.to_string()))
-    }
-}
 
 /// 绑定请求字段（旧版 PhoneInput）：正式路径仅收 `code`，开发路径用 `phone`。
 #[derive(Debug, Clone, Default)]

@@ -93,8 +93,8 @@ async fn reply_feedback(
 }
 
 /// 反馈错误映射（旧版 AdminResourceFailure + FeedbackInputError）。
-fn feedback_error(e: chargepilot_mod_order::feedback::FeedbackError, rid: &str) -> Response {
-    use chargepilot_mod_order::feedback::FeedbackError as E;
+fn feedback_error(e: chargepilot_mod_order::FeedbackError, rid: &str) -> Response {
+    use chargepilot_mod_order::FeedbackError as E;
     match &e {
         E::Input(msg) => crate::respond(400, Code::BadRequest as i64, msg, rid),
         E::Conflict => crate::respond(

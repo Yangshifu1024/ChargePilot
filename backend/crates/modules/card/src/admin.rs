@@ -3,6 +3,7 @@
 //! 再以卡号唯一键创建或行锁核对归属；状态写入与审计同事务提交，
 //! 失败整体回滚。卡绑定用户而不绑定站点，不迁移钱包余额。
 
+use crate::error::CardAdminError;
 use chargepilot_mod_ops::Profile;
 use serde::Serialize;
 use sqlx::{Acquire, MySqlConnection, MySqlPool};
@@ -15,32 +16,6 @@ pub const ALREADY_BOUND: &str = "卡已绑定，须先由原用户解绑";
 
 /// 裸业务冲突文案（旧版 operations.ErrConflict.Error()，随 409 透出）。
 const CONFLICT_PLAIN: &str = "当前记录状态不允许此操作，请刷新后重试";
-
-/// 后台在线卡错误（HTTP 层翻译状态码）。
-#[derive(Debug, thiserror::Error)]
-pub enum CardAdminError {
-    /// 绑定或状态输入不满足业务约束（400，文案由处理器按端点给出）。
-    #[error("card admin input invalid")]
-    Input,
-    /// 实时权限不足（403/1003）。
-    #[error("当前账号无权执行此操作")]
-    Forbidden,
-    /// 记录当前状态拒绝写入（409，文案透出）。
-    #[error("{0}")]
-    Conflict(String),
-    /// 卡或目标用户不存在（404/1004）。
-    #[error("记录不存在或已删除")]
-    NotFound,
-    /// 存储不可用（503/5003）。
-    #[error("存储不可用: {0}")]
-    Storage(#[from] anyhow::Error),
-}
-
-impl From<sqlx::Error> for CardAdminError {
-    fn from(e: sqlx::Error) -> Self {
-        Self::Storage(anyhow::anyhow!(e.to_string()))
-    }
-}
 
 /// 在线卡行（旧版 OnlineCard 的 JSON 契约：id 数字、user_id 十进制字符串）。
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]

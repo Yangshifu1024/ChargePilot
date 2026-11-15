@@ -9,14 +9,17 @@
 //!   任务、范围、脱敏与 SHA-256。
 //! - 清理为受管理循环（每小时、每批 ≤1000），语义照搬旧版。
 
+pub use error::{ArtifactError, ExportError};
+
 pub mod artifact;
 pub mod cleanup;
+pub mod error;
 pub mod registry;
 pub mod service;
 
 pub use cleanup::cleanup_expired;
 pub use registry::{ExportColumn, ExportSpec, export_resource, export_resource_names};
 pub use service::{
-    CreateInput, CreateResult, DownloadFile, ExportConfig, ExportError, ExportTaskRow,
-    ResourcesResult, create_export, detail, download, list_resources, list_tasks,
+    CreateInput, CreateResult, DownloadFile, ExportConfig, ExportTaskRow, ResourcesResult,
+    create_export, detail, download, list_resources, list_tasks,
 };

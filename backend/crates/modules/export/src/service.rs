@@ -12,44 +12,6 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::{Acquire, MySqlPool, Row};
 
-/// 导出域错误（HTTP 层按变体映射旧版码值）。
-#[derive(Debug, thiserror::Error)]
-pub enum ExportError {
-    /// 请求参数不合法（400/1005，文案透出）。
-    #[error("{0}")]
-    Input(String),
-    /// 权限、归属或范围不足（403/1003，文案透出）。
-    #[error("{0}")]
-    Forbidden(String),
-    /// 登录凭据已变化（401）。
-    #[error("credentials invalid")]
-    Credentials,
-    /// 当前状态不允许下载；过期返回 410，其余 409。
-    #[error("{message}")]
-    Download { message: String, expired: bool },
-    /// 记录不存在（404）。
-    #[error("记录不存在或已删除")]
-    NotFound,
-    /// 冲突（409/2009）。
-    #[error("导出请求冲突")]
-    Conflict,
-    /// 存储错误（503/5003）。
-    #[error("导出存储错误: {0}")]
-    Storage(String),
-}
-
-impl From<sqlx::Error> for ExportError {
-    fn from(e: sqlx::Error) -> Self {
-        ExportError::Storage(e.to_string())
-    }
-}
-
-impl From<anyhow::Error> for ExportError {
-    fn from(e: anyhow::Error) -> Self {
-        ExportError::Storage(e.to_string())
-    }
-}
-
 /// 导出申请（旧版 CreateInput）：空格式默认 CSV。
 #[derive(Debug, Clone)]
 pub struct CreateInput {
@@ -662,6 +624,7 @@ async fn generate_inner(
     Ok(())
 }
 
+use crate::error::{ArtifactError, ExportError};
 use std::path::Path;
 
 /// 失败收尾（旧版 settleFailure）：锁读任务并核对申请人，清理自己的
@@ -894,10 +857,8 @@ pub async fn download(
         &mask,
     )
     .map_err(|kind| match kind {
-        artifact::ArtifactError::Forbidden => {
-            ExportError::Forbidden("当前数据范围无权下载该导出".into())
-        }
-        artifact::ArtifactError::Unavailable => ExportError::Download {
+        ArtifactError::Forbidden => ExportError::Forbidden("当前数据范围无权下载该导出".into()),
+        ArtifactError::Unavailable => ExportError::Download {
             message: "导出文件不可用，请重新导出".into(),
             expired: false,
         },

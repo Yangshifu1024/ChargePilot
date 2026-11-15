@@ -133,19 +133,19 @@ async fn payment_simulation_confirm(
         .await
     {
         Ok(v) => httpx::ok(serde_json::to_value(v).unwrap_or(json!(null)), &rid),
-        Err(chargepilot_mod_payment::simulation::SimulationError::NotFound) => {
+        Err(chargepilot_mod_payment::SimulationError::NotFound) => {
             crate::respond(404, Code::NotFound as i64, "支付单不存在", &rid)
         }
-        Err(chargepilot_mod_payment::simulation::SimulationError::NotSimulation) => crate::respond(
+        Err(chargepilot_mod_payment::SimulationError::NotSimulation) => crate::respond(
             409,
             Code::ChannelInteraction as i64,
             "支付不是模拟渠道",
             &rid,
         ),
-        Err(chargepilot_mod_payment::simulation::SimulationError::Conflict) => {
+        Err(chargepilot_mod_payment::SimulationError::Conflict) => {
             crate::respond(409, Code::ChannelInteraction as i64, "模拟支付冲突", &rid)
         }
-        Err(chargepilot_mod_payment::simulation::SimulationError::Storage(m)) => {
+        Err(chargepilot_mod_payment::SimulationError::Storage(m)) => {
             tracing::warn!(error = %m, "模拟确认处理失败");
             crate::respond(503, Code::DependencyFailed as i64, "模拟确认暂不可用", &rid)
         }

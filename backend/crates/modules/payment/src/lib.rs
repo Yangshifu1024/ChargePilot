@@ -10,10 +10,13 @@
 //! 锁序：支付单 → 意图 →（钱包充值）申请与钱包，与退款预占的 钱包→支付 相序
 //! 不同属不同事务路径，评审时逐条核对不得混用。
 
+pub use error::{ApplyError, CardFundingConflict, CheckoutError, ScanError, SimulationError};
+
 pub mod apply;
 pub mod card_funding;
 pub mod channel;
 pub mod checkout;
+pub mod error;
 pub mod recharge_bridge;
 pub mod scan;
 pub mod simulation;
@@ -23,5 +26,5 @@ pub mod wechat;
 mod wechat_test;
 
 pub use channel::{PayMode, PayProvider, PrepayParams, PrepayRequest};
-pub use checkout::{CheckoutError, CheckoutInput, CheckoutOffers, CheckoutResult, CheckoutService};
-pub use scan::{PortScanner, ScanError, ScanResult};
+pub use checkout::{CheckoutInput, CheckoutOffers, CheckoutResult, CheckoutService};
+pub use scan::{PortScanner, ScanResult};

@@ -3,45 +3,13 @@
 //! 列表输出全列（ENUM/JSON 列 CAST AS CHAR），id/user_id/order_id 为字符串；
 //! 回复仅 pending→processed，关闭允许任意未关闭状态，重复关闭静默成功。
 
-use crate::OrderError;
+use crate::error::{FeedbackError, FeedbackSubmitError};
 use chargepilot_domain::order::{ChargeOrderStatus, FeedbackCategory, FeedbackStatus};
 use chargepilot_mod_ops::Profile;
 use chargepilot_mod_ops::repo;
 use serde_json::{Value, json};
 use sqlx::Acquire;
 use sqlx::MySqlPool;
-
-/// 反馈业务错误（HTTP 层映射：Input→400、Conflict→409、NotFound→404、Forbidden→403）。
-#[derive(Debug, thiserror::Error)]
-pub enum FeedbackError {
-    /// 业务输入错误（文案透出）。
-    #[error("{0}")]
-    Input(String),
-    /// 状态流转冲突（已关闭或非 pending 回复）。
-    #[error("反馈状态已变化，请刷新后重试")]
-    Conflict,
-    /// 反馈不存在或已删除。
-    #[error("记录不存在或已删除")]
-    NotFound,
-    /// 实时权限不足。
-    #[error("没有操作权限")]
-    Forbidden,
-    /// 存储错误。
-    #[error(transparent)]
-    Storage(#[from] anyhow::Error),
-}
-
-impl From<sqlx::Error> for FeedbackError {
-    fn from(e: sqlx::Error) -> Self {
-        FeedbackError::Storage(anyhow::anyhow!(e.to_string()))
-    }
-}
-
-impl From<OrderError> for FeedbackError {
-    fn from(e: OrderError) -> Self {
-        FeedbackError::Storage(anyhow::anyhow!(e.to_string()))
-    }
-}
 
 /// 后台分页列表：状态筛选（空串不筛选）+ 已校验分页，返回行与总数（旧版 FeedbackRepo.List）。
 /// 输出列与旧版 SELECT * 对齐；id/user_id/order_id 转字符串（旧版 DecimalizeRowIDsAll），
@@ -246,38 +214,6 @@ pub async fn reply(
 // ValidateFeedback / Submit + feedback_repo.go 的 ResolveOwnedReference /
 // LockOrder / HasFeedback / Insert 契约对齐）
 // ---------------------------------------------------------------------------
-
-/// 用户提交反馈错误（HTTP 映射沿用旧版字面量契约）。
-#[derive(Debug, thiserror::Error)]
-pub enum FeedbackSubmitError {
-    /// 订单引用或反馈字段校验失败（400/1005，文案透出）。
-    #[error("{0}")]
-    Input(String),
-    /// 订单缺失、属于他人或状态不可评价（404/1004 订单不存在或不可评价）。
-    #[error("order is not a completed order of this user")]
-    OrderNotReady,
-    /// 订单已评价，重复提交为冲突（409/2009 该订单已评价）。
-    #[error("order already has feedback")]
-    Exists,
-    /// 按业务单号解析时订单不存在（404/1004 订单不存在）。
-    #[error("order not found")]
-    NotFound,
-    /// 存储错误（503/5003 反馈提交失败，请稍后重试）。
-    #[error(transparent)]
-    Storage(#[from] anyhow::Error),
-}
-
-impl From<sqlx::Error> for FeedbackSubmitError {
-    fn from(e: sqlx::Error) -> Self {
-        FeedbackSubmitError::Storage(anyhow::anyhow!(e.to_string()))
-    }
-}
-
-impl From<serde_json::Error> for FeedbackSubmitError {
-    fn from(e: serde_json::Error) -> Self {
-        FeedbackSubmitError::Storage(anyhow::anyhow!(e.to_string()))
-    }
-}
 
 /// 用户反馈提交字段（旧版 FeedbackInput）。
 /// `images` 为 None 时保存 JSON null（旧版 json.Marshal(nil slice)）；

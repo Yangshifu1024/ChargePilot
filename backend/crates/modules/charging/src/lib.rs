@@ -11,18 +11,19 @@
 //! 幂等红线：每张回执表同命令同内容重放静默确认、不同内容冲突；
 //! 端口释放必须匹配订单；状态推进全部条件更新（RowsAffected==1）。
 
+pub use error::{ReceiptError, StopError};
+
 pub mod dispatch;
+pub mod error;
 pub mod receipts;
 pub mod sink;
 pub mod stop;
 pub mod sweeper;
 
 pub use dispatch::StartDispatcher;
-pub use receipts::{
-    EndReceiptInput, ReceiptError, StartReceiptInput, apply_end_receipt, apply_start_receipt,
-};
+pub use receipts::{EndReceiptInput, StartReceiptInput, apply_end_receipt, apply_start_receipt};
 pub use sink::{CommandSink, SimulationSink, StartCommand};
-pub use stop::{ActiveStop, StopError, StopService};
+pub use stop::{ActiveStop, StopService};
 
 /// dyn 兼容 Future 别名的公共出口（模块内部各自引用）。
 pub mod futures_bounds {

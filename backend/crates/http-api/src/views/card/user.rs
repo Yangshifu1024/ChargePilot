@@ -58,10 +58,10 @@ async fn card_status(
     let status = body.and_then(|b| b.0.status).unwrap_or_default();
     match chargepilot_mod_card::user_card::change_status(&deps.db, uid, &card_no, &status).await {
         Ok(()) => httpx::ok(json!({"status": status}), &rid),
-        Err(chargepilot_mod_card::user_card::UserCardError::Input) => {
+        Err(chargepilot_mod_card::UserCardError::Input) => {
             crate::respond(400, Code::BadRequest as i64, "仅可挂失或解绑自己的卡", &rid)
         }
-        Err(chargepilot_mod_card::user_card::UserCardError::NotFound) => {
+        Err(chargepilot_mod_card::UserCardError::NotFound) => {
             crate::respond(404, Code::NotFound as i64, "卡不存在", &rid)
         }
         Err(e) => {

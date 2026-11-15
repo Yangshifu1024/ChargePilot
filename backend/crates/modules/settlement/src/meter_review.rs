@@ -12,6 +12,7 @@ use serde::Serialize;
 use sqlx::{Acquire, MySqlPool};
 
 use crate::AuditView;
+use crate::error::ReviewError;
 
 /// 计量核实记录行（旧版 MeterReview JSON 定形；original/corrected 内嵌对象）。
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -227,38 +228,6 @@ fn like_pattern(value: &str) -> String {
             .replace('%', "!%")
             .replace('_', "!_")
     )
-}
-
-/// 人工复核域错误（语义对齐旧版 ErrBillingConflict 族）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReviewError {
-    /// 请求冲突：状态、内容或审核人不允许该操作。
-    Conflict,
-    /// 计量或快照无效（旧版 ErrMeterReview / ErrInvalidPricing）。
-    InvalidSource,
-    /// 记录不存在。
-    NotFound,
-    /// 存储错误。
-    Storage(String),
-}
-
-impl std::fmt::Display for ReviewError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ReviewError::Conflict => f.write_str("人工复核请求冲突"),
-            ReviewError::InvalidSource => f.write_str("计量或计费快照无效"),
-            ReviewError::NotFound => f.write_str("记录不存在"),
-            ReviewError::Storage(m) => write!(f, "人工复核存储错误: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for ReviewError {}
-
-impl From<sqlx::Error> for ReviewError {
-    fn from(e: sqlx::Error) -> Self {
-        ReviewError::Storage(e.to_string())
-    }
 }
 
 /// 修正提案的计量分段输入（有单位与分段约束，不补造计量）。
