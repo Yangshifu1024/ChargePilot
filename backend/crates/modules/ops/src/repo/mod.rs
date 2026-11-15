@@ -1,7 +1,17 @@
-//! `admin_user` 表访问：账号校验、锁定、MFA 消费、Profile 组合、审计与 bootstrap。
-//! 锁定语义对齐旧版：连续失败 5 次锁 30 分钟，成功清零。
+//! ops 域表访问（蓝图第五章 repo 层）：SQL 只出现在本目录。
+//! 本文件即既有 repo（账号/角色/权限/审计表访问），子模块为后迁入的读侧与原语。
 
-use super::{AdminAccount, OpsError, Profile};
+pub mod announcement;
+pub mod audit_query;
+pub mod dashboard;
+pub mod management;
+pub mod mfa;
+pub mod scope;
+
+// `admin_user` 表访问：账号校验、锁定、MFA 消费、Profile 组合、审计与 bootstrap。
+// 锁定语义对齐旧版：连续失败 5 次锁 30 分钟，成功清零。
+
+use crate::{AdminAccount, OpsError, Profile};
 use chrono::Datelike as _;
 use sqlx::MySqlPool;
 

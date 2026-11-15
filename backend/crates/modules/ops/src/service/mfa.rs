@@ -3,7 +3,7 @@
 //! 语义基准：旧仓库 internal/ops/mfa.go + account_management.go 的 MFA 分支，逐条对齐。
 //! 密码、密钥与验证码不进审计；登记材料只存短期缓存（5 分钟）。
 
-use super::Profile;
+use crate::Profile;
 use crate::error::MfaError;
 use chargepilot_platform::sessiontoken::random_token;
 use serde_json::{Value, json};
@@ -16,19 +16,6 @@ const ENROLLMENT_TTL_SECS: u64 = 5 * 60;
 const LOCK_TTL_SECS: u64 = 30;
 /// 一分钟窗口内允许的安全设置次数（第 6 次拒绝，旧版 n>5）。
 const SETTINGS_RATE_LIMIT: i64 = 5;
-
-/// MFA 事务内锁读的账号行（含密钥代际；旧版 LockActiveAdmin 全列语义）。
-#[derive(Debug, sqlx::FromRow)]
-struct MfaAccount {
-    id: u64,
-    username: String,
-    password_hash: String,
-    mfa_enabled: bool,
-    mfa_secret: Option<String>,
-    mfa_secret_version: u64,
-    mfa_last_step: Option<i64>,
-    auth_version: u64,
-}
 
 // ---------------------------------------------------------------------------
 // Redis IO（旧版 mfa_repo.go：pending / 租锁 / 频次）
@@ -148,79 +135,6 @@ async fn count_rate(redis_url: &str, id: u64) -> Result<i64, MfaError> {
 // SQL 辅助（旧版 UpdateAdminMFASecret / consumeAdminTOTPStep 语义）
 // ---------------------------------------------------------------------------
 
-/// 锁读启用账号全列（含 MFA 与认证版本；旧版 LockActiveAdmin 的完整列版本）。
-async fn lock_active_admin_full_tx(
-    c: &mut sqlx::MySqlConnection,
-    id: u64,
-) -> Result<MfaAccount, MfaError> {
-    let row: Option<MfaAccount> = sqlx::query_as(
-        "SELECT `id`, `username`, `password_hash`, `mfa_enabled`, `mfa_secret`, \
-                `mfa_secret_version`, `mfa_last_step`, `auth_version` \
-         FROM `admin_user` WHERE `id` = ? AND `status` = 'active' AND `deleted_at` IS NULL FOR UPDATE",
-    )
-    .bind(id)
-    .fetch_optional(c)
-    .await?;
-    row.ok_or(MfaError::Credentials)
-}
-
-/// 更新 MFA 密钥与启用态（旧版 UpdateAdminMFASecret）：密钥代际变化（nil↔值或值不同）时
-/// 递增 mfa_secret_version 并重置 mfa_last_step；bump 时递增 auth_version 撤销旧会话。
-/// 调用方须已持有账号行锁，changed 依据锁内快照判定。
-async fn update_mfa_secret_tx(
-    c: &mut sqlx::MySqlConnection,
-    id: u64,
-    new_secret: Option<&str>,
-    current_secret: Option<&str>,
-    enabled: bool,
-    bump_auth_version: bool,
-) -> Result<(), MfaError> {
-    let changed = current_secret != new_secret;
-    sqlx::query(
-        "UPDATE `admin_user` SET `mfa_secret` = ?, `mfa_enabled` = ?, \
-         `mfa_secret_version` = `mfa_secret_version` + ?, \
-         `mfa_last_step` = IF(? = 1, NULL, `mfa_last_step`), \
-         `auth_version` = `auth_version` + ? \
-         WHERE `id` = ? AND `deleted_at` IS NULL",
-    )
-    .bind(new_secret)
-    .bind(enabled)
-    .bind(if changed { 1 } else { 0 })
-    .bind(if changed { 1 } else { 0 })
-    .bind(if bump_auth_version { 1 } else { 0 })
-    .bind(id)
-    .execute(c)
-    .await?;
-    Ok(())
-}
-
-/// 消费当前密钥代际的时间步（旧版 consumeAdminTOTPStep）：拒绝旧步或重复步；
-/// 代际不匹配或 0 行更新按验证码错误处理，由调用方整体回滚。
-async fn consume_totp_step_tx(
-    c: &mut sqlx::MySqlConnection,
-    account: &MfaAccount,
-    step: i64,
-) -> Result<(), MfaError> {
-    if account.mfa_last_step.is_some_and(|last| step <= last) {
-        return Err(MfaError::UsedTotp);
-    }
-    let n = sqlx::query(
-        "UPDATE `admin_user` SET `mfa_last_step` = ? \
-         WHERE `id` = ? AND `mfa_secret_version` = ? AND (`mfa_last_step` IS NULL OR `mfa_last_step` < ?)",
-    )
-    .bind(step)
-    .bind(account.id)
-    .bind(account.mfa_secret_version)
-    .bind(step)
-    .execute(c)
-    .await?
-    .rows_affected();
-    if n != 1 {
-        return Err(MfaError::Proof);
-    }
-    Ok(())
-}
-
 /// 校验验证码并返回命中的时间步（±1 步；与 repo::verify_mfa 同一匹配规则）。
 fn verify_with_step(secret: &str, code: &str, now: i64) -> Option<i64> {
     let step = now.div_euclid(30);
@@ -305,12 +219,10 @@ async fn apply_locked(
     ip: &str,
 ) -> Result<Value, MfaError> {
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await?;
+    crate::repo::mfa::set_read_committed(&mut conn).await?;
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
-    let account = lock_active_admin_full_tx(&mut *c, profile.id).await?;
+    let account = crate::repo::mfa::lock_active_admin_full_tx(&mut *c, profile.id).await?;
     if account.auth_version != profile.auth_version {
         return Err(MfaError::Credentials);
     }
@@ -385,7 +297,7 @@ async fn apply_locked(
             if !consume_pending(redis_url, account.id, &raw).await? {
                 return Err(MfaError::Pending);
             }
-            update_mfa_secret_tx(
+            crate::repo::mfa::update_mfa_secret_tx(
                 &mut *c,
                 account.id,
                 Some(&pending_secret),
@@ -395,9 +307,9 @@ async fn apply_locked(
             )
             .await?;
             // 首次确认消费新密钥时间步；重新登录须等待验证器切换验证码。
-            let updated = lock_active_admin_full_tx(&mut *c, account.id).await?;
-            consume_totp_step_tx(&mut *c, &updated, step).await?;
-            super::repo::write_auth_audit_tx(
+            let updated = crate::repo::mfa::lock_active_admin_full_tx(&mut *c, account.id).await?;
+            crate::repo::mfa::consume_totp_step_tx(&mut *c, &updated, step).await?;
+            crate::repo::write_auth_audit_tx(
                 &mut *c,
                 &to_admin_account(&updated),
                 "mfa_enable",
@@ -420,9 +332,9 @@ async fn apply_locked(
             let Some(step) = verify_with_step(&secret, code, now.timestamp()) else {
                 return Err(MfaError::Proof);
             };
-            consume_totp_step_tx(&mut *c, &account, step).await?;
+            crate::repo::mfa::consume_totp_step_tx(&mut *c, &account, step).await?;
             clear_pending(redis_url, account.id).await?;
-            update_mfa_secret_tx(
+            crate::repo::mfa::update_mfa_secret_tx(
                 &mut *c,
                 account.id,
                 None,
@@ -431,8 +343,8 @@ async fn apply_locked(
                 true,
             )
             .await?;
-            let updated = lock_active_admin_full_tx(&mut *c, account.id).await?;
-            super::repo::write_auth_audit_tx(
+            let updated = crate::repo::mfa::lock_active_admin_full_tx(&mut *c, account.id).await?;
+            crate::repo::write_auth_audit_tx(
                 &mut *c,
                 &to_admin_account(&updated),
                 "mfa_disable",
@@ -448,8 +360,8 @@ async fn apply_locked(
 }
 
 /// MfaAccount → 审计所需的账号身份（旧版 WriteAuthAudit 接收 AdminAccount）。
-fn to_admin_account(a: &MfaAccount) -> super::AdminAccount {
-    super::AdminAccount {
+fn to_admin_account(a: &crate::repo::mfa::MfaAccount) -> crate::AdminAccount {
+    crate::AdminAccount {
         id: a.id,
         username: a.username.clone(),
         display_name: None,
@@ -495,15 +407,13 @@ pub async fn managed(
         return Err(MfaError::InputMsg("请提供密钥和验证码".into()));
     }
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut *conn)
-        .await?;
+    crate::repo::mfa::set_read_committed(&mut conn).await?;
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
-    super::repo::lock_customer_admin_role_tx(&mut *c)
+    crate::repo::lock_customer_admin_role_tx(&mut *c)
         .await
         .map_err(MfaError::from)?;
-    let actor_locked = super::repo::lock_actor_tx(&mut *c, actor.id)
+    let actor_locked = crate::repo::lock_actor_tx(&mut *c, actor.id)
         .await
         .map_err(|_| MfaError::Credentials)?;
     if !actor_locked
@@ -513,11 +423,11 @@ pub async fn managed(
     {
         return Err(MfaError::Credentials);
     }
-    let before = super::repo::lock_admin_tx(&mut *c, target_id)
+    let before = crate::repo::lock_admin_tx(&mut *c, target_id)
         .await
         .map_err(MfaError::from)?
         .ok_or(MfaError::NotFound)?;
-    let account = lock_active_admin_full_tx(&mut *c, target_id).await?;
+    let account = crate::repo::mfa::lock_active_admin_full_tx(&mut *c, target_id).await?;
     let now = chrono::Utc::now();
     let (reply, audit_action) = match action {
         "enrol" => {
@@ -526,7 +436,7 @@ pub async fn managed(
                 chargepilot_platform::totp::otpauth_uri("ChargePilot", &account.username, &secret);
             let code_now = chargepilot_platform::totp::generate(&secret, now.timestamp())
                 .ok_or_else(|| MfaError::Storage(anyhow::anyhow!("TOTP 生成失败")))?;
-            update_mfa_secret_tx(
+            crate::repo::mfa::update_mfa_secret_tx(
                 &mut *c,
                 target_id,
                 Some(&secret),
@@ -558,10 +468,10 @@ pub async fn managed(
                 Some(s) => s,
                 None => panic!("验证步长已判定存在"),
             };
-            consume_totp_step_tx(&mut *c, &account, step)
+            crate::repo::mfa::consume_totp_step_tx(&mut *c, &account, step)
                 .await
                 .map_err(|_| MfaError::InputMsg("验证码校验失败".into()))?;
-            update_mfa_secret_tx(
+            crate::repo::mfa::update_mfa_secret_tx(
                 &mut *c,
                 target_id,
                 account.mfa_secret.as_deref(),
@@ -573,7 +483,7 @@ pub async fn managed(
             (json!({"id": target_id, "mfa_enabled": true}), "mfa_enable")
         }
         "disable" => {
-            update_mfa_secret_tx(
+            crate::repo::mfa::update_mfa_secret_tx(
                 &mut *c,
                 target_id,
                 None,
@@ -589,7 +499,7 @@ pub async fn managed(
         }
         _ => unreachable!("动作已校验"),
     };
-    super::repo::append_audit_tx(
+    crate::repo::append_audit_tx(
         &mut *c,
         &actor_locked,
         "admin_user",
@@ -613,12 +523,7 @@ pub async fn managed(
 
 /// 当前管理员 MFA 状态（GET /api/v1/admin/auth/mfa-settings）。
 pub async fn status(pool: &MySqlPool, admin_id: u64) -> Result<Value, MfaError> {
-    let enabled: Option<bool> = sqlx::query_scalar(
-        "SELECT `mfa_enabled` FROM `admin_user` WHERE `id` = ? AND `deleted_at` IS NULL",
-    )
-    .bind(admin_id)
-    .fetch_optional(pool)
-    .await?;
+    let enabled = crate::repo::mfa::mfa_enabled(pool, admin_id).await?;
     enabled
         .map(|mfa_enabled| json!({"mfa_enabled": mfa_enabled}))
         .ok_or(MfaError::Credentials)

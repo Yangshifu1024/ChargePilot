@@ -1,8 +1,27 @@
 //! `user` 表访问：登录建户、状态检查、profile 组合。
 
-use super::User;
 use chargepilot_mod_wallet::account;
 use sqlx::MySqlPool;
+
+/// 用户聚合（`user` 表行投影）。
+#[derive(Debug, Clone)]
+pub struct User {
+    pub id: u64,
+    pub openid: String,
+    pub nickname: Option<String>,
+    pub avatar_url: Option<String>,
+    pub phone: Option<String>,
+    pub status: chargepilot_domain::identity::UserStatus,
+}
+
+impl User {
+    pub fn is_active(&self) -> bool {
+        matches!(
+            self.status,
+            chargepilot_domain::identity::UserStatus::Active
+        )
+    }
+}
 
 /// 登录即恢复或建户：同事务完成「查/建用户 + 更新最近登录 + 零余额钱包」。
 /// openid 冲突（并发首登）依赖 `uk_live_openid` 唯一键报错，由调用方按存储失败处理。

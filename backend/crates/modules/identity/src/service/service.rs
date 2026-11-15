@@ -1,10 +1,10 @@
 //! 会话服务编排：登录 / 刷新 / 注销 / 实时鉴权 / profile。
 //! 错误到 HTTP 的映射在 http-api（保持旧版码值与文案）。
 
-use crate::repo::{self, UserProfile};
-use crate::session::{self, USER_TOKEN_LAYOUT};
-use crate::wechat::Exchanger;
-use crate::{IdentityError, User};
+use crate::repo::{self, user::UserProfile};
+use crate::service::session::{self, USER_TOKEN_LAYOUT};
+use crate::service::wechat::Exchanger;
+use crate::{IdentityError, repo::user::User};
 use chargepilot_platform::ids::SegmentAllocator;
 use sqlx::MySqlPool;
 

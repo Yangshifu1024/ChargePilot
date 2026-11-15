@@ -1,33 +1,13 @@
-//! 公告：后台发布（创建即 published，无草稿）与 C 端查询（仅 global 生效窗口内）。
+//! 公告用例：后台发布（创建即 published，无草稿）与 C 端查询（仅 global 生效窗口内）。
+//! SQL 在 repo/announcement.rs。
 
-use super::repo;
-use super::{OpsError, Profile};
+use crate::repo;
+use crate::repo::announcement;
+use crate::{OpsError, Profile};
 use serde_json::{Value, json};
 use sqlx::MySqlPool;
 
-#[derive(Debug, sqlx::FromRow, serde::Serialize)]
-pub struct AnnouncementRow {
-    pub id: u64,
-    pub title: String,
-    pub content: String,
-    pub scope: String,
-    pub target_ids: Option<serde_json::Value>,
-    pub status: String,
-    pub start_at: String,
-    pub end_at: Option<String>,
-}
-
-pub async fn list(pool: &MySqlPool) -> Result<Vec<AnnouncementRow>, OpsError> {
-    sqlx::query_as::<_, AnnouncementRow>(
-        "SELECT `id`, `title`, `content`, `scope`, `target_ids`, `status`, \
-                DATE_FORMAT(`start_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `start_at`, \
-                DATE_FORMAT(`end_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `end_at` \
-         FROM `announcement` WHERE `deleted_at` IS NULL ORDER BY `id` DESC",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(OpsError::from)
-}
+pub use crate::repo::announcement::{AnnouncementRow, PublicAnnouncement};
 
 pub struct PublishInput {
     pub title: String,
@@ -99,22 +79,18 @@ pub async fn publish(
         return Err(OpsError::Permission);
     }
     let id = allocator.next_id().await.map_err(OpsError::from)?;
-    sqlx::query(
-        "INSERT INTO `announcement` (`id`, `title`, `content`, `scope`, `target_ids`, `status`, `start_at`, `end_at`, `created_by`) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    announcement::insert_published_tx(
+        &mut tx,
+        id,
+        input.title.trim(),
+        &input.content,
+        scope,
+        targets.as_ref().unwrap_or(&Value::Null),
+        start.with_timezone(&chrono::Utc),
+        end,
+        actor.id,
     )
-    .bind(id)
-    .bind(input.title.trim())
-    .bind(&input.content)
-    .bind(scope)
-    .bind(&targets)
-    .bind(chargepilot_domain::operations::AnnouncementStatus::Published)
-    .bind(start.with_timezone(&chrono::Utc))
-    .bind(end)
-    .bind(actor.id)
-    .execute(&mut *tx)
-    .await
-    .map_err(OpsError::from)?;
+    .await?;
     let after = json!({"id": id, "title": input.title, "scope": input.scope, "status": "published", "created_by": actor.id});
     repo::append_audit_tx(
         &mut tx,
@@ -134,38 +110,17 @@ pub async fn publish(
     Ok(id)
 }
 
-/// C 端公告分页：仅 published + 生效窗口内 + scope=global。
-/// 未提供位置上下文，station/city 定向公告不进入全局列表（旧版
-/// AnnouncementQueryService.List 以 stationID=0 内存过滤，此处改为 SQL 过滤）。
-#[derive(Debug, sqlx::FromRow, serde::Serialize)]
-pub struct PublicAnnouncement {
-    pub id: u64,
-    pub title: String,
-    pub content: String,
-    pub start_at: String,
-    pub end_at: Option<String>,
+/// 后台公告列表。
+pub async fn list(pool: &MySqlPool) -> Result<Vec<AnnouncementRow>, OpsError> {
+    announcement::all_rows(pool).await
 }
 
+/// C 端公告分页。
 pub async fn public_list(
     pool: &MySqlPool,
     page: u32,
     page_size: u32,
 ) -> Result<(Vec<PublicAnnouncement>, u32, u32), OpsError> {
-    let rows = sqlx::query_as::<_, PublicAnnouncement>(
-        "SELECT `id`, `title`, `content`, \
-                DATE_FORMAT(`start_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `start_at`, \
-                DATE_FORMAT(`end_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `end_at` \
-         FROM `announcement` \
-         WHERE `deleted_at` IS NULL AND `status` = ? AND `scope` = ? \
-           AND `start_at` <= NOW(3) AND (`end_at` IS NULL OR `end_at` >= NOW(3)) \
-         ORDER BY `start_at` DESC, `id` DESC LIMIT ? OFFSET ?",
-    )
-    .bind(chargepilot_domain::operations::AnnouncementStatus::Published)
-    .bind(chargepilot_domain::operations::AnnouncementScope::Global)
-    .bind(page_size as i64)
-    .bind(((page - 1) as i64) * (page_size as i64))
-    .fetch_all(pool)
-    .await
-    .map_err(OpsError::from)?;
+    let rows = announcement::public_rows(pool, page, page_size).await?;
     Ok((rows, page, page_size))
 }

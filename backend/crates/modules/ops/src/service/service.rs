@@ -1,9 +1,9 @@
 //! 后台会话服务编排：登录（密码 → MFA）→ 签发；刷新；注销；实时鉴权。
 //! JWT（admin kind，8 小时）内带 sid，实时权限每次请求从库读取（不信任令牌内旧角色）。
 
-use super::repo;
-use super::session;
-use super::{AccountIdentity, OpsError, Profile};
+use crate::repo;
+use crate::session;
+use crate::{AccountIdentity, OpsError, Profile};
 use sqlx::MySqlPool;
 
 pub const ACCESS_TTL_SECS: u64 = chargepilot_platform::jwt::ADMIN_TTL_SECS;
@@ -132,7 +132,7 @@ impl<'a> SessionService<'a> {
         Ok((profile, claims.sid))
     }
 
-    async fn complete_login(&self, account: &super::AdminAccount) -> Result<AccessReply, OpsError> {
+    async fn complete_login(&self, account: &crate::AdminAccount) -> Result<AccessReply, OpsError> {
         let identity = AccountIdentity {
             id: account.id,
             auth_version: account.auth_version,

@@ -1,21 +1,19 @@
-//! 业务域模块：ops（后台账号、角色权限、审计、MFA、公告、仪表盘）。
-//! 跨域依赖（票 21 审计）：无——无跨域依赖（依赖图根；仅依赖 domain/platform/storage）。
-//! 依赖图无环（ops 为唯一根；order 不依赖 payment/wallet，无反向边）。
-//! 阶段 02 交付：后台登录（密码+MFA）、会话轮换、实时权限、审计与 bootstrap。
-//! 账号/角色管理 CRUD、公告、仪表盘随第二批落地。
+//! ops 域：后台账号、角色权限、审计、MFA、公告、仪表盘。
+//! 跨域依赖（票 21 审计）：无——依赖图根（仅依赖 domain/platform/storage）。
+//! 语义：后台登录（密码+MFA）、会话轮换、实时权限、审计与 bootstrap。
+//! 组织（蓝图第五章）：service/ 业务用例，repo/ 表访问；既有顶级模块路径
+//! （repo/scope/audit_query/dashboard/announcement/management/mfa/service/session）
+//! 全部经 re-export 保持。
 
 pub use error::{MfaError, OpsError};
 
-pub mod announcement;
-pub mod audit_query;
-pub mod dashboard;
 pub mod error;
-pub mod management;
-pub mod mfa;
 pub mod repo;
-pub mod scope;
 pub mod service;
-pub mod session;
+
+pub use repo::announcement::{AnnouncementRow, PublicAnnouncement};
+pub use repo::{audit_query, dashboard, scope};
+pub use service::{announcement, management, mfa, session};
 
 /// 后台账号行投影（不含口令散列等敏感列）。
 #[derive(Debug, Clone)]
@@ -34,7 +32,7 @@ pub struct AdminAccount {
     pub auth_version: u64,
 }
 
-/// 会话与登录挑战所需的最小身份（旧版 AccountIdentity 语义：凭证材料不入会话）。
+/// 会话与登录挑战所需的最小身份（凭证材料不入会话）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AccountIdentity {
     pub id: u64,
@@ -42,7 +40,7 @@ pub struct AccountIdentity {
     pub username: String,
 }
 
-/// 鉴权后管理员资料（JSON 键名与旧版逐字节一致；auth_version 不出网）。
+/// 鉴权后管理员资料（JSON 键名与契约逐字节一致；auth_version 不出网）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Profile {
     #[serde(skip)]

@@ -1,15 +1,19 @@
-//! 后台账号与角色管理：锁顺序固定为「customer_admin 角色行 → 操作者 → 目标行」，
-//! 最后管理员保护与越权校验在锁内复核（旧版语义）。审计与业务同事务提交。
+//! 后台账号与角色管理用例：锁顺序固定为「customer_admin 角色行 → 操作者 →
+//! 目标行」，最后管理员保护与越权校验在锁内复核。审计与业务同事务提交。
+//! SQL 原语在 repo/management.rs。
 
-use super::repo;
-use super::{OpsError, Profile};
+use crate::repo;
+use crate::repo::management;
+use crate::{OpsError, Profile};
 use serde_json::{Value, json};
 use sqlx::{MySqlConnection, MySqlPool};
+
+pub use crate::repo::management::{AdminUserRow, PermissionRow, RoleRow};
 
 const MODULE_ADMIN_USER: &str = "admin_user";
 const MODULE_ROLE: &str = "role";
 
-/// 分页参数（对齐旧版：page≥1、page_size 1–100 默认 20）。
+/// 分页参数（page≥1、page_size 1–100 默认 20）。
 #[derive(Debug, Clone, Copy)]
 pub struct Page {
     pub page: u32,
@@ -18,7 +22,7 @@ pub struct Page {
 
 impl Page {
     pub fn sanitized(page: i64, page_size: i64) -> anyhow::Result<Self> {
-        // 双轨上界（后台 100 万）与字段级文案经 domain::page 统一，行为与旧版一致。
+        // 双轨上界（后台 100 万）与字段级文案经 domain::page 统一。
         let (page, page_size) = match chargepilot_domain::page::PageRequest::admin(page, page_size)
         {
             Ok(p) => (p.page, p.page_size),
@@ -41,24 +45,6 @@ impl Page {
 // 账号管理
 // ---------------------------------------------------------------------------
 
-/// 账号列表行（字段与旧版一致）。
-#[derive(Debug, sqlx::FromRow, serde::Serialize)]
-pub struct AdminUserRow {
-    pub id: u64,
-    pub username: String,
-    pub display_name: Option<String>,
-    pub role_id: Option<u64>,
-    pub role_code: Option<String>,
-    pub role_name: Option<String>,
-    pub phone: Option<String>,
-    pub email: Option<String>,
-    pub status: chargepilot_domain::operations::AdminUserStatus,
-    pub mfa_enabled: bool,
-    pub last_login_at: Option<String>,
-    pub locked_until: Option<String>,
-    pub failed_login_count: u32,
-}
-
 pub async fn list_admin_users(
     pool: &MySqlPool,
     page: Page,
@@ -73,37 +59,9 @@ pub async fn list_admin_users(
             .replace('%', "!%")
             .replace('_', "!_")
     );
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM `admin_user` u WHERE u.`deleted_at` IS NULL \
-         AND (u.`username` LIKE ? ESCAPE '!' OR u.`display_name` LIKE ? ESCAPE '!') \
-         AND (? IS NULL OR u.`status` = ?)",
-    )
-    .bind(&kw)
-    .bind(&kw)
-    .bind(status)
-    .bind(status)
-    .fetch_one(pool)
-    .await?;
-    let rows = sqlx::query_as::<_, AdminUserRow>(
-        "SELECT u.`id`, u.`username`, u.`display_name`, u.`role_id`, r.`code` AS `role_code`, r.`name` AS `role_name`, \
-                u.`phone`, u.`email`, u.`status`, u.`mfa_enabled`, \
-                DATE_FORMAT(u.`last_login_at`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `last_login_at`, \
-                DATE_FORMAT(u.`locked_until`, '%Y-%m-%dT%H:%i:%s.%f+00:00') AS `locked_until`, \
-                u.`failed_login_count` \
-         FROM `admin_user` u LEFT JOIN `role` r ON r.`id` = u.`role_id` \
-         WHERE u.`deleted_at` IS NULL \
-           AND (u.`username` LIKE ? ESCAPE '!' OR u.`display_name` LIKE ? ESCAPE '!') \
-           AND (? IS NULL OR u.`status` = ?) \
-         ORDER BY u.`id` DESC LIMIT ? OFFSET ?",
-    )
-    .bind(&kw)
-    .bind(&kw)
-    .bind(status)
-    .bind(status)
-    .bind(page.page_size as i64)
-    .bind(page.offset())
-    .fetch_all(pool)
-    .await?;
+    let total = management::admin_count(pool, &kw, status).await?;
+    let rows =
+        management::admin_page(pool, &kw, status, page.page_size as i64, page.offset()).await?;
     Ok((rows, total))
 }
 
@@ -152,16 +110,15 @@ pub async fn create_admin(
         .await
         .map_err(OpsError::from)?;
     ensure_grant_allowed_tx(&mut tx, &actor_locked, &[input.role_id]).await?;
-    sqlx::query(
-        "INSERT INTO `admin_user` (`id`, `username`, `display_name`, `password_hash`, `role_id`, `phone`) VALUES (?, ?, ?, ?, ?, ?)",
+    management::insert_admin_tx(
+        &mut tx,
+        new_id,
+        &input.username,
+        &input.display_name,
+        hash,
+        input.role_id,
+        &input.phone,
     )
-    .bind(new_id)
-    .bind(&input.username)
-    .bind(&input.display_name)
-    .bind(hash)
-    .bind(input.role_id)
-    .bind(&input.phone)
-    .execute(&mut *tx)
     .await
     .map_err(|e| duplicate_or(e, "用户名已被使用"))?;
     let after = json!({"id": new_id, "username": input.username, "role_id": input.role_id, "status": "active"});
@@ -219,7 +176,7 @@ pub async fn update_admin(
         }
     }
     if let Some(s) = &input.status {
-        // 仅允许设置 active/disabled；locked 是登录风控专用状态（旧版语义）。
+        // 仅允许设置 active/disabled；locked 是登录风控专用状态。
         match chargepilot_domain::operations::AdminUserStatus::parse(s) {
             Ok(
                 chargepilot_domain::operations::AdminUserStatus::Active
@@ -263,39 +220,23 @@ pub async fn update_admin(
     }
     let mut sessions_revoked = false;
     if let Some(rid) = input.role_id {
-        sqlx::query("UPDATE `admin_user` SET `role_id` = ?, `auth_version` = `auth_version` + 1 WHERE `id` = ?")
-            .bind(rid).bind(target.id).execute(&mut *tx).await.map_err(OpsError::from)?;
+        management::set_admin_role_tx(&mut tx, rid, target.id).await?;
         sessions_revoked = true;
     }
     if let Some(s) = &input.status {
-        sqlx::query("UPDATE `admin_user` SET `status` = ?, `auth_version` = `auth_version` + 1 WHERE `id` = ?")
-            .bind(chargepilot_domain::operations::AdminUserStatus::parse(s).map_err(|_| OpsError::bad_input("账号状态无效"))?)
-            .bind(target.id).execute(&mut *tx).await.map_err(OpsError::from)?;
+        let status = chargepilot_domain::operations::AdminUserStatus::parse(s)
+            .map_err(|_| OpsError::bad_input("账号状态无效"))?;
+        management::set_admin_status_tx(&mut tx, status, target.id).await?;
         sessions_revoked = true;
     }
     if let Some(d) = &input.display_name {
-        sqlx::query("UPDATE `admin_user` SET `display_name` = ? WHERE `id` = ?")
-            .bind(d)
-            .bind(target.id)
-            .execute(&mut *tx)
-            .await
-            .map_err(OpsError::from)?;
+        management::set_admin_display_name_tx(&mut tx, d, target.id).await?;
     }
     if let Some(p) = &input.phone {
-        sqlx::query("UPDATE `admin_user` SET `phone` = ? WHERE `id` = ?")
-            .bind(p)
-            .bind(target.id)
-            .execute(&mut *tx)
-            .await
-            .map_err(OpsError::from)?;
+        management::set_admin_phone_tx(&mut tx, p, target.id).await?;
     }
     if let Some(e) = &input.email {
-        sqlx::query("UPDATE `admin_user` SET `email` = ? WHERE `id` = ?")
-            .bind(e)
-            .bind(target.id)
-            .execute(&mut *tx)
-            .await
-            .map_err(OpsError::from)?;
+        management::set_admin_email_tx(&mut tx, e, target.id).await?;
     }
     // 最后管理员保护：目标是 active 的 customer_admin 且无其他有效客户管理员 → 拒绝
     if (status_changed && input.status.as_deref() == Some("disabled") || role_changed)
@@ -360,16 +301,7 @@ pub async fn delete_admin(
             return Err(OpsError::conflict("必须保留至少一个有效的客户管理员账号"));
         }
     }
-    sqlx::query(
-        "UPDATE `admin_user` SET `deleted_at` = UTC_TIMESTAMP(3), `deleted_by` = ?, `status` = ?, \
-         `auth_version` = `auth_version` + 1 WHERE `id` = ?",
-    )
-    .bind(actor.id)
-    .bind(chargepilot_domain::operations::AdminUserStatus::Disabled)
-    .bind(target.id)
-    .execute(&mut *tx)
-    .await
-    .map_err(OpsError::from)?;
+    management::soft_delete_admin_tx(&mut tx, actor.id, target.id).await?;
     let before = admin_snapshot(&target);
     let after = json!({"deleted": true});
     repo::append_audit_tx(
@@ -409,15 +341,7 @@ pub async fn unlock_admin(
         .map_err(OpsError::from)?
         .ok_or_else(|| OpsError::bad_input("记录不存在或已删除"))?;
     if target.status != chargepilot_domain::operations::AdminUserStatus::Active {
-        sqlx::query(
-            "UPDATE `admin_user` SET `status` = ?, `failed_login_count` = 0, `locked_until` = NULL, \
-             `auth_version` = `auth_version` + 1 WHERE `id` = ?",
-        )
-        .bind(chargepilot_domain::operations::AdminUserStatus::Active)
-        .bind(target.id)
-        .execute(&mut *tx)
-        .await
-        .map_err(OpsError::from)?;
+        management::unlock_admin_tx(&mut tx, target.id).await?;
     }
     let after = json!({"unlocked": true});
     repo::append_audit_tx(
@@ -461,19 +385,8 @@ pub async fn reset_admin_password(
         .await
         .map_err(OpsError::from)?
         .ok_or_else(|| OpsError::bad_input("记录不存在或已删除"))?;
-    // 仅原状态为 locked 时恢复 active（停用账号重置密码后仍停用，旧版语义）
-    sqlx::query(
-        "UPDATE `admin_user` SET `password_hash` = ?, `auth_version` = `auth_version` + 1, \
-         `failed_login_count` = 0, `locked_until` = NULL, \
-         `status` = IF(`status` = ?, ?, `status`) WHERE `id` = ?",
-    )
-    .bind(chargepilot_domain::operations::AdminUserStatus::Locked)
-    .bind(chargepilot_domain::operations::AdminUserStatus::Active)
-    .bind(hash)
-    .bind(target.id)
-    .execute(&mut *tx)
-    .await
-    .map_err(OpsError::from)?;
+    // 仅原状态为 locked 时恢复 active（停用账号重置密码后仍停用）
+    management::reset_password_tx(&mut tx, hash, target.id).await?;
     let after = json!({"sessions_revoked": true});
     repo::append_audit_tx(
         &mut tx,
@@ -497,25 +410,8 @@ pub async fn reset_admin_password(
 // 角色管理
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, sqlx::FromRow, serde::Serialize)]
-pub struct RoleRow {
-    pub id: u64,
-    pub code: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub is_builtin: bool,
-    pub permissions: Option<serde_json::Value>,
-    pub user_count: i64,
-}
-
 pub async fn list_roles(pool: &MySqlPool) -> Result<Vec<RoleRow>, OpsError> {
-    let mut roles = sqlx::query_as::<_, RoleRow>(
-        "SELECT r.`id`, r.`code`, r.`name`, r.`description`, r.`is_builtin`, NULL AS `permissions`, \
-                (SELECT COUNT(*) FROM `admin_user` u WHERE u.`role_id` = r.`id` AND u.`deleted_at` IS NULL) AS `user_count` \
-         FROM `role` r WHERE r.`deleted_at` IS NULL ORDER BY r.`id`",
-    )
-    .fetch_all(pool)
-    .await?;
+    let mut roles = management::role_rows(pool).await.map_err(OpsError::from)?;
     for role in &mut roles {
         let codes = if role.id > 0 {
             repo::permission_codes(pool, role.id).await?
@@ -528,23 +424,8 @@ pub async fn list_roles(pool: &MySqlPool) -> Result<Vec<RoleRow>, OpsError> {
     Ok(roles)
 }
 
-#[derive(Debug, sqlx::FromRow, serde::Serialize)]
-pub struct PermissionRow {
-    pub id: u64,
-    pub code: String,
-    pub name: String,
-    pub module: String,
-    pub description: String,
-}
-
 pub async fn list_permissions(pool: &MySqlPool) -> Result<Vec<PermissionRow>, OpsError> {
-    sqlx::query_as::<_, PermissionRow>(
-        "SELECT `id`, `code`, `name`, `module`, COALESCE(`description`, '') AS `description` \
-         FROM `permission` ORDER BY `module`, `code`",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(OpsError::from)
+    management::permission_rows(pool).await
 }
 
 pub struct RoleInput {
@@ -603,16 +484,21 @@ pub async fn create_role(
         .await
         .map_err(OpsError::from)?;
     validate_grant_tx(&mut tx, &actor_locked, &input.permissions).await?;
-    let id = next_role_id_tx(&mut tx).await?;
-    sqlx::query("INSERT INTO `role` (`id`, `code`, `name`, `description`, `is_builtin`) VALUES (?, ?, ?, ?, 0)")
-        .bind(id)
-        .bind(&input.code)
-        .bind(input.name.trim())
-        .bind(&input.description)
-        .execute(&mut *tx)
+    let id = management::next_role_id_tx(&mut tx)
         .await
-        .map_err(|e| duplicate_or(e, "编码已存在，请使用其他编码"))?;
-    replace_role_permissions_tx(&mut tx, id, &input.permissions).await?;
+        .map_err(OpsError::from)?;
+    management::insert_role_tx(
+        &mut tx,
+        id,
+        &input.code,
+        input.name.trim(),
+        &input.description,
+    )
+    .await
+    .map_err(|e| duplicate_or(e, "编码已存在，请使用其他编码"))?;
+    management::replace_role_permissions_tx(&mut tx, id, &input.permissions)
+        .await
+        .map_err(OpsError::from)?;
     let after =
         json!({"id": id, "code": input.code, "name": input.name, "permissions": input.permissions});
     repo::append_audit_tx(
@@ -649,14 +535,9 @@ pub async fn update_role(
     let actor_locked = repo::lock_actor_tx(&mut tx, actor.id)
         .await
         .map_err(OpsError::from)?;
-    let existing = sqlx::query_as::<_, (u64, String, i64)>(
-        "SELECT `id`, `name`, `is_builtin` FROM `role` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
-    )
-    .bind(role_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(OpsError::from)?
-    .ok_or_else(|| OpsError::not_found("角色不存在"))?;
+    let existing = management::lock_role_name_tx(&mut tx, role_id)
+        .await?
+        .ok_or_else(|| OpsError::not_found("角色不存在"))?;
     let before_permissions: Vec<String> = if existing.2 == 1 {
         repo::permission_codes(pool, role_id)
             .await
@@ -665,16 +546,12 @@ pub async fn update_role(
         Vec::new()
     };
     let permissions_locked = existing.2 == 1;
-    sqlx::query("UPDATE `role` SET `name` = ?, `description` = ? WHERE `id` = ?")
-        .bind(input.name.trim())
-        .bind(&input.description)
-        .bind(role_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(OpsError::from)?;
+    management::update_role_tx(&mut tx, role_id, input.name.trim(), &input.description).await?;
     if !permissions_locked {
         validate_grant_tx(&mut tx, &actor_locked, &input.permissions).await?;
-        replace_role_permissions_tx(&mut tx, role_id, &input.permissions).await?;
+        management::replace_role_permissions_tx(&mut tx, role_id, &input.permissions)
+            .await
+            .map_err(OpsError::from)?;
     }
     let after = if permissions_locked {
         json!({"id": role_id, "name": input.name, "permissions_locked": true, "permissions_unchanged": before_permissions})
@@ -713,14 +590,9 @@ pub async fn delete_role(
     let actor_locked = repo::lock_actor_tx(&mut tx, actor.id)
         .await
         .map_err(OpsError::from)?;
-    let existing = sqlx::query_as::<_, (u64, i64, Option<String>)>(
-        "SELECT `id`, `is_builtin`, `code` FROM `role` WHERE `id` = ? AND `deleted_at` IS NULL FOR UPDATE",
-    )
-    .bind(role_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(OpsError::from)?
-    .ok_or_else(|| OpsError::not_found("角色不存在"))?;
+    let existing = management::lock_role_delete_tx(&mut tx, role_id)
+        .await?
+        .ok_or_else(|| OpsError::not_found("角色不存在"))?;
     if existing.1 == 1 {
         return Err(OpsError::conflict(
             "内置角色不可删除：它承载运营自身的访问权限",
@@ -729,24 +601,12 @@ pub async fn delete_role(
     if actor.role_id == role_id {
         return Err(OpsError::conflict("不能删除自己正在使用的角色"));
     }
-    let users: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM `admin_user` WHERE `role_id` = ? AND `deleted_at` IS NULL FOR UPDATE",
-    )
-    .bind(role_id)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(OpsError::from)?;
+    let users = management::role_user_count_tx(&mut tx, role_id).await?;
     if users > 0 {
         return Err(OpsError::conflict("该角色下仍有账号，请先改派后再删除"));
     }
-    sqlx::query("UPDATE `role` SET `deleted_at` = UTC_TIMESTAMP(3) WHERE `id` = ?")
-        .bind(role_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(OpsError::from)?;
-    sqlx::query("DELETE FROM `role_permission` WHERE `role_id` = ?")
-        .bind(role_id)
-        .execute(&mut *tx)
+    management::soft_delete_role_tx(&mut tx, role_id).await?;
+    management::delete_role_permissions_tx(&mut tx, role_id)
         .await
         .map_err(OpsError::from)?;
     let after = json!({"id": role_id, "code": existing.2});
@@ -811,38 +671,7 @@ async fn validate_grant_tx(
     Ok(())
 }
 
-async fn replace_role_permissions_tx(
-    tx: &mut MySqlConnection,
-    role_id: u64,
-    codes: &[String],
-) -> anyhow::Result<()> {
-    sqlx::query("DELETE FROM `role_permission` WHERE `role_id` = ?")
-        .bind(role_id)
-        .execute(&mut *tx)
-        .await?;
-    for code in codes {
-        let code = code.trim();
-        if code.is_empty() {
-            continue;
-        }
-        sqlx::query("INSERT INTO `role_permission` (`role_id`, `permission_id`) SELECT ?, `id` FROM `permission` WHERE `code` = ?")
-            .bind(role_id)
-            .bind(code)
-            .execute(&mut *tx)
-            .await?;
-    }
-    Ok(())
-}
-
-async fn next_role_id_tx(tx: &mut MySqlConnection) -> anyhow::Result<u64> {
-    // 角色 ID 独立于号段（旧版为 AUTO_INCREMENT 语义；此处取 max+1，管理低频足够）
-    let max: Option<u64> = sqlx::query_scalar("SELECT COALESCE(MAX(`id`), 0) FROM `role`")
-        .fetch_one(&mut *tx)
-        .await?;
-    Ok(max.unwrap_or(0) + 1)
-}
-
-fn admin_snapshot(a: &super::AdminAccount) -> Value {
+fn admin_snapshot(a: &crate::AdminAccount) -> Value {
     json!({
         "id": a.id, "username": a.username, "display_name": a.display_name,
         "role_id": a.role_id, "status": a.status, "mfa_enabled": a.mfa_enabled,

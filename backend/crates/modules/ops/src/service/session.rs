@@ -1,7 +1,7 @@
 //! 后台会话（`ART_` / `admin:session:`，7 天绝对寿命 + Lua 轮换）、
 //! MFA 挑战（`admin:mfa:<token>`，5 分钟）与登录频次（`admin:login-rate:<ip>`，60 秒窗口）。
 
-use super::{AccountIdentity, OpsError};
+use crate::{AccountIdentity, OpsError};
 use chargepilot_platform::sessiontoken::{Layout, REVOKE_SCRIPT, ROTATE_SCRIPT, digest};
 
 pub const REFRESH_TTL_SECS: u64 = 7 * 24 * 3600;
