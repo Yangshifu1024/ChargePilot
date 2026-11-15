@@ -86,7 +86,7 @@ async fn list_invoices(
     if let Some(resp) = deny(&guard, "finance.read", &rid) {
         return resp;
     }
-    match chargepilot_mod_settlement::invoice_admin::list_invoice_requests(&deps.db).await {
+    match chargepilot_mod_settlement::repo::invoice_admin::list_invoice_requests(&deps.db).await {
         Ok(items) => httpx::ok(json!({ "items": items }), &rid),
         Err(e) => {
             tracing::warn!(error = %e, "发票队列读取失败");

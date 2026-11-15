@@ -199,21 +199,34 @@ pub async fn list_user_bills(
     if rows.is_empty() {
         return Ok((Vec::new(), total));
     }
-    // 已读状态补查（旧版按用户 + 账单 ID 集合查 charge_bill_read）。
-    // 每页上限 100 行，按主键前缀逐行点查代价可忽略；一行查询失败整体返回，
-    // 由 HTTP 层按 503 兜底（旧版「已读查询失败按未读展示」的容错在用户可见
-    // 语义上等价于未读，此处选择显式失败以暴露存储异常）。
-    let mut items = Vec::with_capacity(rows.len());
-    for row in &rows {
-        use sqlx::Row;
-        let bill_id: u64 = row
-            .try_get::<String, _>(0)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-        let read = bill::bill_read_flag(pool, user_id, bill_id).await?;
-        items.push(bill::bill_row_value(row, read.is_some()));
-    }
+    // 已读状态批量补查（旧版按用户 + 账单 ID 集合查 charge_bill_read；本页
+    // 逐行点查的取舍在页容量 ≤100 的前提下成立，收敛为一条 IN 单次往返，
+    // 语义不变）：一行查询失败整体返回，由 HTTP 层按 503 兜底（旧版「已读
+    // 查询失败按未读展示」的容错在用户可见语义上等价于未读，此处选择显式
+    // 失败以暴露存储异常）。
+    let bill_ids: Vec<u64> = rows
+        .iter()
+        .map(|row| {
+            use sqlx::Row;
+            row.try_get::<String, _>(0)
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0)
+        })
+        .collect();
+    let read_flags = bill::bill_read_flags(pool, user_id, &bill_ids).await?;
+    let items = rows
+        .iter()
+        .map(|row| {
+            use sqlx::Row;
+            let bill_id: u64 = row
+                .try_get::<String, _>(0)
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            bill::bill_row_value(row, read_flags.contains(&bill_id))
+        })
+        .collect();
     Ok((items, total))
 }
 

@@ -12,11 +12,6 @@ use sqlx::{Acquire, MySqlPool};
 
 pub use crate::repo::invoice_admin::InvoiceAdminRow;
 
-/// 全量倒序读取未删除发票申请及人工队列结论（旧版 ListInvoiceRequests）。
-pub async fn list_invoice_requests(db: &MySqlPool) -> Result<Vec<InvoiceAdminRow>, anyhow::Error> {
-    Ok(repo::list_invoice_requests(db).await?)
-}
-
 /// 执行发票通过或驳回（旧版 InvoiceReviewService.Review + InvoiceReviewRepo.Review）。
 /// 审核人角色与权限在本函数内实时复核；二审通过前用事务内一致读取复查首位
 /// 审核人的当前角色与权限（旧版 LookupReviewer 语义）。

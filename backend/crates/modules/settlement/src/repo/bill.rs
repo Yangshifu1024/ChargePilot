@@ -214,21 +214,6 @@ pub async fn bill_page_rows(
         .await
 }
 
-/// 已读标记点查（每页上限 100 行，按主键前缀逐行点查代价可忽略）。
-pub async fn bill_read_flag(
-    pool: &MySqlPool,
-    user_id: u64,
-    bill_id: u64,
-) -> Result<Option<i64>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT 1 FROM `charge_bill_read` WHERE `user_id` = ? AND `bill_id` = ? LIMIT 1",
-    )
-    .bind(user_id as i64)
-    .bind(bill_id as i64)
-    .fetch_optional(pool)
-    .await
-}
-
 /// 归属校验：取账单分区月份（不存在或不属于该用户同为 None）。
 pub async fn bill_month(
     pool: &MySqlPool,
@@ -259,4 +244,26 @@ pub async fn insert_bill_read_tx(
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// 批量已读标记（用户 + 本页账单 ID 集合）：一条 IN 查询替代逐行点查。
+pub async fn bill_read_flags(
+    pool: &MySqlPool,
+    user_id: u64,
+    bill_ids: &[u64],
+) -> Result<std::collections::HashSet<u64>, sqlx::Error> {
+    if bill_ids.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let placeholders = vec!["?"; bill_ids.len()].join(", ");
+    let sql = format!(
+        "SELECT CAST(`bill_id` AS CHAR) FROM `charge_bill_read` \
+         WHERE `user_id` = ? AND `bill_id` IN ({placeholders})"
+    );
+    let mut query = sqlx::query_scalar::<_, String>(&sql).bind(user_id as i64);
+    for id in bill_ids {
+        query = query.bind(*id as i64);
+    }
+    let rows = query.fetch_all(pool).await?;
+    Ok(rows.into_iter().filter_map(|s| s.parse().ok()).collect())
 }
