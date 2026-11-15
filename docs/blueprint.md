@@ -71,7 +71,8 @@ backend/crates/
 domain                → 无
 platform / storage    → 无
 protocol*             → protocol（实现 crate 只依赖契约）
-events                → platform
+events                → platform + domain（词表宏复用；该依赖 Cargo.toml 初始即有，
+                        2026-11-15 修正记载并转正为 wordlist_enum! 消费）
 modules/<域>          → domain + platform + events（后两者按需）+ 显式列出的其它 modules
                         （Cargo.toml 即依赖清单；跨域依赖须有业务理由注释）
 gateway-runtime       → protocol* + events + domain + platform + storage + 其用到的 modules

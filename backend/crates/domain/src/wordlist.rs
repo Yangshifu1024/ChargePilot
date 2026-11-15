@@ -8,6 +8,9 @@
 //! `<str>::compatible`（接受 Enum 列且非 BINARY），解码按字面量 parse，
 //! 未知值即 schema 漂移报警（严格失败）。
 
+/// 词表枚举生成（跨 crate 经 `chargepilot_domain::wordlist_enum!` 使用；
+/// crate 内部沿用既有路径）。
+#[macro_export]
 macro_rules! wordlist_enum {
     (
         $(#[$meta:meta])*
@@ -67,4 +70,7 @@ macro_rules! wordlist_enum {
     };
 }
 
-pub(crate) use wordlist_enum;
+/// 兼容路径：crate 内部既有 `use crate::wordlist::wordlist_enum` 引用
+/// 不变；宏本体已 #[macro_export] 至 crate 根（跨 crate 用
+/// `chargepilot_domain::wordlist_enum!`）。
+pub use wordlist_enum;

@@ -84,65 +84,18 @@ pub mod kind {
     pub const DEVICE_EVENT: &str = EventKind::DeviceEvent.as_str();
 }
 
-/// domain_event.status 列的投递状态（四值；pending 领取中、
-/// published 处理器已确认、failed 待退避重排、dead 重试上限后死信终态）。
-/// sqlx 三件套手写（与 domain wordlist_enum! 同款打样范式；events 是
-/// domain 外的独立 crate，宏保持 pub(crate) 不跨 crate 导出）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EventDeliveryStatus {
-    Pending,
-    Published,
-    Failed,
-    Dead,
-}
-
-impl EventDeliveryStatus {
-    /// DB 字面量锚点（列无约束 VARCHAR，dead 为词表扩展值）。
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Published => "published",
-            Self::Failed => "failed",
-            Self::Dead => "dead",
-        }
+chargepilot_domain::wordlist_enum!(
+    /// domain_event.status 列的投递状态（四值；pending 领取中、
+    /// published 处理器已确认、failed 待退避重排、dead 重试上限后死信终态）。
+    /// 词表宏生成（架构评审遗留 A：宏自 domain 导出，手抄三件套与既有
+    /// 文案漂移随此消除）。
+    EventDeliveryStatus: {
+        Pending = "pending",
+        Published = "published",
+        Failed = "failed",
+        Dead = "dead",
     }
-}
-
-impl sqlx::Type<sqlx::MySql> for EventDeliveryStatus {
-    fn type_info() -> sqlx::mysql::MySqlTypeInfo {
-        <str as sqlx::Type<sqlx::MySql>>::type_info()
-    }
-
-    fn compatible(ty: &sqlx::mysql::MySqlTypeInfo) -> bool {
-        <str as sqlx::Type<sqlx::MySql>>::compatible(ty)
-    }
-}
-
-impl<'de> sqlx::Decode<'de, sqlx::MySql> for EventDeliveryStatus {
-    fn decode(value: sqlx::mysql::MySqlValueRef<'de>) -> Result<Self, sqlx::error::BoxDynError> {
-        let literal = <&str as sqlx::Decode<sqlx::MySql>>::decode(value)?;
-        Ok(match literal {
-            "pending" => Self::Pending,
-            "published" => Self::Published,
-            "failed" => Self::Failed,
-            "dead" => Self::Dead,
-            other => {
-                return Err(format!("未知字面量 `{other}`（词表 EventDeliveryStatus）").into());
-            }
-        })
-    }
-}
-
-impl sqlx::Encode<'_, sqlx::MySql> for EventDeliveryStatus {
-    fn encode_by_ref(
-        &self,
-        buf: &mut Vec<u8>,
-    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-        <&str as sqlx::Encode<sqlx::MySql>>::encode(self.as_str(), buf)
-    }
-}
+);
 
 /// 已入队待投递的事件行（`domain_event` 读模型）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
