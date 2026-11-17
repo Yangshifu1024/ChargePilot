@@ -1,7 +1,7 @@
-//! 词表枚举生成宏（票 06 打样范式，全域共享）。
+//! 词表枚举生成宏（全域共享）。
 //!
 //! sqlx 三件套为什么手写：sqlx 0.8.6 派生强枚举只生成
-//! `type_info() = MySqlTypeInfo::__enum()`（type=String + ENUM 标志，
+//! `type_info = MySqlTypeInfo::__enum`（type=String + ENUM 标志，
 //! 为参数绑定设计），不覆写 `compatible`，解码走默认严格类型相等——
 //! 而 MySQL 结果集把 ENUM 列报告为 `ColumnType::Enum`，两者永不相等，
 //! 连 `CAST AS CHAR`（VarString）也被拒。因此兼容判定委托

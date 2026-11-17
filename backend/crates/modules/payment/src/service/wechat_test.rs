@@ -1,4 +1,4 @@
-//! 微信 APIv3 封装的官方规范测试向量与安全属性（批 6c 验收核心）。
+//! 微信 APIv3 封装的官方规范测试向量与安全属性。
 //! 覆盖：签名串构造与 SHA256withRSA round-trip、平台验签（篡改拒绝）、
 //! 回调 AES-256-GCM 解密（官方结构 + 篡改拒绝）、敏感信息 RSA-OAEP round-trip、
 //! JSAPI 下单桩流程（Authorization 头与拉起参数组装）。

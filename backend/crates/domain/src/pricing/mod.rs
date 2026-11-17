@@ -1,4 +1,4 @@
-//! 计费域共享词表（对照表 pricing 节收尾；S3 批次拆票遗漏，随收尾补齐）。
+//! 计费域共享词表（词表补齐）。
 
 use crate::wordlist::wordlist_enum;
 

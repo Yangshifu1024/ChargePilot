@@ -1,4 +1,4 @@
-//! 运营域后台门面（票 18 冷区批）：账号管理（原 admin_management.rs）。
+//! 运营域后台门面：管理员账号与权限管理。
 
 use crate::errormap::ops_error;
 use crate::errormap::rid_of;

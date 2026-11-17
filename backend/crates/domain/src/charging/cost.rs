@@ -1,5 +1,4 @@
 //! Cost 计费引擎：分时段功率/电量计价、费用片段与计量截止冻结。
-//! 语义基准：旧仓库 internal/domain/charging/{cost,scheme_cost,breakdown}.go，逐行对齐。
 
 use crate::charging::spec::{
     BillingError, ChargeMode, MAX_SLICES, Spec, Usage, beijing, compile_periods, div_prec16,
@@ -10,7 +9,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// 计价结果：Basis 保留计价规则供展示单位（旧版 Fee）。
+/// 计价结果：Basis 保留计价规则供展示单位。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Fee {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -23,13 +22,13 @@ pub struct Fee {
     pub billable_wh: u64,
 }
 
-/// 区间用量、单价和取整前费用，用于解释 Cost 的合计结果（旧版 FeeFragment）。
+/// 区间用量、单价和取整前费用，用于解释 Cost 的合计结果。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FeeFragment {
     pub started_at: String,
     pub ended_at: String,
     pub power_w: u32,
-    /// 固定 6 位小数的数量文本（shopspring StringFixed(6) 契约）。
+    /// 固定 6 位小数的数量文本。
     pub quantity: String,
     pub unit: String,
     pub electric_rate: i64,
@@ -38,7 +37,7 @@ pub struct FeeFragment {
     pub service_cents: String,
 }
 
-/// 时间输出格式与旧版 JSON 序列化对齐（RFC3339 纳秒、UTC Z 后缀）。
+/// 时间输出格式与 JSON 序列化对齐（RFC3339 纳秒、UTC Z 后缀）。
 fn fmt_time(t: DateTime<Utc>) -> String {
     t.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
 }
@@ -88,7 +87,7 @@ pub fn tier_for(period: &crate::charging::spec::Period, watts: u32) -> crate::ch
         })
 }
 
-/// 时刻所属费率时段；配置非法时返回零值时段（调用方校验在先，与旧版一致）。
+/// 时刻所属费率时段；配置非法时返回零值时段（调用方校验在先，与一致）。
 pub fn period_at(spec: &Spec, at: DateTime<Utc>) -> crate::charging::spec::Period {
     let Some(electric) = &spec.electric else {
         return Default::default();
@@ -104,7 +103,7 @@ pub fn period_at(spec: &Spec, at: DateTime<Utc>) -> crate::charging::spec::Perio
 use chrono::Timelike;
 
 /// Cost：按 spec 和 usage 计算电费、服务费，合计后各自四舍五入到分。
-/// 功率计费只收完整分钟；规则无效、非服务端计费或计量不足时返回错误（旧版 costUsage）。
+/// 功率计费只收完整分钟；规则无效、非服务端计费或计量不足时返回错误。
 pub fn cost(spec: &Spec, usage: &Usage) -> Result<Fee, BillingError> {
     validate_spec(spec)?;
     if !spec.mode.server_billed() {
@@ -112,7 +111,7 @@ pub fn cost(spec: &Spec, usage: &Usage) -> Result<Fee, BillingError> {
     }
     let (start, end) = match (usage.start, usage.end) {
         (Some(s), Some(e)) => (s, e),
-        _ => return Err(BillingError::InvalidPricing), // 旧版 IsZero 检查
+        _ => return Err(BillingError::InvalidPricing), // 零值规则视为无效
     };
     if end < start || end - start > Duration::days(7) {
         return Err(BillingError::InvalidPricing);
@@ -148,7 +147,7 @@ pub fn cost(spec: &Spec, usage: &Usage) -> Result<Fee, BillingError> {
     let mut total_wh = 0u64;
     let mut electric = Decimal::ZERO;
     let mut service = Decimal::ZERO;
-    // 最大功率聚合：key = 北京日期 + 时段边界时间（旧版 map key "2006-01-02"+"15:04"）
+    // 最大功率聚合：key = 北京日期 + 时段边界时间
     struct PeakPeriod {
         start: DateTime<Utc>,
         time_end: DateTime<Utc>,
@@ -289,7 +288,7 @@ pub fn cost(spec: &Spec, usage: &Usage) -> Result<Fee, BillingError> {
 
 /// 返回截至 cutoff 的计量；截止点不早于结束时原样返回，早于开始时返回 MeterReview。
 /// 电量计费须有截止读数；功率计费须有该段功率，最大功率还要求该段峰值不高于该功率
-/// （旧版 CutoffMeter；ActualMeter 定义见 charging_actual）。
+/// 。
 pub fn cutoff_meter(
     spec: &Spec,
     m: &crate::charging::actual::ActualMeter,

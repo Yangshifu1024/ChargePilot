@@ -1,5 +1,5 @@
 //! ops 域：后台账号、角色权限、审计、MFA、公告、仪表盘。
-//! 跨域依赖（票 21 审计）：无——依赖图根（仅依赖 domain/platform/storage）。
+//! 跨域依赖：无——依赖图根（仅依赖 domain/platform/storage）。
 //! 语义：后台登录（密码+MFA）、会话轮换、实时权限、审计与 bootstrap。
 //! 组织（蓝图第五章）：service/ 业务用例，repo/ 表访问；既有顶级模块路径
 //! （repo/scope/audit_query/dashboard/announcement/management/mfa/service/session）
@@ -41,7 +41,7 @@ pub struct AccountIdentity {
     pub username: String,
 }
 
-/// 鉴权后管理员资料（JSON 键名与契约逐字节一致；auth_version 不出网）。
+/// 鉴权后管理员资料（JSON 键名与契约一致；auth_version 不出网）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Profile {
     #[serde(skip)]

@@ -27,10 +27,10 @@ impl From<serde_json::Error> for DeviceError {
 /// 扫码域错误（HTTP 层映射：NotFound → 404 1004，Storage → 503 5001）。
 #[derive(Debug, thiserror::Error)]
 pub enum ScanError {
-    /// 扫描码未匹配到可用设备或端口（旧版 ErrScanNotFound）。
+    /// 扫描码未匹配到可用设备或端口。
     #[error("scan code not found")]
     NotFound,
-    /// 中央运营状态缺失或读取失败（旧版按非 NotFound 错误处理 → 503）。
+    /// 中央运营状态缺失或读取失败。
     #[error(transparent)]
     Storage(#[from] anyhow::Error),
 }

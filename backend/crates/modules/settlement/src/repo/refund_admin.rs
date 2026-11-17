@@ -8,8 +8,8 @@ use chargepilot_domain::money::{
 use chargepilot_domain::order::ChargeOrderStatus;
 use sqlx::{MySqlConnection, MySqlPool};
 
-/// 退款列表行（旧版 GORM map 投影定形：refund_record 全列 + refund_review 右表列；
-/// 有审核记录时 created_at 取审核记录创建时间，与旧版右表覆盖行为一致）。
+/// 退款列表行：`refund_record` 全列 LEFT JOIN `refund_review`；
+/// `created_at` 为 COALESCE(审核记录创建时间, 退款记录创建时间)。
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct RefundAdminRow {
     pub id: u64,
@@ -36,7 +36,7 @@ pub struct RefundAdminRow {
     pub next_attempt_at: String,
     /// 以下为 refund_review 列（无审核记录时全为 null）。
     pub refund_record_id: Option<u64>,
-    /// 首审快照原文（旧版输出为 JSON 文本字符串，不内嵌对象）。
+    /// 首审快照原文。
     pub snapshot_json: Option<String>,
     pub first_signer: Option<u64>,
     pub first_comment: Option<String>,
@@ -77,7 +77,7 @@ pub async fn refund_count(
     count_query.fetch_one(db).await
 }
 
-/// 分页倒序读取未删除退款及最近人工复核（旧版 ListRefunds）。
+/// 分页倒序读取未删除退款及最近人工复核。
 pub async fn refund_rows(
     db: &MySqlPool,
     where_sql: &str,

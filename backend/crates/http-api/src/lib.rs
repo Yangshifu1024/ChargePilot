@@ -12,7 +12,7 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use chargepilot_platform::error::{ApiError, Code};
 
-/// 业务路由 + 健康检查 + 指标 + /admin 静态资源（SPA fallback，票 22 嵌入）。
+/// 组装业务路由、健康检查、指标与 /admin、/h5 静态资源（含 SPA fallback）。
 /// 前端产物经编译期嵌入（assets-admin / assets-h5 叶子 crate）；产物缺失
 /// （本地未构建前端）时嵌入为空集合，静态路由不挂载。
 pub async fn build_router(
@@ -20,7 +20,7 @@ pub async fn build_router(
     prometheus: metrics_exporter_prometheus::PrometheusHandle,
 ) -> axum::Router {
     let mut app = axum::Router::new()
-        // 域路由注册绑定装配开关（票 17）：开关开启后该域路由才存在，
+        // 域路由注册绑定装配开关：开关开启后该域路由才存在，
         // 域处理器对服务的取用必达（ChargingStopState/PaymentState 等）。
         .merge(if deps.wallet.is_some() {
             views::wallet::user::refund_router()
@@ -75,8 +75,7 @@ pub async fn build_router(
         )
         .fallback(not_found)
         .with_state(deps);
-    // 票 22：编译期嵌入静态产物（磁盘挂载与 ADMIN_STATIC_DIR/H5_STATIC_DIR
-    // 环境变量退役）。产物缺失时嵌入为空集合，路由不挂载（404 可见即诊断）。
+    // 管理端与 H5 静态资源编译期嵌入；本地未构建前端时嵌入为空，对应路由不挂载。
     if !chargepilot_assets_admin::is_empty() {
         app = app
             // 根路由显式登记：axum 0.8 通配 {*rest} 不匹配空尾，/admin 与
@@ -221,6 +220,5 @@ async fn not_found(headers: axum::http::HeaderMap) -> Response {
     chargepilot_platform::httpx::error(&api, &rid)
 }
 
-// 票 17 收编：bearer/respond/identity_error 定义归 errormap（下方 re-export
-// 保持既有 crate::respond / crate::bearer 引用路径不变）。
+// 对外 re-export，保持 `crate::respond` / `crate::bearer` 等调用路径不变。
 pub use errormap::{bearer, identity_error, phone_error, respond};

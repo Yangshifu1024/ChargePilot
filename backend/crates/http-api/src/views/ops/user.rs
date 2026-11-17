@@ -1,4 +1,4 @@
-//! 运营域用户端门面（票 18 冷区批：原 user_ops.rs 归位）。
+//! 运营域用户端门面。
 
 use crate::params::UserPaging;
 use crate::state::ApiDeps;

@@ -1,4 +1,4 @@
-//! 结算域共享词表（票 08）：计费任务、计量复核、发票与人工费用复核。
+//! 结算域共享词表：计费任务、计量复核、发票与人工费用复核。
 
 use crate::wordlist::wordlist_enum;
 
@@ -62,7 +62,7 @@ wordlist_enum!(
 mod tests {
     use super::*;
 
-    /// 字面量对照（票 08 硬规则）：serde 输出与 DB ENUM 字面量逐字节一致。
+    /// 字面量对照：serde 输出与 DB ENUM 字面量逐字节一致。
     #[test]
     fn db_literals_match_serde() {
         use serde_json::to_string as json;

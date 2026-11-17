@@ -1,9 +1,9 @@
-//! 微信支付 APIv3 自研封装（旧版 channel_wechat.go 的单体对应物）。
+//! 微信支付 APIv3 自研封装。
 //! 覆盖：请求签名（SHA256withRSA + Authorization 头）、平台证书验签、
 //! 回调资源 AES-256-GCM 解密、敏感信息 RSA-OAEP 加密、退款请求构造。
 //! HTTP 外呼经 [`HttpExecutor`] 窄接口注入：单元测试用内存桩，
 //! 进程装配按 PAYMENT_MODE 选择 simulation 或 wechat_direct（真实商户联调
-//! 属上线前清单，本阶段以官方测试向量与桩流程验收）。
+//! 真实联调前以官方测试向量与桩流程验收）。
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
@@ -28,7 +28,7 @@ pub struct WechatConfig {
     pub api_v3_key: [u8; 32],
 }
 
-/// 微信凭据原始字符串组（票 16：环境读取上移统一配置，本域只解析）。
+/// 微信凭据原始字符串组。
 #[derive(Debug, Clone, Default)]
 pub struct WechatCredsRaw {
     pub mch_id: String,
@@ -256,7 +256,7 @@ pub trait HttpExecutor: Send + Sync {
     ) -> WechatHttpFuture<'a>;
 }
 
-/// 真实外呼执行器：显式未实现（旧版原则——适配器存在不代表外呼可用）。
+/// 真实外呼执行器：显式未实现。
 /// 签名、请求体与响应解析已就绪并有测试覆盖；接通 TLS 外呼（reqwest）
 /// 属上线前清单，接入前 wechat_direct 模式的预支付会明确失败而非假装成功。
 pub struct WechatHttpExecutor;

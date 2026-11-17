@@ -1,6 +1,6 @@
 //! export 域错误类型（蓝图第五章：域内错误词表集中收口）。
 
-/// 导出域错误（HTTP 层按变体映射旧版码值）。
+/// 导出域错误。
 #[derive(Debug, thiserror::Error)]
 pub enum ExportError {
     /// 请求参数不合法（400/1005，文案透出）。
@@ -36,8 +36,7 @@ impl From<anyhow::Error> for ExportError {
     }
 }
 
-/// 校验失败分类：Unavailable→HTTP 409、Forbidden→403（旧版 DownloadError /
-/// ForbiddenError 的区分由调用方映射状态码）。
+/// 校验失败分类：Unavailable→HTTP 409、Forbidden→403（由调用方映射状态码）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArtifactError {
     /// 文件缺失、路径不符或校验不通过。

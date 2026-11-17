@@ -1,4 +1,4 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 集成测试在持锁场景下跨 await；已配置 clippy 豁免。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
@@ -7,7 +7,7 @@
 )]
 
 //! 用户端账单与发票流集成测试：计费入账同事务签发账单（生产接线验证）、
-//! 列表/详情/已读幂等、开票申请幂等与一单一份、越权 404（契约对齐旧版）。
+//! 列表/详情/已读幂等、开票申请幂等与一单一份、越权 404（与对外 API 契约一致）。
 //! 数据准备用 SQL 直插 + settlement 的 process_job 真实入账（断言账单由
 //! 计费事务自动签发，而非测试手动补签）。
 
@@ -272,7 +272,7 @@ async fn bill_lifecycle_read_idempotent_and_forbidden() {
     .expect("计费事务应已签发账单");
     let (bill_no, electric, service, total, prepaid, refund, shortfall) = bill;
     assert_eq!((electric, service, total), (10, 6, 16));
-    // refund_cents 是渠道已退累计（旧版语义）：余款 84 分此时尚为 pending 在途，
+    // refund_cents 是渠道已退累计（契约约定）：余款 84 分此时尚为 pending 在途，
     // 尚未执行渠道退款，故为 0；封顶入账无缺口。
     assert_eq!((prepaid, refund, shortfall), (100, 0, 0));
     assert_eq!(bill_no, format!("BILL{:020}", seed.charge_order_id));

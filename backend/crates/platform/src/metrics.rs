@@ -1,4 +1,4 @@
-//! 指标：Prometheus 导出器 + G6 指标清单注册（阶段 01 注册，后续阶段填充）。
+//! 指标：Prometheus 导出器与运维观测用的 gauge/counter/histogram 注册。
 
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 
@@ -9,7 +9,7 @@ pub fn install() -> anyhow::Result<PrometheusHandle> {
     Ok(handle)
 }
 
-/// 注册 G6 清单（阶段 01 先置零可用，见 docs/adr/005）：
+/// 注册观测指标元数据（启动时置零，保证无流量时 /metrics 仍可见，见 docs/adr/005）：
 /// 连接数 / 充电数 / 帧速率 / 批量缓冲深度与丢弃计数 / 事件投递延迟 / 兜底扫描滞后 / DB 批量大小。
 fn register_gauges() {
     metrics::describe_gauge!("device_connections", "当前设备 TCP 连接数");

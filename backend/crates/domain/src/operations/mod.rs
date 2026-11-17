@@ -1,10 +1,10 @@
-//! 后台运营纯规则与词表（旧版 domain/operations 的 scope/export/account 纯部分）。
+//! 后台运营纯规则与词表。
 //! 零框架依赖：只承载归并、校验与单元格防护，不触碰数据库与 HTTP。
 
 use crate::wordlist::wordlist_enum;
 
 wordlist_enum!(
-    /// admin_data_scope.scope_type 列的数据范围类型（两值；对照表裁决由
+    /// admin_data_scope.scope_type 列的数据范围类型（两值；
     /// `ScopeType` 更名——String 新类型转正，消除与设备域词表的泛名歧义）。
     AdminScopeType: {
         Station = "station",
@@ -44,7 +44,7 @@ wordlist_enum!(
 /// 单个账号可配置的数据范围条数上限。
 pub const MAX_SCOPE_ITEMS: usize = 500;
 
-/// 账号的归并数据范围（旧版 DataScope）：无任何范围记录即不受限；
+/// 账号的归并数据范围：无任何范围记录即不受限；
 /// 角色权限仍需单独校验，不受限只表示不附加数据范围条件。
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DataScope {
@@ -62,7 +62,7 @@ pub struct DataScope {
     pub scope_id: u64,
 }
 
-/// 由一组原始范围行归并出内存范围集合（旧版 NewDataScope）。空输入即不受限。
+/// 由一组原始范围行归并出内存范围集合。空输入即不受限。
 /// 未知范围类型在 DB→Rust 解码即被词表拒绝（严格失败），此处无需兜底分支。
 #[must_use]
 pub fn new_data_scope(rows: &[(AdminScopeType, u64)]) -> DataScope {
@@ -100,7 +100,7 @@ impl DataScope {
     }
 }
 
-/// 角色字段脱敏规则（旧版 FieldMask）：命中即以占位符替换输出。
+/// 角色字段脱敏规则：命中即以占位符替换输出。
 #[derive(Debug, Clone, Default)]
 pub struct FieldMask {
     pub role_id: u64,
@@ -108,7 +108,7 @@ pub struct FieldMask {
     pub fields: Vec<(String, String)>,
 }
 
-/// 单元格脱敏占位符（旧版 MaskPlaceholder）。
+/// 单元格脱敏占位符。
 pub const MASK_PLACEHOLDER: &str = "******";
 
 impl FieldMask {
@@ -125,7 +125,7 @@ pub const MAX_EXPORT_PERIOD: chrono::Duration = chrono::Duration::hours(30 * 24)
 /// 导出筛选项使用的日期格式。
 pub const EXPORT_DATE_LAYOUT: &str = "%Y-%m-%d";
 
-/// 校验导出日期区间：只接受 from、to 两个键，跨度不超过上限（旧版 ValidExportPeriod）。
+/// 校验导出日期区间：只接受 from、to 两个键，跨度不超过上限。
 #[must_use]
 pub fn valid_export_period(filter: &serde_json::Value) -> bool {
     let Some(obj) = filter.as_object() else {
@@ -151,7 +151,7 @@ pub fn valid_export_period(filter: &serde_json::Value) -> bool {
 }
 
 /// 返回结束日的下一天文本，供 issued_at < 上界 的查询包含整个结束日
-/// （旧版 NextExportDate）；无法解析时原样返回，由调用方拒绝。
+/// ；无法解析时原样返回，由调用方拒绝。
 #[must_use]
 pub fn next_export_date(raw: &str) -> String {
     match chrono::NaiveDate::parse_from_str(raw, EXPORT_DATE_LAYOUT) {
@@ -162,7 +162,7 @@ pub fn next_export_date(raw: &str) -> String {
     }
 }
 
-/// 防止导出文本被表格软件当成公式（旧版 SafeSpreadsheetCell）：
+/// 防止导出文本被表格软件当成公式：
 /// 以 = + - @ 开头且不能解析为数字的内容加单引号，合法数字保持原样。
 #[must_use]
 pub fn safe_spreadsheet_cell(value: &str) -> String {
@@ -197,8 +197,8 @@ mod tests {
         assert!(!s.allows_station(2));
         assert!(s.allows_vendor(9));
         assert!(!s.allows_vendor(8));
-        // 旧版「未知类型静默忽略」由词表严格失败承接：未知 scope_type 在
-        // DB→Rust 解码即报错，归并函数不再有未知分支（票 11 语义收紧登记）。
+        // 「未知类型静默忽略」由词表严格失败承接：未知 scope_type 在
+        // DB→Rust 解码即报错，归并函数不再有未知分支。
     }
 
     #[test]

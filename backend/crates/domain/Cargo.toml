@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-# serde 是序列化原语（domain 不依赖任何实现层，旧版 domain 同样使用 encoding/json）
+# serde 是序列化原语（domain 不依赖 HTTP/DB 等实现层）
 serde.workspace = true
 serde_json.workspace = true
 # 词表枚举的 sqlx 三件套由 money.rs 的 wordlist_enum! 宏手写（对照表总则 1：

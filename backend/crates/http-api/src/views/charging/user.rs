@@ -1,4 +1,4 @@
-//! 充电域用户端门面（票 18 冷区批：原 user_charging.rs 归位）。
+//! 充电域用户端门面。
 
 use crate::errormap::{QueryFail, query_failure};
 use crate::state::{ApiDeps, ChargingStopState};
@@ -43,14 +43,14 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
         )
 }
 
-/// 停止路由（`charging_stop` 装配开关 → ChargingStopState 必达，票 17）。
+/// 停止路由（`charging_stop` 装配开关 → ChargingStopState 必达，）。
 pub fn stop_router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
         .route(
             "/api/v1/user/charging/{order_no}/stop",
             axum::routing::post(user_stop),
         )
-        // 旧版请求体形状（{order_no}），小程序 charging.controller.js 调用。
+        // 请求体形状为 {order_no}，供小程序端停止充电调用。
         .route(
             "/api/v1/user/charge/stop",
             axum::routing::post(user_stop_body),
@@ -58,10 +58,10 @@ pub fn stop_router() -> axum::Router<Arc<ApiDeps>> {
 }
 
 // ---------------------------------------------------------------------------
-// 查询错误映射（旧版 queryFailure）
+// 查询错误映射
 // ---------------------------------------------------------------------------
 
-/// 订单号参数解析（旧版 queryOrderNo：order_id 优先，其次 order_no）。
+/// 订单号参数解析。
 /// 收两个字段而非查询结构体，供 OrderNoQuery 与 WindowQuery 两类端点共用。
 fn order_param(order_id: &Option<String>, order_no: &Option<String>) -> String {
     let from = order_id
@@ -117,7 +117,7 @@ struct HistoryQuery {
     status: Option<String>,
 }
 
-/// 充电中订单（旧版 ongoing：无记录输出空状态，不报错）。
+/// 充电中订单。
 async fn charge_ongoing(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
@@ -141,7 +141,7 @@ async fn charge_ongoing(
     }
 }
 
-/// 历史订单分页（旧版 history：状态词表校验 + 费用批量回填）。
+/// 历史订单分页。
 async fn charge_history(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
@@ -149,7 +149,7 @@ async fn charge_history(
     Query(q): Query<HistoryQuery>,
 ) -> Response {
     let rid = httpx::request_id_from(&headers);
-    // 旧版 ReadPaging：page 默认 1 上限 100000，page_size 默认 20 上限 100。
+    // ReadPaging：page 默认 1 上限 100000，page_size 默认 20 上限 100。
     let page = q.page.unwrap_or(1);
     let size = q.page_size.unwrap_or(20);
     if !(1..=100_000).contains(&page) {
@@ -188,7 +188,7 @@ async fn charge_history(
     }
 }
 
-/// 订单详情（旧版 Detail：base + 支付摘要 + 退款列表）。
+/// 订单详情。
 async fn charge_detail(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
@@ -202,7 +202,7 @@ async fn charge_detail(
     };
     let out = match async {
         let mut out = user_query::base_view(&deps.db, &row).await?;
-        // 支付摘要缺失按无支付处理（旧版 Funds：缺失不是数据库故障，字段省略）。
+        // 支付摘要缺失按无支付处理。
         if let Some(pid) = row.payment_order_id
             && let Some(v) = user_query::payment_brief(&deps.db, pid).await?
         {
@@ -219,7 +219,7 @@ async fn charge_detail(
     httpx::ok(out, &rid)
 }
 
-/// 实时快照（旧版 Snapshot：轮询提示 + 两分钟窗口观测 + 估费提示）。
+/// 实时快照。
 async fn charge_snapshot(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
@@ -238,7 +238,7 @@ async fn charge_snapshot(
     httpx::ok(out, &rid)
 }
 
-/// 组装快照视图（旧版 UserService.Snapshot）。
+/// 组装快照视图。
 async fn build_snapshot(deps: &ApiDeps, row: &OrderRecord) -> Result<Value, sqlx::Error> {
     let mut out = user_query::base_view(&deps.db, row).await?;
     let poll = row.status.is_ongoing();
@@ -254,7 +254,7 @@ async fn build_snapshot(deps: &ApiDeps, row: &OrderRecord) -> Result<Value, sqlx
     };
     let now = chrono::Utc::now();
     out["elapsed_seconds"] = json!((now - started).num_seconds().max(0));
-    // 估费（旧版 LiveService.Fill）未在新仓库接线：沿旧版依赖缺失分支输出提示，
+    // 估费未在新仓库接线：沿依赖缺失分支输出提示，
     // 不用当前模板或部分读数冒充估算费用。
     out["live_unavailable"] = json!("设备计量暂不可读取");
     let from = (now - chrono::Duration::minutes(2)).max(started);
@@ -321,7 +321,7 @@ async fn build_snapshot(deps: &ApiDeps, row: &OrderRecord) -> Result<Value, sqlx
     Ok(out)
 }
 
-/// 实时曲线窗口（旧版 Curve：last_30min/last_2h/last_24h）。
+/// 实时曲线窗口。
 async fn charge_curve(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
@@ -333,7 +333,7 @@ async fn charge_curve(
         Ok(r) => r,
         Err(f) => return query_failure(f, &rid),
     };
-    // 窗口校验（旧版 windowDuration：空取首窗口，未知值报输入错误）。
+    // 窗口校验。
     let window = q.window.as_deref().map(str::trim).unwrap_or("");
     let duration = match window {
         "" => chrono::Duration::minutes(30),
@@ -376,7 +376,7 @@ async fn charge_curve(
     )
 }
 
-/// 历史曲线（旧版 HistoricalCurve：聚合粒度与点数校验 + 摘要）。
+/// 历史曲线。
 async fn charge_history_curve(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
@@ -460,7 +460,7 @@ async fn user_stop(
     run_stop(&st, &headers, uid, &order_no).await
 }
 
-/// 旧版请求体形状：POST /charge/stop，体 {order_no}（必填、最长 64）。
+/// 请求体形状：POST /charge/stop，体 {order_no}（必填、最长 64）。
 async fn user_stop_body(
     State(st): State<ChargingStopState>,
     headers: HeaderMap,
@@ -483,7 +483,7 @@ async fn user_stop_body(
 }
 
 /// 停止链：归属校验 + 计费截止冻结 + 停止命令下发。
-/// 域服务经 ChargingStopState 必达（票 17：路由注册绑定装配开关）；
+/// 域服务经 ChargingStopState 必达；
 /// 会话鉴权由调用方提取器完成，本函数只消费 user_id。
 async fn run_stop(
     st: &ChargingStopState,
@@ -502,7 +502,7 @@ async fn run_stop(
             }),
             &rid,
         ),
-        // 错误映射经 errormap::stop_error 收编（票 17：三枢纽之一）。
+        // 错误映射经 errormap::stop_error。
         Err(e) => crate::errormap::stop_error(e, &rid),
     }
 }

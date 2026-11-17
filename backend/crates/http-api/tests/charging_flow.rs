@@ -1,4 +1,4 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 集成测试在持锁场景下跨 await；已配置 clippy 豁免。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
@@ -6,7 +6,7 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 阶段 04 批 4 主缝集成测试：充电状态机事件驱动全链——支付确认事件 →
+//! 主缝集成测试：充电状态机事件驱动全链——支付确认事件 →
 //! 启动命令与端口预占 → 设备回执 charging → 用户停止（计费截止冻结）→
 //! 结束回执（订单完成 + 计费任务 + 出站事件）。
 
@@ -160,7 +160,7 @@ async fn create_paid_order(
         .execute(db)
         .await
         .unwrap();
-    // 走真实支付成功事务（批 3 入口）：创建 paid 订单 + 快照冻结 + 出站事件。
+    // 走真实支付成功事务：创建 paid 订单 + 快照冻结 + 出站事件。
     let payment = chargepilot_mod_payment::apply::VerifiedPayment {
         merchant_order_no: merchant_order_no.clone(),
         transaction_id: format!("SIMH5{merchant_order_no}"),
@@ -195,7 +195,7 @@ async fn state_machine_full_flow() {
     let openid = format!("c4-{}", rand_suffix());
     let (token, user_id) = dev_login(&router, &openid).await;
 
-    // 0. 支付成功（批 3 入口）→ paid 订单。
+    // 0. 支付成功 → paid 订单。
     let (charge_order_id, order_no, _merchant) =
         create_paid_order(&db, &alloc, user_id, &device_id, &port_code, rule_id).await;
     let status: String = sqlx::query_scalar("SELECT `status` FROM `charge_order` WHERE `id` = ?")
@@ -413,7 +413,7 @@ async fn state_machine_full_flow() {
     let _ = station_id;
 }
 
-/// 票 14 写点护航：设备拒绝启动的回执（ResultCode≠0）经
+/// ）经
 /// `mark_start_rejected_tx` 的证据类型链推进 paid → refunding（迁移 2），
 /// 并登记自动渠道退款；同内容重放幂等返回 true、状态不漂移。
 #[ignore = "真库集成：node tasks.mjs test-integration"]

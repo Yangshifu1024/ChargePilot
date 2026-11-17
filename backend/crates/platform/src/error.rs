@@ -1,7 +1,7 @@
 //! 统一错误码表与业务错误类型。
 //!
 //! 码值契约（红线）：1xxx 请求或凭证、2xxx 业务状态冲突、5xxx 服务端或依赖故障；
-//! 数值与旧版完全一致（前端按 code 映射文案），一经发布不得变更。
+//! 数值与已发布 API 契约一致（前端按 code 映射文案），一经发布不得变更。
 
 /// 业务错误码（数值契约锁定，禁止改动已有取值）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +39,7 @@ pub enum Code {
     DependencyFailed = 5001,
     /// 存储、队列或上游接口不可用（HTTP 503）。
     ServiceUnavailable = 5003,
-    /// 网关或支付渠道交互失败（HTTP 502 主态；模拟渠道冲突显式覆盖为 409，票 17）。
+    /// 网关或支付渠道交互失败（HTTP 502 主态；模拟渠道冲突可由调用方显式覆盖为 409）。
     ChannelInteraction = 3001,
     /// 登录尝试过于频繁（HTTP 429，携带 Retry-After）。
     LoginRateLimited = 4291,
@@ -90,7 +90,7 @@ pub struct ApiError {
     pub cause: Option<anyhow::Error>,
 }
 
-/// 参数名与未满足的校验规则（信封 errors 数组元素）。
+/// 单字段校验失败项（写入响应信封 `errors` 数组）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FieldErr {
     pub field: String,
@@ -98,6 +98,7 @@ pub struct FieldErr {
 }
 
 impl ApiError {
+    /// 构造带业务码与用户可见文案的错误。
     pub fn new(code: Code, message: impl Into<String>) -> Self {
         Self {
             code,
@@ -107,18 +108,22 @@ impl ApiError {
         }
     }
 
+    /// 1005 参数类错误快捷构造。
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::new(Code::BadRequest, message)
     }
 
+    /// 1004 资源不存在快捷构造。
     pub fn not_found(message: impl Into<String>) -> Self {
         Self::new(Code::NotFound, message)
     }
 
+    /// 2000 状态冲突快捷构造。
     pub fn state_conflict(message: impl Into<String>) -> Self {
         Self::new(Code::StateConflict, message)
     }
 
+    /// 5001 依赖调用失败快捷构造。
     pub fn dependency(message: impl Into<String>) -> Self {
         Self::new(Code::DependencyFailed, message)
     }
@@ -128,6 +133,7 @@ impl ApiError {
         Self::new(Code::ServiceUnavailable, "服务暂时不可用，请稍后重试").with_cause(cause)
     }
 
+    /// 追加字段级校验错误。
     pub fn with_field(mut self, field: impl Into<String>, rule: impl Into<String>) -> Self {
         self.fields.push(FieldErr {
             field: field.into(),
@@ -136,6 +142,7 @@ impl ApiError {
         self
     }
 
+    /// 附加内部原因（仅写日志，不进响应）。
     pub fn with_cause(mut self, cause: anyhow::Error) -> Self {
         self.cause = Some(cause);
         self

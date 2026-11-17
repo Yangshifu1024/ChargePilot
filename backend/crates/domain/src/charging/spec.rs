@@ -1,13 +1,12 @@
 //! 计价配置（Spec）：模式枚举、费率时段、全天校验与用量输入。
-//! 语义基准：旧仓库 internal/domain/charging/{spec,mode,cost}.go，逐条对齐；
-//! 定点十进制用 rust_decimal，除法/取整模拟 shopspring 语义（Div=16 位小数、Round=远离零）。
+//! 金额与电量用 rust_decimal；除法保留 16 位小数、取整为 half away from zero。
 
 use chrono::{DateTime, FixedOffset, Timelike, Utc};
 use rust_decimal::prelude::*;
 use rust_decimal::{Decimal, RoundingStrategy};
 use serde::{Deserialize, Serialize};
 
-/// 北京时区（固定 +8，旧版 time.FixedZone）。
+/// 北京时区（固定 UTC+8）。
 pub fn beijing() -> FixedOffset {
     match FixedOffset::east_opt(8 * 3600) {
         Some(o) => o,
@@ -15,59 +14,59 @@ pub fn beijing() -> FixedOffset {
     }
 }
 
-/// 单价上限（旧版 maxRateCents）：所有单价与封顶的合法上界。
+/// 单价上限：所有单价与封顶的合法上界。
 pub const MAX_RATE_CENTS: i64 = 1_000_000;
 
-/// 单次计费的最大切片数（7 天 × 每分钟），防止无界计算（旧版 maxSlices）。
+/// 单次计费的最大切片数（7 天 × 每分钟），防止无界计算。
 pub const MAX_SLICES: usize = 7 * 24 * 60;
 
-/// 计费域错误：变体与旧版哨兵错误一一对应。
+/// 计费域错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum BillingError {
-    /// ErrInvalidPricing：规则、价格或用量参数不符合计算要求。
+    /// 规则、价格或用量参数不符合计算要求。
     #[error("invalid quote input or pricing rule")]
     InvalidPricing,
-    /// ErrMeterReview：读数缺失、分段不连续或合计不符，须人工核对计量。
+    /// 读数缺失、分段不连续或合计不符，须人工核对计量。
     #[error("实际计量不足或矛盾，需补充分时计量后核算")]
     MeterReview,
-    /// ErrNotServerBilled：当前模式由设备计费，服务端不计算费用。
+    /// 当前模式由设备计费，服务端不计算费用。
     #[error("该计费方式由设备执行，服务端不计算费用")]
     NotServerBilled,
-    /// ErrNoPaidAmount：设备计费缺少实付金额。
+    /// 设备计费缺少实付金额。
     #[error("设备计费缺少实付金额，无法结算")]
     NoPaidAmount,
 }
 
-// ---------- 数值工具（shopspring 语义模拟） ----------
+// ---------- 数值工具（十进制舍入契约） ----------
 
-/// 模拟 shopspring `Div`：商保留 16 位小数，half away from zero。
+/// 除法商保留 16 位小数，half away from zero。
 pub fn div_prec16(a: Decimal, b: Decimal) -> Decimal {
     (a / b).round_dp_with_strategy(16, RoundingStrategy::MidpointAwayFromZero)
 }
 
-/// 模拟 shopspring `Round(0)`：取整到分，half away from zero；溢出 i64 返回 None。
+/// 取整到分，half away from zero；溢出 i64 返回 None。
 pub fn round_to_cents(value: Decimal) -> Option<i64> {
     let rounded = value.round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero);
     rounded.to_i64()
 }
 
-/// 模拟 shopspring `StringFixed(6)`：先按 half away from zero 舍入到 6 位再固定输出。
+/// 数量文本固定 6 位小数，half away from zero。
 pub fn string_fixed6(value: Decimal) -> String {
     let rounded = value.round_dp_with_strategy(6, RoundingStrategy::MidpointAwayFromZero);
     format!("{:.6}", rounded)
 }
 
-/// 模拟 shopspring `IntPart()`：截断取整数部分。
+/// 截断取整数部分。
 pub fn int_part(value: Decimal) -> i64 {
     value.trunc().to_i64().unwrap_or(0)
 }
 
-/// decimal(1, -3)＝0.001 的字面量（旧版 parseEnergy 下界）。
+/// decimal(1, -3)＝0.001 的字面量。
 fn decimal_milli() -> Decimal {
     Decimal::new(1, 3)
 }
 
-// ---------- 计费模式枚举（旧版 mode.go） ----------
+// ---------- 计费模式枚举 ----------
 
 /// 计费执行方：server（平台计价）或 device（设备执行额度）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +79,7 @@ impl ChargeExecutor {
     pub fn is_device(self) -> bool {
         self == ChargeExecutor::Device
     }
-    /// JSON/DB 字面量（旧版字符串值）。
+    /// JSON/DB 字面量。
     pub fn as_str(self) -> &'static str {
         match self {
             ChargeExecutor::Server => "server",
@@ -89,7 +88,7 @@ impl ChargeExecutor {
     }
 }
 
-/// 计费模式：服务端三种 + 设备三种；字符串字面量与旧版逐字节一致。
+/// 计费模式：服务端三种 + 设备三种；字面量与 JSON/DB 契约逐字节一致。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ChargeMode(pub String);
 
@@ -105,7 +104,7 @@ impl ChargeMode {
         ChargeMode(s.into())
     }
 
-    /// 执行方；未知模式返回 None（旧版返回空串）。
+    /// 执行方；未知模式返回 None。
     pub fn executor(&self) -> Option<ChargeExecutor> {
         match self.0.as_str() {
             Self::SERVER_REALTIME_POWER | Self::SERVER_MAX_POWER | Self::SERVER_ENERGY => {
@@ -128,7 +127,7 @@ impl ChargeMode {
         self.executor().is_some()
     }
 
-    /// 服务端模式对应的电价算法；非服务端模式返回 None（旧版空串）。
+    /// 服务端模式对应的电价算法；非服务端模式返回 None。
     pub fn basis_for(&self) -> Option<ServerBasis> {
         match self.0.as_str() {
             Self::SERVER_REALTIME_POWER => Some(ServerBasis::RealtimePower),
@@ -160,7 +159,7 @@ impl ServerBasis {
     }
 }
 
-/// 旧版独立服务费算法（当前 Cost 不使用，保留取值词表用于校验历史数据）。
+/// 独立服务费算法（当前 Cost 不使用，保留取值词表用于校验历史数据）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServiceBasis(pub String);
 
@@ -173,7 +172,7 @@ impl ServiceBasis {
     }
 }
 
-/// 旧版阶梯价格单位标记（新模板禁止，保留词表）。
+/// 阶梯价格单位标记（新模板禁止，保留词表）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TierPriceBasis(pub String);
 
@@ -229,7 +228,7 @@ pub struct ElectricLine {
     pub periods: Vec<Period>,
 }
 
-/// 旧版独立服务费配置（当前 Cost 不使用，保留结构用于校验历史数据）。
+/// 独立服务费配置（当前 Cost 不使用，保留结构用于校验历史数据）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ServiceLine {
     pub basis: ServiceBasis,
@@ -241,7 +240,7 @@ pub struct ServiceLine {
     pub cents_per_session: i64,
 }
 
-/// 旧版电费渠道倍率（当前 Cost 不使用，保留结构）。
+/// 电费渠道倍率（当前 Cost 不使用，保留结构）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChannelMultiplier {
     #[serde(default)]
@@ -264,7 +263,7 @@ pub struct TimeCharge {
 }
 
 /// 完整计价配置：预估与结算共用此结构和 Cost 引擎。
-/// serde 字段名与旧版 spec JSON 逐字节一致（omitempty ↔ skip_serializing_if）。
+/// serde 字段名与 spec JSON 逐字节一致（omitempty ↔ skip_serializing_if）。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Spec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -331,7 +330,7 @@ impl Usage {
 // ---------- 校验与全天展开 ----------
 
 /// 全天时段展开为按分钟索引的费率表；结束分钟严格递增并覆盖 [0,1440)。
-/// 校验失败返回 None（旧版返回零值表 + 错误；调用方校验在先，不会触达）。
+/// 校验失败返回 None。
 pub fn compile_periods(periods: &[Period]) -> Option<Box<[Period]>> {
     if periods.is_empty() || periods.len() > 48 {
         return None;
@@ -353,7 +352,7 @@ pub fn compile_periods(periods: &[Period]) -> Option<Box<[Period]>> {
     Some(schedule.into_boxed_slice())
 }
 
-/// 功率阶梯连续覆盖校验；电量单价与功率阶梯不能同时配置（旧版 validateTiers）。
+/// 功率阶梯连续覆盖校验；电量单价与功率阶梯不能同时配置。
 fn validate_tiers(basis_is_energy: bool, period: &Period) -> Result<(), BillingError> {
     if !(0..=MAX_RATE_CENTS).contains(&period.service_cents) {
         return Err(BillingError::InvalidPricing);
@@ -385,7 +384,7 @@ fn validate_tiers(basis_is_energy: bool, period: &Period) -> Result<(), BillingE
     Ok(())
 }
 
-/// 发布和计费共用的规则校验：确保已发布规则满足结算执行条件（旧版 ValidateSpec）。
+/// 发布和计费共用的规则校验：确保已发布规则满足结算执行条件。
 pub fn validate_spec(spec: &Spec) -> Result<(), BillingError> {
     if !spec.mode.valid() {
         return Err(BillingError::InvalidPricing);
@@ -465,7 +464,7 @@ pub fn validate_spec(spec: &Spec) -> Result<(), BillingError> {
 }
 
 /// 新写入或新发布的模板校验（结算仍用 validate_spec）；
-/// 避免把旧订单的冻结价格拒掉或按新算法重算（旧版 ValidateTemplateSpec）。
+/// 避免把旧订单的冻结价格拒掉或按新算法重算。
 pub fn validate_template_spec(spec: &Spec) -> Result<(), BillingError> {
     if let Some(scheme) = &spec.scheme {
         return scheme.validate().map_err(|_| BillingError::InvalidPricing);
@@ -495,7 +494,7 @@ fn same_rate(a: &Period, b: &Period) -> bool {
 }
 
 /// 比较区间内的费率是否不变；电量/实时功率费率相同时可直接使用区间总电量。
-/// 其他模式（含最大功率）直接返回 true（旧版行为）。
+/// 其他模式（含最大功率）直接返回 true。
 pub fn spec_is_uniform_over(spec: &Spec, start: DateTime<Utc>, end: DateTime<Utc>) -> bool {
     let basis_is_relevant = match &spec.electric {
         None => return true,
@@ -533,14 +532,14 @@ pub fn spec_is_uniform_over(spec: &Spec, start: DateTime<Utc>, end: DateTime<Utc
     true
 }
 
-/// Go time.Truncate(time.Minute)：去掉秒与亚秒，保留分钟对齐（在指定时区视角下）。
+/// 截断到分钟：去掉秒与亚秒（在指定时区视角下）。
 pub fn truncate_minute(t: chrono::DateTime<FixedOffset>) -> chrono::DateTime<FixedOffset> {
     t.with_second(0)
         .and_then(|t| t.with_nanosecond(0))
         .unwrap_or(t)
 }
 
-/// 用户输入电量解析：范围 0.001–100 kWh（旧版 parseEnergy）。
+/// 用户输入电量解析：范围 0.001–100 kWh。
 pub fn parse_energy(value: &str) -> Result<Decimal, BillingError> {
     let kwh: Decimal = value.parse().map_err(|_| BillingError::InvalidPricing)?;
     if kwh < decimal_milli() || kwh > Decimal::from(100) {
@@ -549,7 +548,7 @@ pub fn parse_energy(value: &str) -> Result<Decimal, BillingError> {
     Ok(kwh)
 }
 
-/// 用户输入电量的格式白名单（旧版 energyPattern）。
+/// 用户输入电量的格式白名单。
 pub fn energy_pattern_ok(value: &str) -> bool {
     // ^[0-9]{1,3}(\.[0-9]{1,3})?$
     let bytes = value.as_bytes();

@@ -4,7 +4,7 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! /admin SPA 深链回归（票 22 嵌入形态）：产物嵌入时深链回落 index.html 且
+//! /admin SPA 深链回归：产物嵌入时深链回落 index.html 且
 //! 状态 200；产物缺失（本地未构建前端）时静态路由不挂载、深链 404 可见即
 //! 诊断。业务路由不触发（请求只打 /admin/*），连接池用 lazy 占位即可。
 

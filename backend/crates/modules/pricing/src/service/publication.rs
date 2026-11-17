@@ -64,7 +64,7 @@ pub async fn publish(
         .await?
         .ok_or(PricingError::NotFound)?;
     // 2. 操作者锁内复核（含范围：站点级发布要求站点在范围内；单实例本轮按全量放行，
-    //    scope 表为空=不受限；受限账号待数据范围路由应用时一并启用）
+    // scope 表为空=不受限；受限账号待数据范围路由应用时一并启用）
     let actor_locked = repo::lock_actor_tx(&mut tx, actor.id)
         .await
         .map_err(PricingError::from)?;

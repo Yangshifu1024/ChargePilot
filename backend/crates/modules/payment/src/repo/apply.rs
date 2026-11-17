@@ -6,7 +6,7 @@ use chargepilot_domain::payment::PaymentIntentStatus;
 use sqlx::MySqlConnection;
 
 /// 锁读投影元组（列序即 SELECT 顺序）——type_complexity 要求具名；
-/// 词表列直接解出枚举（票 06 手写 sqlx Type）。
+/// 词表列直接解出枚举。
 pub type PayOrderRow = (
     u64,
     BizType,

@@ -4,10 +4,10 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! API 契约缝（二期票 02）：路由集合快照 + 信封与错误码契约。
+//! API 契约缝：路由集合快照 + 信封与错误码契约。
 //!
 //! 与 `scripts/ops/check-api-contract.py` 的分工：该脚本管「前端实际调用 ↔ 后端路由」
-//! 对账；本测试管「路由集合与信封形状不变」——HTTP 层任何重排（票 18/19）导致路由
+//! 对账；本测试管「路由集合与信封形状不变」——HTTP 层任何重排导致路由
 //! 漂移、信封字段变化或错误码表变化，都在日常检查（无需真库）中失败。
 //!
 //! 探测原理（不执行业务处理器）：已知路径配错方法 → axum MethodRouter 默认 405
@@ -26,7 +26,7 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-/// 路由清单快照：与各 `router()` 注册函数人工对齐（生成方式见票 02，125 条）。
+/// 路由清单快照：与各 `router()` 注册函数人工对齐，变更路由须同步本表。
 /// 修改任何路由（增删改路径/方法）必须同步本表——本表即路由契约基线。
 const ROUTES: &[(&str, &str)] = &[
     ("get", "/api/v1/admin/admin-users"),
@@ -204,8 +204,7 @@ async fn build() -> Router {
         .acquire_timeout(std::time::Duration::from_millis(100))
         .connect_lazy("mysql://probe:probe@127.0.0.1:1/none")
         .expect("惰性池构建");
-    // 票 17 后域路由注册绑定装配开关：快照要求全量注册，各域句柄全量装配
-    // （惰性池 + 服务构造仅字段赋值，不触库；探活错误信封非 404/405 即通过）。
+    // 惰性池 + 全量句柄装配（不触库）；探活返回非 404/405 即视为路由存在。
     let allocator = std::sync::Arc::new(chargepilot_platform::ids::SegmentAllocator::new(
         db.clone(),
         1,

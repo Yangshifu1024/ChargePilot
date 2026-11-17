@@ -1,4 +1,4 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 集成测试在持锁场景下跨 await；已配置 clippy 豁免。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
@@ -6,7 +6,7 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 阶段 08 故障注入端到端（真库 + 真实时钟）：
+//! 故障注入端到端（真库 + 真实时钟）：
 //! 1. 回执迟到：启动命令超时 → 兜底扫描推进 failed + 退款登记 + 命令拒绝。
 //! 2. 事件丢失/投递器故障：mark_failed 退避 → 重放成功 → 命令生成且标记 published。
 //! 3. 进程重启：结束回执同内容重放幂等 → 状态收敛、计费任务不翻倍。
@@ -220,7 +220,7 @@ async fn event_dispatch_failure_replays() {
     let db = chargepilot_storage::open_pool(&db_url, 4).await.unwrap();
     let alloc = SegmentAllocator::new(db.clone(), 60);
     alloc.warm_up().await.unwrap();
-    // 场景隔离（票 20 修正）：claim 按全库 pending/failed 且退避到期领取
+    // 场景隔离：claim 按全库 pending/failed 且退避到期领取
     // （LIMIT 100）。历史轮残留的 pending/failed 事件会无限积累并挤占批次
     // （推迟方案只压 1 小时，之后又到期）——本场景是共享 dev 库上唯一的
     // domain_event 消费方，测试前直接清场：删除全部 pending/failed 事件，

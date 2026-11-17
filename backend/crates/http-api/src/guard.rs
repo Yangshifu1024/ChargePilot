@@ -8,7 +8,7 @@ use chargepilot_mod_ops::OpsError;
 use std::sync::Arc;
 
 /// 已通过实时鉴权的管理员（profile 每请求从库读取，权限不信任令牌）。
-/// `sid` 是当前会话 ID：本人 MFA 设置用它绑定发起会话（旧版 admin_sid 语义）。
+/// `sid` 是当前会话 ID：本人 MFA 设置用它绑定发起会话。
 pub struct AdminGuard {
     pub profile: Profile,
     pub sid: String,
@@ -20,9 +20,8 @@ impl AdminGuard {
     }
 }
 
-/// 权限判定（原 9 份 views 局部 deny 副本合一）。403 文案走 ops_error
-/// 契约（「没有操作权限」）；marketing 门面的「无权执行此操作」域差异
-/// 副本保留在其原文件。
+/// 统一权限不足响应：缺权限时返回 403，文案走 `ops_error`（「没有操作权限」）。
+/// 营销域个别端点沿用「无权执行此操作」文案，保留在对应 handler。
 pub fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
     if guard.has(permission) {
         None

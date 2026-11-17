@@ -1,4 +1,4 @@
-//! 支付意图与订单编号的纯业务规则（零 IO，旧版 payment 域规则对齐）。
+//! 支付意图与订单编号的纯业务规则（零 IO）。
 //! 意图状态词表、支付前预估量计算、迟到判定与两套业务单号格式都在这里；
 //! 事务编排与表访问在 modules/payment 与 modules/order。
 
@@ -10,7 +10,7 @@ use crate::wordlist::wordlist_enum;
 wordlist_enum!(
     /// 支付意图状态（charge_payment_intent.status 列，五值）。
     /// 与 [`crate::money::PaymentOrderStatus`] 分立：共享 initiated/paid 字面量
-    /// 但含义不同，不得互相赋值（票 09 对照表裁决的唯一属主落位本域）。
+    /// 但含义不同，不得互相赋值（本枚举为意图表唯一属主）。
     /// 生成列 `active_port_code` 不建 Rust 类型，由数据库派生。
     // 取值语义：initiated 已创建待支付（占用端口）；paid 已支付并关联充电订单；
     // expired 到期未支付（预占释放）；closed 手工关闭；refund_required 支付迟到需原路退款。
@@ -23,7 +23,7 @@ wordlist_enum!(
     }
 );
 
-/// 支付意图业务冲突（旧版 ErrPaymentIntentConflict 的语义族）。
+/// 支付意图业务冲突。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IntentError {
     /// 输入不合法或与已存在意图不一致。
@@ -47,7 +47,7 @@ impl std::fmt::Display for IntentError {
 
 impl std::error::Error for IntentError {}
 
-/// 支付前冻结的预估量与设备执行量（旧版 Reserve 的 estimate 分支）。
+/// 支付前冻结的预估量与设备执行量。
 /// 时长套餐下发购买分钟（charge_mode=0），电量套餐下发 Wh（charge_mode=1），
 /// 金额套餐下发最长时长（charge_mode=4）并由平台检查费用上限。
 pub fn intent_estimate(
@@ -90,7 +90,7 @@ pub fn intent_estimate(
     })
 }
 
-/// 迟到支付判定：当前时刻或到账时刻越过支付期限即视为迟到（旧版 Apply）。
+/// 迟到支付判定：当前时刻或到账时刻越过支付期限即视为迟到。
 pub fn is_late_payment(
     now_unix_micros: i64,
     paid_at_unix_micros: i64,
@@ -99,7 +99,7 @@ pub fn is_late_payment(
     now_unix_micros > expires_at_unix_micros || paid_at_unix_micros > expires_at_unix_micros
 }
 
-/// 充电业务单号：C + 北京时间 14 位时间戳 + 设备编号 + 两位端口号（旧版 ChargeOrderNumber）。
+/// 充电业务单号：C + 北京时间 14 位时间戳 + 设备编号 + 两位端口号。
 /// 设备编号仅允许字母、数字、下划线与连字符；总长不超过 64 字节。
 pub fn charge_order_no(
     at_unix_micros: i64,
@@ -173,7 +173,7 @@ mod tests {
 mod status_tests {
     use super::PaymentIntentStatus;
 
-    /// 字面量对照（票 09 硬规则）：serde 输出与 DB ENUM 字面量逐字节一致。
+    /// serde 输出与 DB ENUM 字面量逐字节一致。
     #[test]
     fn db_literals_match_serde() {
         use serde_json::to_string as json;

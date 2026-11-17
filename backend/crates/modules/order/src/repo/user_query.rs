@@ -1,22 +1,21 @@
-//! 用户端充电查询（旧版 internal/order/query、internal/charging/query 组合对齐）：
+//! 用户端充电查询：
 //! 历史分页、订单详情、充电中订单、实时快照事实与曲线读数。
 //!
 //! 契约要点（与 admin_query.rs 同约定）：
 //! - 归属隔离在 SQL 条件内（user_id 过滤），越权与缺失同归 NotFound，不泄漏他人订单。
 //! - 金额 i64 分；charged_kwh 保持 DECIMAL 文本；ENUM 读侧 CAST AS CHAR；
-//!   时间输出 `DATE_FORMAT(col, '%Y-%m-%dT%H:%i:%s.%f+00:00')`。
-//! - 确认费用在 charge_fee_receipt.result_json 顶层（旧版 ChargeFeeRecord.Fees），
-//!   缺失或解码失败按未计费输出 null，不用零值冒充。
-//! - billing_status 无计费任务输出空串（旧版契约：空串原样出现，不得替换为 null）。
-//! - 实时估费（旧版 LiveService.Fill）未在新仓库接线：充电中输出
-//!   live_unavailable 提示（旧版依赖缺失同分支文案），不产生估算费用。
+//! 时间输出 `DATE_FORMAT(col, '%Y-%m-%dT%H:%i:%s.%f+00:00')`。
+//! - 确认费用在 charge_fee_receipt.result_json 顶层，
+//! 缺失或解码失败按未计费输出 null，不用零值冒充。
+//! - billing_status 无计费任务输出空串。
+//! - 实时估费尚未接线：充电中输出 live_unavailable 提示，不产生估算费用。
 
 use chargepilot_domain::order::ChargeOrderStatus;
 use serde_json::{Value, json};
 use sqlx::{MySqlPool, query_as, query_scalar};
 use std::collections::HashMap;
 
-/// datetime(3) 列统一输出的 UTC 文本格式（新仓库约定）。
+/// datetime(3) 列统一输出的 UTC 文本格式。
 pub const TS_FORMAT: &str = "%Y-%m-%dT%H:%i:%s.%f+00:00";
 
 /// 按列名生成 DATE_FORMAT 表达式。
@@ -28,7 +27,7 @@ fn df(col: &str) -> String {
 // 订单行（归属解析与充电中查询）
 // ---------------------------------------------------------------------------
 
-/// 已授权订单记录（旧版 ChargeOrderRecord 的查询侧字段）。
+/// 已授权订单记录。
 #[derive(Debug, Clone)]
 pub struct OrderRecord {
     /// 充电订单主键。
@@ -90,8 +89,8 @@ fn to_record(r: OrderRow) -> OrderRecord {
     }
 }
 
-/// 按 user_id 与业务单号解析未删除订单；缺失返回 None（旧版 Owned：越权与缺失同归缺失）。
-/// 单号空白或超长按输入错误处理（旧版 Resolve 先校验再查询）。
+/// 按 user_id 与业务单号解析未删除订单；缺失返回 None。
+/// 单号空白或超长按输入错误处理。
 pub async fn resolve_owned(
     pool: &MySqlPool,
     user_id: u64,
@@ -113,7 +112,7 @@ pub async fn resolve_owned(
         .map(|r| r.map(to_record))
 }
 
-/// 读取用户最新 paid/charging 未删除订单（旧版 Ongoing：ORDER BY id DESC 取一条）。
+/// 读取用户最新 paid/charging 未删除订单。
 pub async fn ongoing_order(
     pool: &MySqlPool,
     user_id: u64,
@@ -132,10 +131,10 @@ pub async fn ongoing_order(
 }
 
 // ---------------------------------------------------------------------------
-// 确认费用（charge_fee_receipt.result_json 顶层，旧版 QueryFeeRepo.Fees）
+// 确认费用
 // ---------------------------------------------------------------------------
 
-/// 已确认费用（旧版 FeeFacts；缺失表示尚未计费）。
+/// 已确认费用。
 #[derive(Debug, Clone, Copy)]
 pub struct FeeFacts {
     /// 已确认电费，分。
@@ -148,7 +147,7 @@ pub struct FeeFacts {
     pub shortfall_cents: i64,
 }
 
-/// 批量读取订单费用回执；缺失或 result_json 非法的订单不进入映射（旧版同语义）。
+/// 批量读取订单费用回执；缺失或 result_json 非法的订单不进入映射。
 pub async fn fee_facts(
     pool: &MySqlPool,
     ids: &[u64],
@@ -166,7 +165,7 @@ pub async fn fee_facts(
     });
     let rows: Vec<(u64, String, i64)> = qb.build_query_as().fetch_all(pool).await?;
     for (id, result_json, shortfall) in rows {
-        // 旧版 Fees()：解码失败按不可用跳过，不冒充零值。
+        //，不冒充零值。
         let Ok(v) = serde_json::from_str::<Value>(&result_json) else {
             continue;
         };
@@ -191,11 +190,11 @@ pub async fn fee_facts(
 }
 
 // ---------------------------------------------------------------------------
-// 历史分页（旧版 ListUserOrderHistory + 费用回填）
+// 历史分页
 // ---------------------------------------------------------------------------
 
 /// 用户历史订单分页：先计总数，再按主键倒序取当页并回填确认费用。
-/// 返回旧版 UserOrderHistoryRow 形状的 JSON 行（未计费金额为 null）。
+/// 返回）。
 pub async fn list_history(
     pool: &MySqlPool,
     user_id: u64,
@@ -275,10 +274,10 @@ pub async fn list_history(
 }
 
 // ---------------------------------------------------------------------------
-// 详情组合事实（旧版 UserStateRepo.Frozen / Funds）
+// 详情组合事实
 // ---------------------------------------------------------------------------
 
-/// 计费任务状态（charge_billing_job.status；无任务为空串——旧版契约原样输出）。
+/// 计费任务状态。
 pub async fn billing_status(pool: &MySqlPool, order_id: u64) -> Result<String, sqlx::Error> {
     let status: Option<String> = query_scalar(
         "SELECT CAST(`status` AS CHAR) FROM `charge_billing_job` WHERE `charge_order_id` = ?",
@@ -290,7 +289,7 @@ pub async fn billing_status(pool: &MySqlPool, order_id: u64) -> Result<String, s
     Ok(status.unwrap_or_default())
 }
 
-/// 订单刷卡操作数组（旧版 ListOrderOperations：按创建时间升序，无操作为空数组）。
+/// 订单刷卡操作数组。
 pub async fn card_operations(pool: &MySqlPool, order_id: u64) -> Result<Vec<Value>, sqlx::Error> {
     // 刷卡操作投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
     type CardOpRow = (String, String, String, u64, u64, String, i64, u16, String);
@@ -323,7 +322,7 @@ pub async fn card_operations(pool: &MySqlPool, order_id: u64) -> Result<Vec<Valu
         .collect())
 }
 
-/// 首次计费截止（旧版 BillingCutoff：无记录 cutoff_at 为 null、reason 为空串）。
+/// 首次计费截止。
 pub async fn billing_cutoff(pool: &MySqlPool, order_id: u64) -> Result<Value, sqlx::Error> {
     let row: Option<(Option<String>, String)> = query_as(&format!(
         "SELECT {} AS `cutoff_at`, `reason` FROM `charge_billing_cutoff` WHERE `charge_order_id` = ?",
@@ -336,11 +335,10 @@ pub async fn billing_cutoff(pool: &MySqlPool, order_id: u64) -> Result<Value, sq
     Ok(json!({"cutoff_at": cutoff_at, "reason": reason}))
 }
 
-/// 从冻结快照解析展示事实（旧版 base 的 frozen 解析）：
+/// 从冻结快照解析展示事实：
 /// (display, offer, tariff, rule_description)。
-/// 快照缺失或 scheme 不在时返回全 None（对应旧版字段整体省略）。
-/// 新仓库 Scheme.display 为文案行结构（旧版 show_* 布尔开关已被新结构替代，
-/// tariff 改为 amount 存在即输出、rule_description 输出 remark 原文）。
+/// 快照缺失或 scheme 不在时返回全 None。
+/// Scheme.display 为文案行结构；tariff 在 amount 存在时输出，rule_description 输出 remark 原文。
 pub fn frozen_display(
     raw: Option<&str>,
 ) -> (Option<Value>, Option<Value>, Option<Value>, Option<String>) {
@@ -350,7 +348,7 @@ pub fn frozen_display(
     let Ok(v) = serde_json::from_str::<Value>(raw) else {
         return (None, None, None, None);
     };
-    // 旧版解析路径：rule.spec.scheme；offer 与 scheme 并列在快照顶层。
+    // offer 与 scheme 并列在快照顶层。
     let scheme = v["rule"]["spec"]["scheme"].clone();
     if scheme.is_null() {
         return (None, None, None, None);
@@ -380,7 +378,7 @@ pub async fn frozen_snapshot(
     Ok(raw)
 }
 
-/// 详情支付摘要（旧版 FindOrderPaymentBrief：缺失支付单按无支付处理，不是数据库故障）。
+/// 详情支付摘要。
 pub async fn payment_brief(
     pool: &MySqlPool,
     payment_order_id: u64,
@@ -403,7 +401,7 @@ pub async fn payment_brief(
     }))
 }
 
-/// 订单退款列表（旧版 ListOrderRefunds：按支付业务过滤，倒序，无记录空数组）。
+/// 订单退款列表。
 pub async fn order_refunds(pool: &MySqlPool, order_id: u64) -> Result<Vec<Value>, sqlx::Error> {
     // 退款列表投影元组（列序即 SELECT 顺序）——type_complexity 要求具名。
     type RefundListRow = (String, i64, String, Option<String>, Option<String>);
@@ -431,7 +429,7 @@ pub async fn order_refunds(pool: &MySqlPool, order_id: u64) -> Result<Vec<Value>
         .collect())
 }
 
-/// 组装详情/快照公共字段（旧版 UserService.base）。
+/// 组装详情/快照公共字段。
 /// 费用阶段失败以 Err(sqlx) 上抛，由 HTTP 层映射 503。
 pub async fn base_view(pool: &MySqlPool, row: &OrderRecord) -> Result<Value, sqlx::Error> {
     let mut out = json!({
@@ -461,7 +459,7 @@ pub async fn base_view(pool: &MySqlPool, row: &OrderRecord) -> Result<Value, sql
         out["display"] = d;
     }
     if let Some(o) = offer {
-        // 有冻结方案时 offer 恒出现（缺失套餐为显式 null，旧版同语义）。
+        // 有冻结方案时 offer 恒出现。
         out["offer"] = o;
     }
     if let Some(t) = tariff {
@@ -474,16 +472,16 @@ pub async fn base_view(pool: &MySqlPool, row: &OrderRecord) -> Result<Value, sql
 }
 
 // ---------------------------------------------------------------------------
-// 遥测曲线（telemetry / telemetry_aggregate_*，旧版 gateway readPort 语义）
+// 遥测曲线
 // ---------------------------------------------------------------------------
 
-/// 公开曲线与单页点数上限（旧版 MaxQueryPoints）。
+/// 公开曲线与单页点数上限。
 pub const MAX_QUERY_POINTS: i64 = 2000;
 
 /// 指标行（ts + 指标名 + DECIMAL 文本）。
 type Reading = (chrono::DateTime<chrono::Utc>, String, String);
 
-/// 原始遥测读数（旧版 ListRawReadings：指定端口仍包含设备级电压、温度）。
+/// 原始遥测读数。
 async fn list_raw_readings(
     pool: &MySqlPool,
     device_id: &str,
@@ -516,7 +514,7 @@ async fn list_raw_readings(
     .await
 }
 
-/// 聚合读数（旧版 ListBucketedReadings：bucket_start AS ts、avg_value）。
+/// 聚合读数。
 async fn list_bucketed_readings(
     pool: &MySqlPool,
     table: &str,
@@ -557,7 +555,7 @@ async fn list_bucketed_readings(
         .await
 }
 
-/// 按秒合并读数为曲线点（旧版 readPort：同一秒内多指标合并，最新 limit 个点升序返回）。
+/// 按秒合并读数为曲线点。
 fn merge_points(
     rows: Vec<Reading>,
     limit: i64,
@@ -587,8 +585,8 @@ fn merge_points(
         .collect()
 }
 
-/// 单点 JSON（旧版 CurvePoint：未上报指标为 null，不补零；键由遥测词表
-/// 生成——设计期的 current_a/battery_soc 无设备数据源，已从词表删除）。
+/// 单点 JSON：未上报指标为 null，不补零；键由遥测词表生成
+/// （设计期的 current_a/battery_soc 无设备数据源，已从词表删除）。
 fn point_json(ts: chrono::DateTime<chrono::Utc>, values: &HashMap<String, f64>) -> Value {
     let metric = |k: &str| values.get(k).copied();
     let mut point = json!({ "ts": ts.to_rfc3339_opts(chrono::SecondsFormat::Secs, true) });
@@ -600,7 +598,7 @@ fn point_json(ts: chrono::DateTime<chrono::Utc>, values: &HashMap<String, f64>) 
     point
 }
 
-/// 实时曲线窗口读数（旧版 Curve + chooseSource）：
+/// 实时曲线窗口读数：
 /// 短窗口读原始表，超过 6 小时读小时聚合，其余读 15 分钟聚合。
 /// 返回按时间升序的点数组。
 pub async fn window_points(
@@ -643,7 +641,7 @@ pub async fn window_points(
         .collect())
 }
 
-/// 历史曲线（旧版 HistoricalCurve + MetricPeaksInRange）：
+/// 历史曲线：
 /// 按粒度读聚合表，返回 (series, summary, boundary_approximate)。
 /// 调用方先完成归属、窗口与点数校验。
 pub async fn historical_curve(
@@ -691,7 +689,7 @@ pub async fn historical_curve(
         .into_iter()
         .map(|(ts, v)| point_json(ts, &v))
         .collect();
-    // 摘要（旧版 MetricPeaksInRange）：功率、温度峰值与按样本数加权的均值，DECIMAL 文本。
+    // 摘要：功率、温度峰值与按样本数加权的均值，DECIMAL 文本。
     let peaks: Vec<(String, String, String)> = query_as(&format!(
         "SELECT CAST(`metric` AS CHAR), CAST(MAX(`max_value`) AS CHAR), \
                 CAST(SUM(`avg_value` * `count`) / NULLIF(SUM(`count`), 0) AS CHAR) \
@@ -724,10 +722,10 @@ pub async fn historical_curve(
 }
 
 // ---------------------------------------------------------------------------
-// 快照端点的两分钟窗口观测（旧版 Snapshot 遥测段）
+// 快照端点的两分钟窗口观测
 // ---------------------------------------------------------------------------
 
-/// 窗口内最新观测（旧版 Snapshot 循环最后一个有效点的语义）：
+/// 窗口内最新观测：
 /// 返回 (telemetry_at, power_w, voltage_v, temperature_c, meter_kwh, has_value)。
 pub async fn latest_observation(
     pool: &MySqlPool,

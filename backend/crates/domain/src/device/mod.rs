@@ -1,4 +1,4 @@
-//! 设备域共享词表（票 10）：故障报告、告警、导入、设备与端口、站点、
+//! 设备域共享词表：故障报告、告警、导入、设备与端口、站点、
 //! 会话与厂商协议。协议故障码到故障类型的映射属协议层封闭语义（不在本域）。
 
 use crate::wordlist::wordlist_enum;
@@ -142,7 +142,7 @@ wordlist_enum!(
 mod wordlist_tests {
     use super::*;
 
-    /// 字面量对照（票 10 硬规则）：serde 输出与 DB ENUM 字面量逐字节一致。
+    /// 字面量对照：serde 输出与 DB ENUM 字面量逐字节一致。
     #[test]
     fn db_literals_match_serde() {
         use serde_json::to_string as json;

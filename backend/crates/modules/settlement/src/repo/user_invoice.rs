@@ -5,7 +5,7 @@ use chargepilot_domain::money::BizType;
 use chargepilot_domain::settlement::{InvoiceRequestReviewStatus, InvoiceType};
 use sqlx::{MySqlConnection, MySqlPool};
 
-/// 本人订单读取（订单号 + 用户双条件，旧版 FindInvoiceableOrder）。
+/// 本人订单读取（订单号 + 用户双条件，FindInvoiceableOrder）。
 pub async fn find_user_order(
     pool: &MySqlPool,
     order_no: &str,
@@ -21,7 +21,7 @@ pub async fn find_user_order(
     .await
 }
 
-/// 费用回执确定总额（金额不由客户端决定，旧版 LoadInvoiceFee + Fees）。
+/// 费用回执确定总额（金额不由客户端决定，LoadInvoiceFee + Fees）。
 pub async fn fee_total(pool: &MySqlPool, charge_order_id: u64) -> Result<Option<i64>, sqlx::Error> {
     let row: Option<(i64,)> = sqlx::query_as(
         "SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(`result_json`, '$.total_cents')) AS SIGNED) \
@@ -33,7 +33,7 @@ pub async fn fee_total(pool: &MySqlPool, charge_order_id: u64) -> Result<Option<
     Ok(row.map(|(total,)| total))
 }
 
-/// 锁定本人订单并复查状态（旧版 LockInvoiceSourceInTx：防同单不同请求号
+/// 锁定本人订单并复查状态（LockInvoiceSourceInTx：防同单不同请求号
 /// 并发重复申请；归属不符按读取故障处理，正常请求不会触发）。
 pub async fn lock_order_status_tx(
     c: &mut MySqlConnection,
@@ -81,7 +81,7 @@ pub async fn find_existing_invoice_tx(
     .await
 }
 
-/// 一单一申请：已有未删除申请计数（旧版 Count 分支）。
+/// 一单一申请：已有未删除申请计数。
 pub async fn active_invoice_count_tx(
     c: &mut MySqlConnection,
     order_id: u64,
@@ -163,7 +163,7 @@ pub type InvoiceListRow = (
     String,
 );
 
-/// 分页倒序读取本人未删除的发票申请（旧版 ListUserInvoiceRequests 投影）。
+/// 分页倒序读取本人未删除的发票申请。
 pub async fn user_invoice_rows(
     pool: &MySqlPool,
     user_id: u64,

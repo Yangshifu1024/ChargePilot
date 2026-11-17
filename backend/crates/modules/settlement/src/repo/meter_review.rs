@@ -4,7 +4,7 @@
 use chargepilot_domain::settlement::{BillingJobStatus, MeterReviewStatus};
 use sqlx::{MySqlConnection, MySqlPool};
 
-/// 核实记录行的统一投影列（json 列 CAST AS CHAR，时间对齐旧版 RFC3339 形状）。
+/// 核实记录行的统一投影列（json 列 CAST AS CHAR，时间格式 RFC3339）。
 pub const METER_REVIEW_COLUMNS: &str = "`id`, CAST(`request_id` AS CHAR) AS `request_id`, \
      `charge_order_id`, CAST(`original_json` AS CHAR) AS `original_json`, \
      CAST(`corrected_json` AS CHAR) AS `corrected_json`, \
@@ -63,7 +63,7 @@ pub struct ManualFeeReviewRawRow {
     pub created_at: String,
 }
 
-/// 读取单条核实记录（旧版 propose HTTP 返回完整行的查询来源）。
+/// 读取单条核实记录。
 pub async fn get_meter_review_row(
     db: &MySqlPool,
     id: u64,
@@ -95,7 +95,7 @@ pub fn manual_review_filters(status: &str, keyword: &str) -> (String, Vec<String
     (where_sql, binds)
 }
 
-/// 关键词 LIKE 转义（旧版 dbutil.LikePattern：转义 ! % _，用 ! 作逃逸符）。
+/// 关键词 LIKE 转义。
 fn like_pattern(value: &str) -> String {
     format!(
         "%{}%",
@@ -237,7 +237,7 @@ pub async fn last_insert_id_tx(c: &mut MySqlConnection) -> Result<u64, sqlx::Err
         .await
 }
 
-/// 审前行快照（旧版 FindMeterReview + Before=review 的审计语义；FOR UPDATE 行锁）。
+/// 审前行快照。
 pub async fn lock_review_row_tx(
     c: &mut MySqlConnection,
     review_id: u64,

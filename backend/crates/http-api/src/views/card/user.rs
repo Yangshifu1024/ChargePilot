@@ -1,6 +1,6 @@
-//! 卡域用户端门面（票 19 热区批：原 user_identity_cards.rs 的卡片切片）。
+//! 卡域用户端门面。
 //!
-//! 在线卡 C 端仅可写 lost/unbound（旧版 card/api.go 语义）。
+//! 在线卡 C 端仅可写 lost/unbound。
 
 use crate::errormap::rid_of;
 use crate::state::ApiDeps;
@@ -36,7 +36,7 @@ struct CardStatusBody {
     status: Option<String>,
 }
 
-/// 挂失或解绑本人卡（旧版 card.API.cardStatus；C 端仅可写 lost/unbound）。
+/// 挂失或解绑本人卡。
 async fn card_status(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
@@ -62,8 +62,8 @@ async fn card_status(
 }
 
 /// 订单反馈提交：路径参数先解析（数字主键或业务单号），再绑定 JSON
-/// （旧版 FeedbackAPI.submitFeedback：业务单号先查再绑定 JSON，数字主键
-/// 用户卡片路由（票 19 热区批）。
+/// （FeedbackAPI.submitFeedback：业务单号先查再绑定 JSON，数字主键
+/// 用户卡片路由。
 pub fn router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
         .route("/api/v1/user/cards", axum::routing::get(cards))

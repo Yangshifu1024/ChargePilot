@@ -1,4 +1,4 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 集成测试在持锁场景下跨 await；已配置 clippy 豁免。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
@@ -6,7 +6,7 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 阶段 04 批 6b 主缝集成测试：账单签发/已读、人工退款双人审核（批准后由
+//! 主缝集成测试：账单签发/已读、人工退款双人审核（批准后由
 //! 退款执行器接手）、仪表审核修正重排队与人工最终金额入账。
 
 mod support;
@@ -222,7 +222,7 @@ async fn bill_issue_and_manual_refund_review() {
     assert_eq!(bill.prepaid_cents, 100);
     assert_eq!(
         bill.shortfall_cents, 0,
-        "入账总额未超预付（封顶），账单无缺口（旧版推导仅对历史异常兜底）"
+        "入账总额未超预付（封顶），账单无缺口"
     );
     let again = chargepilot_mod_settlement::bill::issue_bill(db.as_ref(), order_id)
         .await
@@ -399,8 +399,8 @@ async fn meter_review_and_manual_amount() {
     };
     let alloc = Arc::new(SegmentAllocator::new((*db).clone(), 60));
     alloc.warm_up().await.unwrap();
-    // 票 23 裁剪：原场景 A（分段守恒争议转人工 → 提案 → 双审批准 → 重排队
-    // 重算入账）与 admin_billing_flow 的 meter_review_list_propose_decide_flow
+    // 场景 A（分段守恒争议→双审→重排队→重算入账）与 admin_billing_flow 的
+    // meter_review_list_propose_decide_flow
     // 严格超集重复（转人工/首审冲突/批准重排队/重算入账均已在彼处覆盖），
     // 全仓独有的 resolve_manual_amount 人工金额分支保留在本测试。
     let (order_b, payment_b, user_b, rule_b) =

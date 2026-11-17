@@ -1,4 +1,4 @@
-//! 导出域后台门面（票 18 冷区批：原 admin_export.rs 归位）。
+//! 导出域后台门面。
 
 use crate::errormap::{export_error, rid_of};
 use crate::guard::AdminGuard;
@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-// 导出配置（票 16）：由装配根从统一配置的导出组构造，经 ApiDeps 持有；
+// 导出配置：由装配根从统一配置的导出组构造，经 ApiDeps 持有；
 // HTTP 处理器只消费，不再直读环境变量。
 
 pub fn router() -> axum::Router<Arc<ApiDeps>> {
@@ -36,7 +36,7 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
         )
 }
 
-/// 导出错误 → HTTP（旧版 failure 映射：400/403/409/410/其他存储）。
+/// 导出错误 → HTTP。
 #[derive(Deserialize)]
 struct TaskListQuery {
     status: Option<String>,
@@ -120,7 +120,7 @@ async fn create_task(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("unknown")
         .to_string();
-    // 创建审计使用请求头请求号，不补造关联号（旧版语义）。
+    // 创建审计使用请求头请求号，不补造关联号（契约约定）。
     let audit_rid = httpx::request_id_from(&headers);
     match chargepilot_mod_export::create_export(
         &deps.db,

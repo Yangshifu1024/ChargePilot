@@ -7,7 +7,7 @@ use chargepilot_platform::sessiontoken::{Layout, REVOKE_SCRIPT, ROTATE_SCRIPT, d
 pub const REFRESH_TTL_SECS: u64 = 7 * 24 * 3600;
 const MFA_TTL_SECS: u64 = 5 * 60;
 const RATE_WINDOW_SECS: u64 = 60;
-/// 窗口内允许的登录尝试次数（第 6 次拒绝，旧版语义 n>5）。
+/// 窗口内允许的登录尝试次数。
 const RATE_LIMIT: i64 = 5;
 
 pub const ADMIN_TOKEN_LAYOUT: Layout = Layout {
@@ -105,7 +105,7 @@ pub async fn exists(redis_url: &str, sid: &str) -> anyhow::Result<bool> {
     Ok(found.is_some())
 }
 
-/// 登录频次：60 秒窗口 INCR，超过 5 次拒绝（旧版 n>5 拒绝）。
+/// 登录频次：60 秒窗口 INCR，超过 5 次拒绝。
 pub async fn check_rate(redis_url: &str, ip: &str) -> Result<(), OpsError> {
     let mut conn = conn(redis_url).await.map_err(OpsError::from)?;
     let key = format!("admin:login-rate:{ip}");

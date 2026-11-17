@@ -1,6 +1,6 @@
 //! 管理员 MFA：本人安全设置（enrol/confirm/disable，Redis 待绑定 + 租锁 + 频次）、
 //! 管理端重置（admin-users/{id}/mfa）与状态查询。
-//! 语义基准：旧仓库 internal/ops/mfa.go + account_management.go 的 MFA 分支，逐条对齐。
+//! 频次限制、Redis 待绑定与租锁保证设置串行；密码与验证码不写审计。
 //! 密码、密钥与验证码不进审计；登记材料只存短期缓存（5 分钟）。
 
 use crate::Profile;
@@ -10,22 +10,22 @@ use serde_json::{Value, json};
 use sqlx::Acquire;
 use sqlx::MySqlPool;
 
-/// 待绑定窗口 5 分钟（旧版 mfaEnrollmentTTL）。
+/// 待绑定窗口 5 分钟。
 const ENROLLMENT_TTL_SECS: u64 = 5 * 60;
-/// 设置租锁 30 秒（旧版 Acquire 30s），单次操作限时 10 秒。
+/// 设置租锁 30 秒，单次操作限时 10 秒。
 const LOCK_TTL_SECS: u64 = 30;
-/// 一分钟窗口内允许的安全设置次数（第 6 次拒绝，旧版 n>5）。
+/// 一分钟窗口内允许的安全设置次数。
 const SETTINGS_RATE_LIMIT: i64 = 5;
 
 // ---------------------------------------------------------------------------
-// Redis IO（旧版 mfa_repo.go：pending / 租锁 / 频次）
+// Redis IO
 // ---------------------------------------------------------------------------
 
-/// 比较读取值后删除（待绑定记录和租锁共用；旧版 mfaCompareDelete）。
+/// 比较读取值后删除。
 const COMPARE_DELETE: &str =
     "if redis.call('GET',KEYS[1]) == ARGV[1] then return redis.call('DEL',KEYS[1]) end; return 0";
 
-/// 原子增加计数，仅首次设置六十秒窗口（旧版 authRateScript）。
+/// 原子增加计数，仅首次设置六十秒窗口。
 const RATE_SCRIPT: &str = "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('EXPIRE',KEYS[1],60) end; return n";
 
 fn pending_key(id: u64) -> String {
@@ -46,7 +46,7 @@ async fn conn(redis_url: &str) -> Result<redis::aio::MultiplexedConnection, MfaE
         .await?)
 }
 
-/// 保存待绑定记录（JSON，TTL 5 分钟；旧版 SavePending）。
+/// 保存待绑定记录。
 async fn save_pending(redis_url: &str, id: u64, record: &Value) -> Result<(), MfaError> {
     let mut c = conn(redis_url).await?;
     redis::cmd("SET")
@@ -59,7 +59,7 @@ async fn save_pending(redis_url: &str, id: u64, record: &Value) -> Result<(), Mf
     Ok(())
 }
 
-/// 读取待绑定记录原文；缺失或损坏按 Pending 过期处理（旧版 Pending）。
+/// 读取待绑定记录原文；缺失或损坏按 Pending 过期处理。
 async fn read_pending(redis_url: &str, id: u64) -> Result<(Value, String), MfaError> {
     let mut c = conn(redis_url).await?;
     let raw: Option<String> = redis::cmd("GET")
@@ -75,7 +75,7 @@ async fn read_pending(redis_url: &str, id: u64) -> Result<(Value, String), MfaEr
     }
 }
 
-/// 仅在记录仍等于读取原文时删除（旧版 ConsumePending）。
+/// 仅在记录仍等于读取原文时删除。
 async fn consume_pending(redis_url: &str, id: u64, raw: &str) -> Result<bool, MfaError> {
     let mut c = conn(redis_url).await?;
     let n: i32 = redis::Script::new(COMPARE_DELETE)
@@ -86,7 +86,7 @@ async fn consume_pending(redis_url: &str, id: u64, raw: &str) -> Result<bool, Mf
     Ok(n == 1)
 }
 
-/// 删除待绑定记录（旧版 ClearPending）。
+/// 删除待绑定记录。
 async fn clear_pending(redis_url: &str, id: u64) -> Result<(), MfaError> {
     let mut c = conn(redis_url).await?;
     redis::cmd("DEL")
@@ -96,7 +96,7 @@ async fn clear_pending(redis_url: &str, id: u64) -> Result<(), MfaError> {
     Ok(())
 }
 
-/// 取得账号设置租锁（旧版 Acquire，SET NX EX 30；成功返回 "OK"，占用返回 nil）。
+/// 取得账号设置租锁。
 async fn acquire_lock(redis_url: &str, id: u64, owner: &str) -> Result<bool, MfaError> {
     let mut c = conn(redis_url).await?;
     let reply: Option<String> = redis::cmd("SET")
@@ -110,7 +110,7 @@ async fn acquire_lock(redis_url: &str, id: u64, owner: &str) -> Result<bool, Mfa
     Ok(reply.is_some())
 }
 
-/// 只释放仍属于自己的租锁（旧版 Release）。
+/// 只释放仍属于自己的租锁。
 async fn release_lock(redis_url: &str, id: u64, owner: &str) -> Result<(), MfaError> {
     let mut c = conn(redis_url).await?;
     let _: i32 = redis::Script::new(COMPARE_DELETE)
@@ -121,7 +121,7 @@ async fn release_lock(redis_url: &str, id: u64, owner: &str) -> Result<(), MfaEr
     Ok(())
 }
 
-/// 一分钟窗口计数（旧版 Count）。
+/// 一分钟窗口计数。
 async fn count_rate(redis_url: &str, id: u64) -> Result<i64, MfaError> {
     let mut c = conn(redis_url).await?;
     let n: i64 = redis::Script::new(RATE_SCRIPT)
@@ -132,7 +132,7 @@ async fn count_rate(redis_url: &str, id: u64) -> Result<i64, MfaError> {
 }
 
 // ---------------------------------------------------------------------------
-// SQL 辅助（旧版 UpdateAdminMFASecret / consumeAdminTOTPStep 语义）
+// SQL 辅助
 // ---------------------------------------------------------------------------
 
 /// 校验验证码并返回命中的时间步（±1 步；与 repo::verify_mfa 同一匹配规则）。
@@ -142,7 +142,7 @@ fn verify_with_step(secret: &str, code: &str, now: i64) -> Option<i64> {
         .find(|s| chargepilot_platform::totp::generate(secret, s * 30).as_deref() == Some(code))
 }
 
-/// 校验 MFA 设置输入（旧版 MFASettingsInput.Valid）：enrol 需密码且禁带码/绑定号；
+/// 校验 MFA 设置输入：enrol 需密码且禁带码/绑定号；
 /// confirm 需 43 字符绑定号与六位数字码；disable 需密码加六位码。
 fn settings_input_valid(action: &str, password: &str, code: &str, enrollment_id: &str) -> bool {
     let password_ok = !password.is_empty() && password.len() <= 72;
@@ -159,8 +159,8 @@ fn settings_input_valid(action: &str, password: &str, code: &str, enrollment_id:
 // 本人安全设置（POST /api/v1/admin/auth/mfa-settings）
 // ---------------------------------------------------------------------------
 
-/// 本人 MFA 设置（旧版 MFAService.Apply）：频次 → 租锁 → 事务（锁账号 → 核对会话
-/// 认证版本 → 动作分支）。响应形状与旧版 MFASettingsReply 一致（omitempty 字段缺省省略）。
+/// 本人 MFA 设置：频次限制 → Redis 租锁 → 事务（锁账号、核对会话与
+/// 认证版本、按动作分支）。返回 JSON 与 HTTP 层 mfaSettings 契约一致。
 #[allow(clippy::too_many_arguments)]
 pub async fn apply_settings(
     pool: &MySqlPool,
@@ -205,7 +205,7 @@ pub async fn apply_settings(
     result
 }
 
-/// 持锁执行设置（旧版 apply）。Redis 挑战在 SQL 提交后仍可能失败，不能恢复，须重新登记。
+/// 持锁执行设置。Redis 挑战在 SQL 提交后仍可能失败，不能恢复，须重新登记。
 #[allow(clippy::too_many_arguments)]
 async fn apply_locked(
     pool: &MySqlPool,
@@ -359,7 +359,7 @@ async fn apply_locked(
     Ok(reply)
 }
 
-/// MfaAccount → 审计所需的账号身份（旧版 WriteAuthAudit 接收 AdminAccount）。
+/// MfaAccount → 审计所需的账号身份。
 fn to_admin_account(a: &crate::repo::mfa::MfaAccount) -> crate::AdminAccount {
     crate::AdminAccount {
         id: a.id,
@@ -381,9 +381,9 @@ fn to_admin_account(a: &crate::repo::mfa::MfaAccount) -> crate::AdminAccount {
 // 管理端（POST /api/v1/admin/admin-users/{id}/mfa）
 // ---------------------------------------------------------------------------
 
-/// 管理端 MFA 重置（旧版 AccountService.MFA）：不能操作本人；确认密钥须与
+/// 管理端 MFA 重置：不能操作本人；确认密钥须与
 /// 锁定账号后读出的密钥一致。登记响应含当前验证码；审计不保存任何材料。
-/// MFA 管理端重置参数即旧版契约字段，不引入参数对象。
+/// 参数为扁平字段，不单独引入请求 DTO。
 #[allow(clippy::too_many_arguments)]
 pub async fn managed(
     pool: &MySqlPool,

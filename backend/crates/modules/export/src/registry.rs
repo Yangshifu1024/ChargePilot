@@ -1,4 +1,4 @@
-//! 可导出资源注册表（旧版 format.go 的 exportRegistry）：
+//! 可导出资源注册表：
 //! 只有登记过的资源允许导出；账单包含全局财务数据，只允许全局范围。
 
 use chargepilot_domain::operations::DataScope;
@@ -201,7 +201,7 @@ pub fn export_resource(name: &str) -> Option<ExportSpec> {
     }
 }
 
-/// 全部已登记资源名（旧版 ExportResources 的键集）。
+/// 全部已登记资源名。
 #[must_use]
 pub fn export_resource_names() -> &'static [&'static str] {
     &["orders", "stations", "devices", "bills"]
@@ -213,9 +213,9 @@ fn in_placeholders(values: &[u64], binds: &mut Vec<i64>) -> String {
     values.iter().map(|_| "?").collect::<Vec<_>>().join(",")
 }
 
-/// 资源范围过滤 SQL（旧版 builder 钩子的声明式对应物）。
+/// 资源范围过滤 SQL。
 /// 追加到 WHERE 的片段与绑定值；账单无范围过滤。
-/// 修正：charge_order 不带站点列，旧版直接拼 `station_id` 会在受限范围下
+/// 修正：charge_order 不带站点列，
 /// 报未知列，这里改为经 device_meta 子查询过滤。
 #[must_use]
 pub fn scope_filter(spec: &ExportSpec, scope: &DataScope) -> (String, Vec<i64>) {
@@ -247,7 +247,7 @@ pub fn scope_filter(spec: &ExportSpec, scope: &DataScope) -> (String, Vec<i64>) 
     (clauses.join(" AND "), binds)
 }
 
-/// 记录实际执行的范围（旧版 effectiveScope）：非设备资源不携带厂商维度；
+/// 记录实际执行的范围：非设备资源不携带厂商维度；
 /// 内存范围不携带单条范围类型。
 #[must_use]
 pub fn effective_scope(resource: &str, scope: &DataScope) -> DataScope {
@@ -263,7 +263,7 @@ pub fn effective_scope(resource: &str, scope: &DataScope) -> DataScope {
 }
 
 /// 当前范围是否覆盖文件保存时的全部范围；扩大权限可下载，收窄须拒绝
-/// （旧版 containsScope）。
+///。
 #[must_use]
 pub fn contains_scope(current: &DataScope, saved: &DataScope) -> bool {
     if current.unrestricted {

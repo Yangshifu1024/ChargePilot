@@ -1,5 +1,5 @@
-//! 人工退款：登记、双人审核与重试（旧版 refund_review_repo.go + refund.go 的
-//! 资金核心）。权限校验与审计由 HTTP 层负责，本模块只做资金语义：
+//! 人工退款：登记、双人审核与重试。
+//! 权限校验与审计由 HTTP 层负责，本模块只做资金语义：
 //! 锁序 支付 → 退款；审核通过后转 automatic 由退款执行器接手。
 //! 已结束充电必须先有费用回执，不能抢在计费之前退款。SQL 在 repo/refund_admin.rs。
 
@@ -13,7 +13,7 @@ use crate::error::RefundAdminError;
 
 pub use crate::repo::refund_admin::RefundAdminRow;
 
-/// 分页倒序读取未删除退款及最近人工复核（旧版 ListRefunds）。
+/// 分页倒序读取未删除退款及最近人工复核。
 /// status / refund_no 为空表示不筛选；status 由调用方按白名单校验。
 pub async fn list_refunds(
     db: &MySqlPool,
@@ -29,7 +29,7 @@ pub async fn list_refunds(
     Ok((rows, total))
 }
 
-/// 退款单号：MR + request_id 的 sha256 前 16 字节十六进制（旧版 manualRefundNo）。
+/// 退款单号：MR + request_id 的 sha256 前 16 字节十六进制。
 fn manual_refund_no(request_id: &str) -> String {
     use sha2::{Digest, Sha256};
     let sum = Sha256::digest(request_id.as_bytes());
@@ -39,7 +39,7 @@ fn manual_refund_no(request_id: &str) -> String {
 
 /// 登记人工退款；同 request_id 同内容重放返回首次退款号（created=false），
 /// 内容不同返回冲突。金额不得超过可退余额；已结束充电须已有费用回执。
-/// 首次登记时在事务内写审计（重放不写，旧版 created 分支语义）。
+/// 首次登记时在事务内写审计（重放不写，created 分支语义）。
 #[allow(clippy::too_many_lines)]
 pub async fn request_manual_refund(
     pool: &MySqlPool,
@@ -91,8 +91,7 @@ pub async fn request_manual_refund(
         tx.commit().await?;
         return Ok((false, prior_no));
     }
-    // 准入：订单可退（旧版 AllChannelRefundableStatuses：completed/cancelled/failed，
-    // refunded 被随后单独排除；refunding 不在集合——已受理退款不得重复发起）。
+    // 准入：订单 completed/cancelled/failed 且支付可退；refunding 不得重复登记。
     let refundable_order = matches!(
         order_status,
         ChargeOrderStatus::Completed | ChargeOrderStatus::Cancelled | ChargeOrderStatus::Failed
@@ -137,7 +136,7 @@ pub async fn request_manual_refund(
     .await?;
     repo::insert_manual_request_tx(&mut *c, request_id, &payload, &refund_no).await?;
     let record_id = repo::last_insert_id_tx(&mut *c).await?;
-    // 首次登记审计（旧版 AuditChange{Action:"request", Target:"refund", After:in, RequestID}）。
+    // 首次登记审计。
     if let Some(audit) = audit {
         let after = serde_json::json!({
             "request_id": request_id,
@@ -163,7 +162,7 @@ pub async fn request_manual_refund(
     Ok((true, refund_no))
 }
 
-/// 审核结果（旧版 RefundReviewOutcome）。
+/// 审核结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewOutcome {
     /// 第一审通过，等待第二审。
@@ -174,10 +173,10 @@ pub enum ReviewOutcome {
     Rejected,
 }
 
-/// 审核/驳回人工退款（旧版 Review）：仅 pending + manual_review 可审。
+/// 审核/驳回人工退款：仅 pending + manual_review 可审。
 /// 驳回写拒绝记录并置 rejected；通过走双人：首审存快照，二审核对快照与
 /// 首审人权限（由调用方传入实时查询结果）后转 automatic。
-/// 决定落库时在事务内写审计（驳回与双审通过都写，旧版 service 层语义）。
+/// 决定落库时在事务内写审计（驳回与双审通过都写，service 层语义）。
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
 pub async fn review_manual_refund(
@@ -297,12 +296,12 @@ pub async fn review_manual_refund(
                 return Err(RefundAdminError::Conflict);
             }
             repo::approve_second_review_tx(&mut *c, record_id, actor_id, approve_comment).await?;
-            // 转 automatic 并立即排队：批 5 退款执行器接手渠道执行。
+            // 转 automatic 并立即排队：。
             repo::promote_to_automatic_tx(&mut *c, record_id).await?;
             ReviewOutcome::Approved
         }
     };
-    // 决定审计（旧版 Action=string(status)，驳回 rejected、首审 awaiting_second、双审 approved）。
+    // 决定审计。
     let action = match outcome {
         ReviewOutcome::Rejected => "rejected",
         ReviewOutcome::AwaitingSecond => "awaiting_second",
@@ -313,7 +312,7 @@ pub async fn review_manual_refund(
     Ok(outcome)
 }
 
-/// 退款决定的审计写入（旧版 AuditChange{Target:"refund", After:in}）。
+/// 退款决定的审计写入。
 async fn write_refund_audit(
     tx: &mut sqlx::MySqlConnection,
     audit: Option<&AuditView<'_>>,
@@ -346,7 +345,7 @@ async fn write_refund_audit(
 }
 
 /// 重试 automatic 且未终态的退款：重置 next_attempt_at 立即排队。
-/// 人工待审或终态返回冲突；金额与状态不变（旧版 Retry）。重复重试静默成功并写审计。
+/// 人工待审或终态返回冲突；金额与状态不变。重复重试静默成功并写审计。
 pub async fn retry_refund(
     pool: &MySqlPool,
     audit: Option<&AuditView<'_>>,
@@ -366,7 +365,7 @@ pub async fn retry_refund(
         return Err(RefundAdminError::Conflict);
     }
     repo::reset_next_attempt_tx(&mut *c, record_id).await?;
-    // 重试审计（旧版 AuditChange{Action:"retry", Target:"refund", After:in}）。
+    // 重试审计。
     if let Some(audit) = audit {
         let after = serde_json::json!({ "reason": reason });
         chargepilot_mod_ops::repo::append_audit_tx(

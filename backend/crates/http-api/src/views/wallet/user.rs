@@ -1,4 +1,4 @@
-//! 钱包域用户端门面（票 18 冷区批：原 user_wallet.rs 归位）。
+//! 钱包域用户端门面。
 
 use crate::errormap::rid_of;
 use crate::params::UserPaging;
@@ -31,10 +31,10 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
         )
 }
 
-/// 退款申请路由（`wallet` 装配开关 → WalletState 必达，票 17）。
+/// 退款申请路由（`wallet` 装配开关 → WalletState 必达，）。
 pub fn refund_router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
-        // 旧版契约：申请入口为单数 /refund，查询为复数 /refunds。
+        // 固定契约：申请入口为单数 /refund，查询为复数 /refunds。
         .route(
             "/api/v1/user/wallet/refund",
             axum::routing::post(wallet_refund),

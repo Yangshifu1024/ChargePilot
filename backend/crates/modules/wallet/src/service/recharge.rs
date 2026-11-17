@@ -1,4 +1,4 @@
-//! 充值申请事务：幂等建单、支付单复用与提交后的预支付准备（旧版 recharge.go 对齐）。
+//! 充值申请事务：幂等建单、支付单复用与提交后的预支付准备。
 //! 锁序为 用户→钱包→请求；READ COMMITTED 使等锁后的重放能读取前次提交的申请；
 //! 预支付只在事务提交后请求，渠道失败保留申请，相同 request_id 可恢复支付参数。
 //! SQL 在 repo/recharge.rs。
@@ -10,8 +10,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{Acquire, MySqlConnection, MySqlPool};
 
-/// 充值支付能力（旧版 RechargePayments）：实现由 payment 模块注入（批 3 接线），
-/// 钱包不引用支付实现。
+/// 充值支付能力：由 payment 模块注入，钱包不引用支付实现。
 pub trait RechargePayments: Send + Sync {
     /// 在事务中读取 paymentID 的支付信息；无记录返回 NotFound。
     fn load_in_tx<'a>(
@@ -40,7 +39,7 @@ pub mod futures_bounds {
     pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 }
 
-/// 返回支付编号、金额、状态与截止时间（旧版 RechargePayment）。
+/// 充值关联的支付单投影。
 #[derive(Debug, Clone)]
 pub struct RechargePayment {
     pub id: u64,
@@ -53,7 +52,7 @@ pub struct RechargePayment {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
-/// 充值请求内容（幂等存档 JSON，旧版 RechargeInput）。
+/// 充值请求内容（幂等存档 JSON）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RechargeInput {
     pub request_id: String,
@@ -61,7 +60,7 @@ pub struct RechargeInput {
     pub amount_cents: i64,
 }
 
-/// 可公开的申请回执（旧版 RechargeResult；字段名与旧版 JSON 一致）。
+/// 可公开的申请回执（API JSON 形态）。
 #[derive(Debug, Clone, Serialize)]
 pub struct RechargeResult {
     pub request_id: String,
@@ -74,14 +73,14 @@ pub struct RechargeResult {
     pub payment_params: Option<serde_json::Value>,
 }
 
-/// 充值申请服务（旧版 RechargeService）。
+/// 充值申请服务。
 pub struct RechargeService {
     pub db: MySqlPool,
     pub payments: std::sync::Arc<dyn RechargePayments>,
 }
 
 impl RechargeService {
-    /// 创建用户充值申请与支付记录，失败全部回滚（旧版 RechargeService.Create）。
+    /// 创建用户充值申请与支付记录，失败全部回滚。
     /// 渠道失败返回 PrepayUnavailable，保留申请，相同 request_id 可恢复支付参数。
     pub async fn create(
         &self,
@@ -94,7 +93,7 @@ impl RechargeService {
         {
             return Err(WalletError::RequestConflict);
         }
-        // READ COMMITTED：使等锁后的重放能读取前次提交的申请（旧版 TxOptions 语义）。
+        // READ COMMITTED：使等锁后的重放能读取前次提交的申请。
         let mut conn = self.db.acquire().await?;
         crate::repo::set_read_committed(&mut conn).await?;
         let mut tx = conn.begin().await?;
@@ -166,7 +165,7 @@ impl RechargeService {
     }
 }
 
-/// 客户端请求号须为合法 UUID（旧版 uuid.Validate）。
+/// 客户端请求号须为合法 UUID（8-4-4-4-12 十六进制）。
 pub fn is_uuid(v: &str) -> bool {
     let b = v.as_bytes();
     if b.len() != 36 {

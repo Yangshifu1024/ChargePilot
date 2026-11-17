@@ -4,9 +4,8 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 差分对照（辅缝 2）：以旧版 Go 计费纯函数批量产出的黄金样本逐条比对 Rust 实现。
-//! 样本由旧仓库 cmd/goldengen 一次性生成（生成期人工预期已核对），本测试只读快照。
-//! 覆盖：Cost / PriceActual / SettleSession / MeasuredSegments / Estimate /
+//! 计费域黄金样本：读取 `tests/golden/billing.json` 逐条比对纯函数输出。
+//! 覆盖 Cost / PriceActual / SettleSession / MeasuredSegments / Estimate /
 //! BudgetStop / CutoffMeter / DecideStop / ValidateSpec / Scheme 校验。
 
 use chargepilot_domain::charging::actual::{ActualMeter, MeterSegment, Rule, price_actual};
@@ -41,7 +40,7 @@ struct GoldenFile {
     cases: Vec<GoldenCase>,
 }
 
-/// Go 空切片 marshal 为 null：反序列化时归一为空 Vec。
+/// JSON null marshal 为 null：反序列化时归一为空 Vec。
 fn null_to_empty<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -73,13 +72,13 @@ fn want_err_of(want: &str) -> Option<BillingError> {
     }
 }
 
-/// 与旧版哨兵错误等价比较（只比较变体，不比较 Display 文案）。
+/// 与哨兵错误等价比较（只比较变体，不比较 Display 文案）。
 fn assert_err(case_id: &str, got: Result<impl Sized, BillingError>, want: &str) {
     match (got, want_err_of(want)) {
         (Ok(_), None) => {}
         (Ok(_), Some(e)) => panic!("[{case_id}] 期待错误 {e:?} 却成功"),
         (Err(got), None) => panic!("[{case_id}] 期待成功却得到错误 {got:?}"),
-        (Err(got), Some(want)) => assert_eq!(got, want, "[{case_id}] 错误变体与旧版不一致"),
+        (Err(got), Some(want)) => assert_eq!(got, want, "[{case_id}] 错误变体与样本不一致"),
     }
 }
 
@@ -185,7 +184,7 @@ impl WireSegment {
     }
 }
 
-/// Go 侧 JSON 对象（spec/rule/offer 等带 json tag 的结构直接透传）。
+/// JSON 侧 JSON 对象（spec/rule/offer 等带 json tag 的结构直接透传）。
 fn parse_spec(v: &Value) -> Spec {
     serde_json::from_value(v.clone()).expect("spec 反序列化")
 }
@@ -450,7 +449,7 @@ fn run_case(c: &GoldenCase) {
             let got = decide_stop(&spec, &usage.into_usage(), elapsed);
             match (&got, want_err_of(&c.want_err)) {
                 (Ok(plan), None) => {
-                    // Go 侧 StopPlan 无 json tag（PascalCase 字段名），用桥接结构比较
+                    // JSON 侧 StopPlan 无 json tag（PascalCase 字段名），用桥接结构比较
                     let want: WirePlan = serde_json::from_value(c.want.clone()).expect("want plan");
                     assert_eq!(plan.should_stop, want.should_stop, "[{}] should_stop", c.id);
                     assert_eq!(plan.reason, want.reason, "[{}] reason", c.id);
@@ -545,7 +544,7 @@ impl WireReadingSample {
     }
 }
 
-/// Go 侧 StopPlan 无 json tag：字段按导出名（PascalCase）反序列化的桥接结构。
+/// JSON 侧 StopPlan 无 json tag：字段按导出名（PascalCase）反序列化的桥接结构。
 #[derive(Deserialize)]
 struct WirePlan {
     #[serde(rename = "ShouldStop", default)]
@@ -594,7 +593,7 @@ fn golden_differential_all_cases() {
     }
 }
 
-/// ControlInstruction::valid 的单测（无 Go 差分——旧版 Valid 纯结构校验，语义简单）。
+/// ControlInstruction::valid 的单测（纯结构校验，无黄金样本）。
 #[test]
 fn control_instruction_validity() {
     let mut c = ControlInstruction {

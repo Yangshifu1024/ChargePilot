@@ -9,28 +9,31 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// kind → 处理器登记表。处理器必须幂等（ADR 002 红线）。
-/// 键为 [`EventKind`] 进程内词表：未知 kind（历史行/未来类别）在路由处
-/// 归入「无已登记处理器」路径，与旧行为一致。
+/// 键为 [`EventKind`]：未知 kind（历史行或未注册类别）在路由处归入「无处理器」路径。
+/// 事件 kind → 投递处理器的登记表。
 #[derive(Default)]
 pub struct Registry {
     handlers: HashMap<EventKind, Arc<dyn EventDispatcher>>,
 }
 
 impl Registry {
+    /// 空登记表。
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// 为某一事件类别注册处理器（同名覆盖）。
     pub fn register(&mut self, kind: EventKind, handler: Arc<dyn EventDispatcher>) {
         self.handlers.insert(kind, handler);
     }
 
+    /// 按 kind 字面量查找处理器。
     pub fn get(&self, kind: &str) -> Option<Arc<dyn EventDispatcher>> {
         EventKind::parse(kind).and_then(|k| self.handlers.get(&k).cloned())
     }
 }
 
-/// 投递循环。每轮：领取批次 → 逐条投递 → 标记。节拍 1s（有事件时连续处理）。
+/// 事件投递主循环：领取批次 → 逐条投递 → 更新状态；空队列时休眠 1s，有事件则连续处理。
 pub async fn spawn_dispatch_loop(
     pool: MySqlPool,
     registry: Arc<Registry>,
@@ -56,7 +59,7 @@ pub async fn spawn_dispatch_loop(
 async fn dispatch_one(pool: &MySqlPool, registry: &Registry, event: &EnqueuedEvent) {
     let started = std::time::Instant::now();
     // 无已登记处理器 = 该类别本就无消费方（留痕类事件），直接确认完成——
-    // 永久态不该重试（旧实现按失败退避重排，导致留痕事件被无限反复扫表）。
+    // 无消费方的留痕类事件直接确认完成，避免无意义退避重扫。
     let Some(handler) = registry.get(&event.kind) else {
         tracing::debug!(event_id = %event.event_id, kind = %event.kind, "事件无已登记处理器，按完成确认");
         if let Err(e) = repo::mark_published(pool, event.id).await {

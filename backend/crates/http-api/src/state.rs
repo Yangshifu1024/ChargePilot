@@ -5,7 +5,7 @@ use chargepilot_mod_identity::wechat::Exchanger;
 use chargepilot_platform::ids::SegmentAllocator;
 use std::sync::Arc;
 
-// ── 按域最小句柄组（票 17 ①）：FromRef 从装配根派生，组内无可选字段。 ──
+// ── 按域最小句柄组：FromRef 从装配根派生，组内无可选字段。 ──
 // 路由注册绑定装配开关（lib.rs build_router）：开关开启后该域路由才存在，
 // 处理器对域服务的取用必达，不再有「服务未装配」的运行时降级分支。
 // 会话基础件随组携带（用户端鉴权是横切，处理器单 State 提取自足）。
@@ -47,7 +47,7 @@ impl FromRef<Arc<ApiDeps>> for WalletState {
             wallet: deps
                 .wallet
                 .clone()
-                .expect("钱包域未装配（路由注册已绑定装配开关，票 17）"), // 域服务必达契约
+                .expect("钱包域未装配：路由未在装配开关打开时注册"), // 域服务必达契约
         }
     }
 }
@@ -68,11 +68,11 @@ impl FromRef<Arc<ApiDeps>> for PaymentState {
             checkout: deps
                 .checkout
                 .clone()
-                .expect("支付域未装配（路由注册已绑定装配开关，票 17）"),
+                .expect("支付域未装配：路由未在装配开关打开时注册"),
             wallet_recharge: deps
                 .wallet_recharge
                 .clone()
-                .expect("支付域未装配（路由注册已绑定装配开关，票 17）"),
+                .expect("支付域未装配：路由未在装配开关打开时注册"),
         }
     }
 }
@@ -92,7 +92,7 @@ impl FromRef<Arc<ApiDeps>> for ChargingStopState {
             stop: deps
                 .charging_stop
                 .clone()
-                .expect("充电停止域未装配（路由注册已绑定装配开关，票 17）"),
+                .expect("充电停止域未装配：路由未在装配开关打开时注册"),
         }
     }
 }
@@ -104,20 +104,20 @@ pub struct ApiDeps {
     pub jwt_secret: Arc<String>,
     pub allocator: Arc<SegmentAllocator>,
     pub exchanger: Arc<Exchanger>,
-    /// 钱包域服务组（批 2）：退款/风控共用一个 RefundService 实例。
+    /// 钱包域服务组：退款与风控共用一个 RefundService 实例。
     pub wallet: Option<Arc<WalletServices>>,
-    /// 下单服务（批 3）：端口扫描、计费规则与渠道经本层装配。
+    /// 下单服务：端口扫描、计费规则与支付渠道在此装配。
     pub checkout: Option<Arc<chargepilot_mod_payment::CheckoutService>>,
-    /// 钱包充值申请服务（批 3 接线：支付桥实现 RechargePayments）。
+    /// 钱包充值申请：支付桥实现 RechargePayments，接到充值服务。
     pub wallet_recharge: Option<Arc<chargepilot_mod_wallet::recharge::RechargeService>>,
-    /// 支付渠道模式：simulation 时开放模拟确认路由（旧版 PAYMENT_MODE）。
+    /// 支付渠道模式：simulation 时开放模拟确认路由。
     pub simulation_payment: bool,
-    /// 导出配置（票 16 经统一配置传入，HTTP 层不再直读环境变量）。
+    /// 导出配置。
     pub export: chargepilot_mod_export::ExportConfig,
-    /// 充电停止服务（批 4）：授权与计费截止冻结；命令下沉随阶段 06 替换。
+    /// 充电停止：校验权限、冻结计费截止，经命令通道通知在线桩。
     pub charging_stop: Option<Arc<chargepilot_mod_charging::StopService>>,
-    /// 设备实时快照（G2）：快照端点读实时端口读数，缺失回退查库；
-    /// None 时不读内存快照，仅查遥测表。
+    /// 设备实时快照：快照接口优先读内存端口读数，没有则回退查库；
+    /// None 表示不走内存，只查遥测表。
     pub snapshots: Option<Arc<chargepilot_gateway_runtime::SnapshotStore>>,
 }
 
@@ -152,7 +152,7 @@ pub struct PaymentServices {
 }
 
 impl PaymentServices {
-    /// 按统一配置装配（票 16）：支付模式为枚举，凭据来自配置结构微信组。
+    /// 按统一配置装配：支付模式为枚举，凭据来自配置结构微信组。
     /// wechat_direct 要求微信凭据与 HTTP 执行器齐备（真实商户联调属上线前清单）。
     pub fn assemble(
         db: sqlx::MySqlPool,
@@ -219,8 +219,7 @@ impl PaymentServices {
     }
 }
 
-/// 登录模式换出器（票 16：模式与凭据经统一配置传入，非法取值在配置层
-/// 启动即失败，本函数只做枚举分派）。
+/// 按配置的登录模式构造 OAuth 换票器（凭证在启动阶段已校验，此处仅做枚举分派）。
 pub fn exchanger_of(
     mode: chargepilot_platform::config::LoginMode,
     wechat: &chargepilot_platform::config::WechatCreds,

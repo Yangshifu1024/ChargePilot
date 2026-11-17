@@ -3,7 +3,7 @@
 /// pricing 域错误（HTTP 映射在 http-api）。
 #[derive(Debug, thiserror::Error)]
 pub enum PricingError {
-    /// 方案校验失败或目标设备不兼容（409/2009，旧版包装为冲突）。
+    /// 方案校验失败或目标设备不兼容。
     #[error("{0}")]
     InvalidScheme(String),
     /// 版本冲突（409/2009）。

@@ -1,4 +1,4 @@
-//! 支付域用户端门面（票 18 冷区批：原 user_payment.rs 归位）。
+//! 支付域用户端门面。
 
 use crate::errormap::{checkout_error, rid_of};
 use crate::state::{ApiDeps, PaymentState};
@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
-/// 下单与充值路由（`payment` 装配开关 → PaymentState 必达，票 17）。
+/// 下单与充值路由（`payment` 装配开关 → PaymentState 必达，）。
 pub fn checkout_router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
         .route(
@@ -40,12 +40,12 @@ pub fn simulation_router() -> axum::Router<Arc<ApiDeps>> {
 
 #[derive(Deserialize)]
 struct OffersBody {
-    /// 端口二维码编码（wire 字段名 port_id 对齐旧版与小程序端）。
+    /// 端口二维码编码（wire 字段名 port_id 与对外 API 契约一致）。
     #[serde(rename = "port_id")]
     port_code: String,
 }
 
-/// 端口当前套餐与展示配置；无需登录（旧版 offers）。
+/// 端口当前套餐与展示配置；无需登录。
 async fn payment_offers(
     State(st): State<PaymentState>,
     headers: HeaderMap,
@@ -65,17 +65,17 @@ async fn payment_offers(
 #[derive(Deserialize)]
 struct StartBody {
     client_request_id: String,
-    /// 端口二维码编码（wire 字段名 port_id 对齐旧版与小程序端）。
+    /// 端口二维码编码（wire 字段名 port_id 与对外 API 契约一致）。
     #[serde(rename = "port_id")]
     port_code: String,
     offer_id: u64,
-    /// 券发放 ID（可选，十进制字符串或数字）。当前套餐下单不支持券（旧版
-    /// 互斥约束），非 0 由服务层返回冲突；字段保留以对齐旧版请求契约。
+    /// 券发放 ID（可选，十进制字符串或数字）。当前套餐下单不支持券（
+    /// 互斥约束），非 0 由服务层返回冲突；字段保留以与对外 API 契约一致。
     #[serde(default)]
     coupon_grant_id: Option<String>,
 }
 
-/// 下单与支付准备（旧版 start）：冻结意图与快照，返回支付参数。
+/// 下单与支付准备：冻结意图与快照，返回支付参数。
 async fn payment_start(
     State(st): State<PaymentState>,
     headers: HeaderMap,
@@ -88,7 +88,7 @@ async fn payment_start(
         client_request_id: body.client_request_id,
         port_code: body.port_code,
         offer_id: body.offer_id,
-        // 旧版 DTO 为十进制字符串（避免 JS 精度丢失），兼容数字。
+        // DTO 为十进制字符串（避免 JS 精度丢失），兼容数字。
         coupon_grant_id: body
             .coupon_grant_id
             .as_ref()
@@ -106,7 +106,7 @@ struct ConfirmBody {
     merchant_order_no: String,
 }
 
-/// 模拟确认当前用户的支付（旧版 DevelopmentAPI.confirm；走支付成功事务）。
+/// 模拟确认当前用户的支付。
 async fn payment_simulation_confirm(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
@@ -149,7 +149,7 @@ struct RechargeBody {
     amount_cents: i64,
 }
 
-/// 钱包充值申请（旧版 RechargeService.Create）：幂等建单 + 预支付参数。
+/// 钱包充值申请：幂等建单 + 预支付参数。
 async fn wallet_recharge(
     State(st): State<PaymentState>,
     headers: HeaderMap,

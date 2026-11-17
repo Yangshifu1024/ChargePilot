@@ -14,7 +14,7 @@ pub type SimulationPayRow = (
     String,
 );
 
-/// 读取支付单及付款人身份（旧版 FindDevelopmentPayment）。
+/// 读取支付单及付款人身份。
 pub async fn find_development_payment(
     pool: &MySqlPool,
     order_no: &str,
@@ -32,7 +32,7 @@ pub async fn find_development_payment(
     .await
 }
 
-/// 校验支付单经模拟渠道预支付（旧版 provider == "simulation" 判定）。
+/// 校验支付单经模拟渠道预支付。
 pub async fn prepay_is_simulation(
     pool: &MySqlPool,
     payment_order_id: u64,

@@ -4,7 +4,7 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 阶段 02 主缝集成测试：C 端登录全链路（真 MySQL + 真 Redis）。
+//! 主缝集成测试：C 端登录全链路（真 MySQL + 真 Redis）。
 //! 断言只看 HTTP 响应（信封、码值、形状），不看内部实现。
 
 mod support;

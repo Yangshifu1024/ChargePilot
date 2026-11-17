@@ -1,4 +1,4 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 集成测试在持锁场景下跨 await；已配置 clippy 豁免。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
@@ -6,9 +6,9 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 阶段 05 批 3 主缝集成测试：活动建规则校验 → 门槛触发发放（幂等）→
+//! 主缝集成测试：活动建规则校验 → 门槛触发发放（幂等）→
 //! 单人/总量上限 → 邀请奖励（established 检查、双人发放、自邀拒绝）→
-//! 管理列表/更新/审计。管理端走 HTTP，发放编排直调模块函数（旧版调用缝）。
+//! 管理列表/更新/审计。管理端走 HTTP，发放编排直调模块函数。
 
 mod support;
 

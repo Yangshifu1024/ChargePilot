@@ -1,4 +1,4 @@
-//! 运营域后台门面·认证（票 18 冷区批：原 admin_auth.rs 归位）。
+//! 运营域后台门面·认证。
 
 use crate::errormap::{bearer, ops_error, respond};
 use crate::state::ApiDeps;
@@ -27,7 +27,7 @@ fn service(deps: &Arc<ApiDeps>) -> SessionService<'_> {
     }
 }
 
-/// OpsError → HTTP（码值与文案沿用旧版字面量契约）。
+/// OpsError → HTTP（码值与文案固定字面量契约）。
 fn reply_response(reply: AccessReply, rid: &str) -> Response {
     match serde_json::to_value(&reply) {
         Ok(data) => httpx::ok(data, rid),
@@ -41,7 +41,7 @@ fn reply_response(reply: AccessReply, rid: &str) -> Response {
 }
 
 fn client_ip(headers: &HeaderMap) -> String {
-    // 单体直连场景：优先取直连地址；转发头在阶段 09 与外部 LB 一起定
+    // 单体直连场景：优先取直连地址；转发头在后续 与外部 LB 一起定
     headers
         .get("x-real-ip")
         .and_then(|v| v.to_str().ok())
@@ -71,7 +71,7 @@ async fn login(
     }
     match service(&deps).login(&username, &password, &ip).await {
         Ok(LoginOutcome::Challenge(challenge)) => {
-            // 前端契约（Login.tsx / 旧版语义）：密码通过待验码时回
+            // 前端契约（Login.tsx / 契约约定）：密码通过待验码时回
             // mfa_required + mfa_challenge，前端以 mfa_challenge 提交第二步。
             let data = serde_json::json!({ "mfa_required": true, "mfa_challenge": challenge });
             httpx::ok(data, &rid)

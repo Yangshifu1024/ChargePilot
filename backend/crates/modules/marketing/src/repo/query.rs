@@ -1,5 +1,4 @@
-//! 用户持券视图（旧版 query.go + coupon_repo.go + interface_query_repo.go 的
-//! 单体对应物）：支付前可用券列表与本人券分页。到期状态只用于展示，
+//! 用户持券视图：支付前可用券列表与本人券分页。到期状态只用于展示，
 //! 不写回数据库；expired 由内存按当前时间派生。
 
 use crate::error::CouponQueryError;
@@ -8,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::MySqlPool;
 
-/// 支付前可用券的展示资料（旧版 AvailableCoupon；不核销券）。
+/// 支付前可用券的展示资料。
 #[derive(Debug, Clone, Serialize)]
 pub struct AvailableCoupon {
     pub coupon_id: u64,
@@ -19,7 +18,7 @@ pub struct AvailableCoupon {
     pub expires_at: DateTime<Utc>,
 }
 
-/// 本人券列表记录（旧版 UserCoupon）：status 是 coupon_grant.status，
+/// 本人券列表记录：status 是 coupon_grant.status，
 /// 未用但已到期展示 expired（内存派生，不落库）；usable 表示支付时可选。
 #[derive(Debug, Clone, Serialize)]
 pub struct UserCoupon {
@@ -36,7 +35,7 @@ pub struct UserCoupon {
     pub usable: bool,
 }
 
-/// 分页结果（旧版 CouponPage：保留 count、total 字段，空页返回数组）。
+/// 分页结果。
 #[derive(Debug, Clone, Serialize)]
 pub struct CouponPage {
     pub items: Vec<UserCoupon>,
@@ -46,7 +45,7 @@ pub struct CouponPage {
     pub count: i64,
 }
 
-/// 持券查询投影（旧版 CouponGrant 组合行）；percent 经 CAST AS CHAR。
+/// 持券查询投影；percent 经 CAST AS CHAR。
 type GrantTup = (
     u64,
     u64,
@@ -77,8 +76,8 @@ fn grant_from(
     }
 }
 
-/// 按到期时间返回本人可用券（旧版 Available）：排除停用、删除、已用和过期；
-/// SQL 侧以 UTC_TIMESTAMP(3) 过滤（与旧版一致）。
+/// 按到期时间返回本人可用券：排除停用、删除、已用和过期；
+/// SQL 侧以 UTC_TIMESTAMP(3) 过滤。
 pub async fn available(
     pool: &MySqlPool,
     user_id: u64,
@@ -115,7 +114,7 @@ pub async fn available(
         .collect())
 }
 
-/// 本人券分页（旧版 Mine）：读全部记录后在内存按同一当前时间计算状态、
+/// 本人券分页：读全部记录后在内存按同一当前时间计算状态、
 /// 筛选与分页；排序保持查询序（status → expired_at → id）。
 /// `now` 由调用方传入以便测试注入展示时钟。
 pub async fn mine(
@@ -148,7 +147,7 @@ pub async fn mine(
     let mut items: Vec<UserCoupon> = Vec::new();
     for t in rows {
         let mut item = grant_from(t);
-        // 未用但已到期 → 展示 expired（旧版状态派生）。
+        // 未用但已到期 → 展示 expired。
         let derived = if item.status == GrantStatus::Unused.as_str() && item.expires_at <= now {
             GrantStatus::Expired.as_str().to_owned()
         } else {

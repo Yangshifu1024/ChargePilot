@@ -1,13 +1,13 @@
-//! 审计日志分页查询（旧版 internal/ops/audit_query.go + audit_query_repo.go 契约对齐）。
+//! 审计日志分页查询。
 //! 只读：业务写入经各业务事务的 `repo::append_audit_tx` / `write_auth_audit`。
 //! 模块/动作/目标类型精确匹配，操作人按登录名 LIKE（`!` 转义）筛选，按 ID 倒序。
-//! JSON 快照 CAST AS CHAR 读出，避免 []byte base64 或 JSON 解析失败（旧版 auditSelect 语义）。
+//! JSON 快照 CAST AS CHAR 读出，避免 []byte base64 或 JSON 解析失败。
 
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::MySqlPool;
 
-/// 审计列表筛选条件，空串/None 表示该维度不限（旧版 AuditQuery）。
+/// 审计列表筛选条件，空串/None 表示该维度不限。
 #[derive(Debug, Clone, Default)]
 pub struct AuditQuery {
     /// 所属模块，如 auth、feedback、admin_user。
@@ -24,7 +24,7 @@ pub struct AuditQuery {
     pub to: Option<DateTime<Utc>>,
 }
 
-/// `!` 转义 LIKE 关键词中的百分号和下划线（旧版 dbutil.LikePattern；SQL 须配 ESCAPE '!'）。
+/// `!` 转义 LIKE 关键词中的百分号和下划线。
 fn like_pattern(value: &str) -> String {
     let escaped = value
         .replace('!', "!!")
@@ -34,7 +34,7 @@ fn like_pattern(value: &str) -> String {
 }
 
 /// 分页查询审计记录（已由 HTTP 层完成 audit.read 实时权限与分页校验）。
-/// 返回 (行, 总数)；行形状与旧版 AuditRow 一致：id/actor_id 为数字，
+/// 返回 (行, 总数)；行 JSON 与后台审计列表 API 一致，
 /// target_type/target_id/request_id/client_ip/before_json/after_json 可空（NULL→null）。
 pub async fn list(
     pool: &MySqlPool,

@@ -1,6 +1,6 @@
 //! charging 域错误类型（蓝图第五章：域内错误词表集中收口）。
 
-/// 停止域错误（HTTP 层映射旧版 Err 族）。
+/// 停止域错误。
 #[derive(Debug, thiserror::Error)]
 pub enum StopError {
     /// 订单不存在、不属于该用户或不可停止。
@@ -25,7 +25,7 @@ impl From<sqlx::Error> for StopError {
     }
 }
 
-/// 回执冲突（旧版 ErrStartResultConflict / ErrEndResultConflict）。
+/// 回执冲突。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReceiptError {
     /// 回执与订单、启动回执或计量记录不符。

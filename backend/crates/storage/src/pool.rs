@@ -4,7 +4,7 @@ use sqlx::MySqlPool;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
 use std::time::Duration;
 
-/// 打开连接池。连接参数沿用旧版约定：UTC、utf8mb4。
+/// 打开 MySQL 连接池（会话时区 UTC、字符集 utf8mb4）。
 pub async fn open_pool(database_url: &str, max_connections: u32) -> anyhow::Result<MySqlPool> {
     let opts: MySqlConnectOptions = database_url
         .parse::<MySqlConnectOptions>()?

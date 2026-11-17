@@ -5,14 +5,14 @@
 //! 禁止取并集。各词表的「判定集合」（如 RefundablePaymentStatuses）是业务规则，
 //! 不是全量取值，使用处必须引用具名常量。
 
-// ---------- 词表枚举范式（二期票 06） ----------
+// ---------- 词表枚举范式 ----------
 //
 // DB ENUM 字面量即 serde/sqlx 输出，由 [`wordlist_enum!`] 统一生成：
 // `as_str` 是字面量锚点，serde 靠 `rename_all = "snake_case"` 与之同源，
 // 并由 `db_literals_match_serde` 测试逐字节锁定。
 //
-// sqlx 三件套为什么手写（打样结论，2026-11-14 真库验证）：sqlx 0.8.6 的
-// `#[derive(sqlx::Type)]` 强枚举只生成 `type_info() = MySqlTypeInfo::__enum()`
+// sqlx 三件套为什么手写（真库验证结论）：sqlx 0.8.6 的
+// `#[derive(sqlx::Type)]` 强枚举只生成 `type_info = MySqlTypeInfo::__enum`
 // （type=String + ENUM 标志，该形态是为参数绑定设计的），不覆写 `compatible`，
 // 于是解码走默认的严格类型相等——而 MySQL 结果集把 ENUM 列报告为
 // `ColumnType::Enum`，两者永不相等，连 `CAST AS CHAR`（VarString）也被拒。
@@ -119,8 +119,8 @@ wordlist_enum!(
 );
 
 wordlist_enum!(
-    /// charge_order.payment_status 列的订单支付轴（四值；与
-    /// [`PaymentOrderStatus`] 分立：仅随资金实际到账/退回推进，由金额推导）。
+    /// charge_order.payment_status 列的订单支付轴（四值）；与
+    /// [`PaymentOrderStatus`] 分立，仅随资金实际到账/退回推进，由金额推导。
     ChargePaymentStatus: {
         Pending = "pending",
         Paid = "paid",
@@ -143,7 +143,7 @@ mod tests {
         assert!(!RefundStatus::Failed.is_unsettled());
     }
 
-    /// 字面量对照（票 06 硬规则）：serde 输出与 DB ENUM 字面量逐字节一致，
+    /// 字面量对照：serde 输出与 DB ENUM 字面量逐字节一致，
     /// 同时锁 serde 与 sqlx 两套 rename_all 的同源。
     #[test]
     fn db_literals_match_serde() {

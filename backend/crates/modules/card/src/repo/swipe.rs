@@ -237,7 +237,7 @@ pub async fn insert_start_operation_tx(
     Ok(())
 }
 
-/// 启动回执成功：首购操作 confirming → confirmed（旧版启动结果确认）。
+/// 启动回执成功：首购操作 confirming → confirmed。
 pub async fn confirm_start_operation_tx(
     c: &mut MySqlConnection,
     charge_order_id: u64,

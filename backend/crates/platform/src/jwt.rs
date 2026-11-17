@@ -1,14 +1,16 @@
-//! JWT（HS256，双 kind：user 15min / admin 8h，语义对齐旧版）。
+//! JWT 访问令牌：HS256 签名，分 user / admin 两类，TTL 分别为 15 分钟与 8 小时。
 
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
+/// 令牌受众类别（决定 TTL 与校验时的 kind 字段）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     User,
     Admin,
 }
 
+/// JWT 载荷（`sub` 为主体 ID，`sid` 绑定会话）。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
     /// kind：user / admin
@@ -24,7 +26,9 @@ pub struct Claims {
     pub iat: u64,
 }
 
+/// 用户访问令牌有效期（秒）。
 pub const USER_TTL_SECS: u64 = 15 * 60;
+/// 管理员访问令牌有效期（秒）。
 pub const ADMIN_TTL_SECS: u64 = 8 * 60 * 60;
 
 /// 签发访问令牌。

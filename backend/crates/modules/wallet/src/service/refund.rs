@@ -1,4 +1,4 @@
-//! 余额退款申请与原路拆单预占（旧版 refund.go + wallet_reservation_repo.go 对齐）。
+//! 余额退款申请与原路拆单预占。
 //! 锁序为 钱包→申请→充值支付→在途退款；accepted 表示已预占资金，
 //! manual_review 表示待审核，均不表示渠道已退回资金。SQL 在 repo/refund.rs。
 
@@ -8,7 +8,7 @@ use chargepilot_domain::money::{BizType, RefundDraft};
 use serde::Serialize;
 use sqlx::{Acquire, MySqlConnection, MySqlPool};
 
-/// 可原路退款的充值支付来源（旧版 RechargeSource）。
+/// 可原路退款的充值支付来源。
 #[derive(Debug, Clone)]
 pub struct RechargeSource {
     pub id: u64,
@@ -24,7 +24,7 @@ pub struct RechargeSource {
     pub transaction_confirmed: bool,
 }
 
-/// 在已锁钱包的事务中锁定充值支付（旧版 RechargeSourceReader）。
+/// 在已锁钱包的事务中锁定充值支付；由 payment 模块实现。
 /// 实现由 payment 模块注入；无来源返回空集合。
 pub trait RechargeSourceReader: Send + Sync {
     fn lock_recharge_sources<'a>(
@@ -37,7 +37,7 @@ pub trait RechargeSourceReader: Send + Sync {
     >;
 }
 
-/// settlement 提供退款创建及在途聚合（旧版 RefundRecorder）；实现随批 5 接入。
+/// settlement 提供退款创建及在途聚合；由 settlement 模块实现。
 pub trait RefundRecorder: Send + Sync {
     /// 当前读 paymentID 的在途退款金额（分），调用方已锁支付；0 表示无占用。
     fn reserved_in_tx<'a>(
@@ -54,7 +54,7 @@ pub trait RefundRecorder: Send + Sync {
     ) -> crate::service::recharge::futures_bounds::BoxFuture<'a, Result<u64, WalletError>>;
 }
 
-/// 用户退款申请输入（旧版 RefundInput）。
+/// 用户退款申请输入。
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct RefundInput {
     pub request_id: String,
@@ -65,7 +65,7 @@ pub struct RefundInput {
     pub reason: String,
 }
 
-/// 申请回执（旧版以 map 返回；此处定形，JSON 字段名一致）。
+/// 申请回执（API JSON 序列化形态）。
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct RefundReceipt {
     pub request_id: String,
@@ -73,7 +73,7 @@ pub struct RefundReceipt {
     pub refund_cents: i64,
 }
 
-/// 预占输入（旧版 WalletRefundReservation）。
+/// 预占输入：拆单与冻结余额前的上下文。
 #[derive(Debug, Clone)]
 pub struct WalletRefundReservation {
     pub request_id: String,
@@ -82,7 +82,7 @@ pub struct WalletRefundReservation {
     pub reason: String,
 }
 
-/// 钱包退款服务（旧版 RefundService）。
+/// 钱包退款服务：申请、频次风控与原路预占。
 pub struct RefundService {
     pub db: MySqlPool,
     pub sources: std::sync::Arc<dyn RechargeSourceReader>,
@@ -90,7 +90,7 @@ pub struct RefundService {
 }
 
 impl RefundService {
-    /// 提交用户余额退款，重放同一请求时返回首次回执，内容不同报冲突（旧版 Request）。
+    /// 提交用户余额退款；重放同一 request_id 时返回首次回执，内容不同报冲突。
     /// 申请、频次冻结、拆单与回执同事务。
     pub async fn request(
         &self,
@@ -178,7 +178,7 @@ impl RefundService {
         Ok(receipt)
     }
 
-    /// 按充值来源拆分退款，在调用方事务中冻结可用余额（旧版 ReserveInTx）。
+    /// 按充值来源拆分退款，在调用方事务中冻结可用余额。
     /// 冻结、退款与来源分摊一并提交；渠道结果未知时保留编号及冻结额。
     /// 调用方须已持钱包锁（风控批准路径在冻结账户上继续预占，故不在本函数锁钱包）。
     pub async fn reserve_in_tx(
@@ -186,7 +186,7 @@ impl RefundService {
         tx: &mut MySqlConnection,
         req: WalletRefundReservation,
     ) -> Result<(), WalletError> {
-        // 事务内重读钱包余额（旧版在预占函数内加锁读取）。
+        // 事务内重读并锁钱包余额，与调用方已持锁时的行状态一致。
         let (wallet_id, balance, frozen) = refund::lock_wallet_balance_tx(tx, req.user_id)
             .await?
             .ok_or(WalletError::NotFound)?;
@@ -209,7 +209,7 @@ impl RefundService {
             if amount <= 0 {
                 continue;
             }
-            // 稳定分笔退款号：WR + sha256(request:payment) 前 16 字节（旧版逐字节一致）。
+            // 稳定分笔退款号：WR + sha256(request:payment) 前 16 字节小写 hex。
             let digest = {
                 use sha2_digest::Digest as _;
                 let mut h = sha2_digest::Sha256::new();
@@ -253,7 +253,7 @@ impl RefundService {
     }
 }
 
-/// sha2 摘要（保持与旧版哈希字节一致：WR + sha256 前 16 字节小写 hex）。
+/// sha2 摘要模块别名，供稳定退款号生成使用。
 mod sha2_digest {
     pub use sha2::{Digest, Sha256};
 }

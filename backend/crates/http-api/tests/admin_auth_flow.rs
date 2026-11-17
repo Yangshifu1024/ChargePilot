@@ -4,7 +4,7 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 阶段 02 主缝集成测试：后台登录链路（真 MySQL + 真 Redis）。
+//! 主缝集成测试：后台登录链路（真 MySQL + 真 Redis）。
 //! 覆盖：bootstrap、密码登录、MFA 挑战/校验/重放拒绝、会话轮换、实时鉴权、错误映射。
 
 mod support;
@@ -117,7 +117,7 @@ async fn plain_login_flow() {
     assert_eq!(body["code"], 1001);
 
     // 4. refresh 轮换 → 新令牌；旧令牌失效
-    // 无凭据刷新 → 401/1001（票 23 补全此前丢弃的响应断言）。
+    // 无凭据刷新 → 401/1001。
     let (status, body) = post(router.clone(), "/api/v1/admin/auth/refresh", "null", &ip).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "无凭据刷新应 401: {body}");
     assert_eq!(body["code"], 1001);
@@ -127,7 +127,7 @@ async fn plain_login_flow() {
     let new_refresh = body["data"]["refresh_token"].as_str().unwrap().to_string();
     let (status, body) = refresh_with(router.clone(), &refresh, &ip).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "旧刷新令牌应失效: {body}");
-    // 轮换新令牌可继续消费且再下发（票 23 补全此前 let _ = new_refresh 的丢弃）。
+    // 轮换新令牌可继续消费且再下发。
     let (status, body) = refresh_with(router.clone(), &new_refresh, &ip).await;
     assert_eq!(status, StatusCode::OK, "轮换新令牌应可消费: {body}");
     assert!(

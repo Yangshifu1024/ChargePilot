@@ -26,7 +26,7 @@ pub struct NearbyPage {
     pub located: bool,
 }
 
-/// 附近站点：坐标可选但须成对；radius 1–50km 默认 50；球面余弦距离 SQL（旧版公式）。
+/// 附近站点：坐标可选但须成对；radius 1–50km 默认 50；球面余弦距离 SQL。
 pub async fn nearby(
     pool: &MySqlPool,
     lon: Option<f64>,
@@ -103,7 +103,7 @@ pub struct StationDetail {
     pub latitude: String,
     pub status: String,
     pub contact_phone: Option<String>,
-    /// 设备运行信息（心跳来自 gateway 运行时；阶段 06 前恒为离线）
+    /// 设备运行信息（心跳来自 gateway 运行时；）
     pub devices: Vec<DeviceBrief>,
     pub announcements: Vec<serde_json::Value>,
 }

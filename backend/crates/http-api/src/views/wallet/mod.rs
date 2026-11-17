@@ -1,3 +1,3 @@
-//! wallet 域门面（票 18）。
+//! 钱包域 HTTP 门面：注册用户端与后台路由。
 pub mod admin;
 pub mod user;

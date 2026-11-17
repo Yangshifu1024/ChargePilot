@@ -1,11 +1,11 @@
-//! 钱包账本基础操作：行锁读取与余额变动流水（旧版 wallet_ledger_repo.go 逐行对齐）。
+//! 钱包账本基础操作：行锁读取与余额变动流水。
 //! 只触及 wallet_account / wallet_txn 两表，供刷卡、结算、启动失败退款等
 //! 跨模块事务复用；错误语义以本模块 WalletError 表达，调用方按业务映射。
 
 use crate::{AccountStatus, TxnBizType, TxnDirection, WalletError};
 use sqlx::MySqlConnection;
 
-/// wallet_account 的行锁查询结果（旧版 Row）。
+/// wallet_account 的行锁查询结果。
 #[derive(Debug, Clone)]
 pub struct WalletRow {
     /// 已锁钱包主键。
@@ -18,7 +18,7 @@ pub struct WalletRow {
     pub status: AccountStatus,
 }
 
-/// 在调用方事务中以 FOR UPDATE 锁读取 user 的未删除账户（旧版 Lock）。
+/// 在调用方事务中以 FOR UPDATE 锁读取 user 的未删除账户。
 /// 缺账户返回 NotFound；调用方须持有钱包锁后再锁支付，并负责提交或回滚。
 pub async fn lock_tx(tx: &mut MySqlConnection, user_id: u64) -> Result<WalletRow, WalletError> {
     let row: Option<(u64, i64, i64, String)> = sqlx::query_as(
@@ -37,10 +37,10 @@ pub async fn lock_tx(tx: &mut MySqlConnection, user_id: u64) -> Result<WalletRow
     })
 }
 
-/// 变动钱包余额并记录 wallet_txn 流水：cents 为负出账、正入账，零值不动（旧版 Move）。
+/// 变动钱包余额并记录 wallet_txn 流水：cents 为负出账、正入账，零值不动。
 /// 出账要求 active 状态且可用余额充足，违约返回 Inactive / InsufficientBalance。
 /// `w` 须为已持有的钱包锁；ref 为稳定流水及业务编号，note 为业务说明。
-/// 流水业务类型与旧版一致：出账固定记 pay、入账固定记 refund（充值入账另走
+/// 流水业务类型：出账固定记 pay、入账固定记 refund（充值入账另走
 /// credit::credit_recharge_in_tx，流水记 recharge）。成功后 `w.balance_cents`
 /// 更新为写入值；失败后调用方必须回滚整个事务。
 pub async fn move_tx(

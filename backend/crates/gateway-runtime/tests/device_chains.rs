@@ -1,15 +1,15 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 设备事件链真库集成测试（TEST_MYSQL_URL 门控）：
+//! B6 刷卡（受理授权/余额不足拒绝/重放幂等）、C0 告警（生成/重放合并/
+//! 心跳恢复）、B4 本地启动补单（订单落地/B5 确认/卡无效拒绝）。
+//! 帧断言经 FakeSession 捕获（命令通道）与真实 TCP 会话（B5/B7）。
+//! 测试在持锁状态下 await；进程内互斥锁尚未统一为跨进程端口锁，故豁免
+//! `clippy::await_holding_lock`。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::wildcard_enum_match_arm
 )]
-
-//! 阶段 06 设备事件链真库测试（TEST_MYSQL_URL 门控）：
-//! B6 刷卡（受理授权/余额不足拒绝/重放幂等）、C0 告警（生成/重放合并/
-//! 心跳恢复）、B4 本地启动补单（订单落地/B5 确认/卡无效拒绝）。
-//! 帧断言经 FakeSession 捕获（命令通道）与真实 TCP 会话（B5/B7）。
 
 use std::sync::{Arc, Mutex};
 
@@ -24,7 +24,7 @@ use chargepilot_protocol_dc589::frame::{self, Frame};
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt as _;
 
-#[allow(clippy::disallowed_methods)] // 票 16 豁免：测试模块的连接变量
+#[allow(clippy::disallowed_methods)] // 集成测试门控：通过 std::env::var 读取数据库 URL
 fn env_or_skip(name: &str) -> Option<String> {
     match std::env::var(name) {
         Ok(v) if !v.is_empty() => Some(v),
@@ -490,7 +490,7 @@ async fn card_swipe_authorizes_with_start_command() {
             .unwrap();
     assert_eq!(balance, ctx.wallet_balance - 100, "扣款后余额");
 
-    // 受理不发卡回复（旧版语义）：此刻无任何命令下发。
+    // 刷卡受理成功不下发卡回复帧；启动授权留待支付确认后的 B7。
     assert!(fake.captured().is_empty(), "受理路径不应下发卡回复帧");
 
     // 出站 charge_payment_confirmed → StartDispatcher → B7 授权命令。
@@ -603,7 +603,7 @@ async fn card_swipe_insufficient_balance_denies() {
     );
     assert!(
         !captured[0].card_invalid,
-        "余额不足按可显示余额的拒绝（旧版 InsufficientBalance 语义）"
+        "余额不足拒绝帧应保留卡有效标记并带回可显示余额"
     );
     assert_eq!(captured[0].card_number, ctx.card_no);
     cleanup_card_ctx(&db, &ctx).await;

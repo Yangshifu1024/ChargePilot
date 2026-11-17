@@ -1,6 +1,6 @@
 //! Redis 连接池（deadpool）。用途：会话/MFA/频次/租锁；事件投递不再使用 Redis（ADR 002）。
-//! 真实连通性不再单测探活（票 23 删除 ping_real_redis）：真库集成轮的会话/
-//! 频次/租锁流全部真实经过本池的取用与命令往返，连接故障即整轮红。
+//! 连通性由集成测试轮验证（会话/频次/租锁等路径真实收发 Redis 命令），
+//! 单元测试不对真库做 ping 探活。
 
 use deadpool_redis::{Config as PoolConfig, Runtime};
 

@@ -1,8 +1,5 @@
-//! 后台财务路由：钱包风控、发票审核、计量核实与人工退款（路径/权限码对齐旧版 finance 装配）。
-//! 风控审核要求 finance.wallet_risk.review（客服/财务），解冻要求 finance.wallet_risk.release（仅财务）；
-//! 发票/计量/退款的双审与列表权限码沿用旧版（finance.read、invoice.review、billing.meter.review、
-//! finance.refund.read、order.refund.review、finance.refund.retry、order.refund.create），
-//! 审核类角色与权限的最终判定在服务层事务内复核。
+//! 钱包域后台路由：风控事件列表、审核与解冻。
+//! 权限码 `finance.wallet_risk.review`（客服/财务可审）、`finance.wallet_risk.release`（仅财务可解冻）。
 
 use crate::errormap::{rid_of, risk_error};
 use crate::guard::AdminGuard;
@@ -19,7 +16,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
-// ---- 风控（票 19：原 admin_finance.rs 的 wallet-risks 切片）----
+// ---- 风控----
 
 pub fn router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
@@ -36,10 +33,6 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
             axum::routing::post(release_wallet_risk),
         )
 }
-
-// ---------------------------------------------------------------------------
-// 发票审核（旧版 invoices.go / invoice_review.go 契约）
-// ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
 struct RiskPaging {
@@ -64,7 +57,7 @@ async fn list_wallet_risks(
     let Some(wallet) = &deps.wallet else {
         return crate::respond(503, Code::ServiceUnavailable as i64, "钱包服务未装配", &rid);
     };
-    // guard 内已有实时权限快照（AdminGuard 构造时加载），与旧版 actor 语义一致。
+    // AdminGuard 构造时已加载实时权限快照，列表过滤与服务层判定一致。
     match wallet
         .risk
         .list(

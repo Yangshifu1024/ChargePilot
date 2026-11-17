@@ -1,4 +1,4 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 集成测试在持锁场景下跨 await；已配置 clippy 豁免。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
@@ -6,10 +6,8 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 批次补齐端点主缝集成测试（admin_misc）：反馈工单（列表/回复/关闭 + 审计留痕）、
-//! 审计日志分页筛选、本人与管理员 MFA 设置、方案预览试算与设备能力。
-//! 契约基准：旧仓库 casework.go / audit_log.go / admin_mfa_settings.go /
-//! account_management.go(MFA) / charging_schemes.go(preview、executionCapabilities)。
+//! 后台零散端点集成测试：反馈工单（列表/回复/关闭 + 审计）、
+//! 审计日志分页筛选、本人与管理员 MFA、方案预览试算与设备能力。
 
 mod support;
 
@@ -721,7 +719,7 @@ async fn misc_endpoints_flow() {
     assert_eq!(status, StatusCode::OK, "管理端 disable 应成功: {body}");
     assert_eq!(body["data"]["mfa_enabled"], false);
 
-    // 管理端 confirm/disable 递增认证版本撤销目标账号旧会话（旧版 bumpAuthVersion 语义）。
+    // 管理端 confirm/disable 递增认证版本撤销目标账号旧会话。
     let (status, _) = req_str(
         &router,
         "GET",

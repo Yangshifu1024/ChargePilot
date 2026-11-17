@@ -1,4 +1,4 @@
-//! 设备域后台门面（票 18：先归位设备能力；admin_pricing_device/device_and_user 热区批并入）。
+//! 设备域后台门面。
 use crate::errormap::{capability_error, device_error, rid_of};
 use crate::guard::AdminGuard;
 use crate::guard::deny;
@@ -22,7 +22,7 @@ struct CapabilityQuery {
     device_id: Option<String>,
 }
 
-/// 设备能力清单（旧版 executionCapabilities）：station_id 必填正整数 + 设备号规则校验。
+/// 设备能力清单：station_id 必填正整数 + 设备号规则校验。
 async fn device_capabilities(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
@@ -50,8 +50,8 @@ async fn device_capabilities(
     }
 }
 
-/// 能力查询错误映射（旧版 pricingFailure：InputError→400、其余按资源失败）。
-/// 设备能力路由（票 18：原 admin_misc 区块归位）。
+/// 能力查询错误映射。
+/// 设备能力路由。
 pub fn router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new().route(
         "/api/v1/admin/settings/device-capabilities",
@@ -63,10 +63,10 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
 // 反馈工单
 // ---------------------------------------------------------------------------
 
-// ---- 站点/厂商/导入/故障/告警（票 19：原 admin_pricing_device.rs 与 device_and_user.rs 的 admin 切片）----
+// ---- 站点/厂商/导入/故障/告警----
 
 // 后台路由：计费方案（模板/发布/继承/生效）、站点、厂商。
-// 权限码与路径对齐旧版（pricing.read、pricing.rule.create|update、station.*、vendor.*）。
+// 权限码与路径与对外 API 契约一致（pricing.read、pricing.rule.create|update、station.*、vendor.*）。
 
 #[derive(Deserialize)]
 struct PagingQuery {
@@ -90,7 +90,7 @@ async fn list_stations(
         Ok(p) => p,
         Err(e) => return crate::respond(400, Code::BadRequest as i64, &e.to_string(), &rid),
     };
-    // 前端「全部状态」以空串发送（axios 照发 status=），旧版语义空串=不过滤。
+    // 前端「全部状态」以空串发送（axios 照发 status=），契约约定空串=不过滤。
     let status = q.status.as_deref().filter(|s| !s.is_empty());
     match station::list(&deps.db, page, q.keyword.as_deref(), status).await {
         Ok((items, total)) => httpx::ok(
@@ -188,7 +188,7 @@ async fn list_vendors(
         return resp;
     }
     match vendor::list(&deps.db, false).await {
-        // 前端 Vendors.tsx 从列表响应读当前操作人权限集（旧版 Profile.Permissions）。
+        // 前端 Vendors.tsx 从列表响应读当前操作人权限集。
         Ok(items) => httpx::ok(
             json!({"items": items, "permissions": guard.profile.permissions}),
             &rid,
@@ -279,10 +279,10 @@ async fn vendor_options(
     }
 }
 
-// metering 供后续阶段引用（下单/刷卡），此处编译期保持可见
+// metering 类型供下单/刷卡等模块引用，编译期保持可见
 #[allow(dead_code)]
 fn _metering_visible(_m: &metering::ActiveRule) {}
-/// 站点与厂商路由（票 19 热区批并入）。
+/// 站点与厂商路由。
 pub fn station_router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
         .route(
@@ -307,7 +307,7 @@ pub fn station_router() -> axum::Router<Arc<ApiDeps>> {
         )
 }
 
-// ---- 设备管理/导入/故障/告警（票 19：原 device_and_user.rs 的 admin 切片）----
+// ---- 设备管理/导入/故障/告警----
 
 // 后台路由：设备管理、导入、故障工单、告警认领；
 // C 端路由：故障提交/查询、站点附近/详情（无需登录的部分公开）。
@@ -339,7 +339,7 @@ async fn list_devices(
         &deps.db,
         page,
         q.station_id,
-        // 前端「全部状态」以空串发送（axios 照发 status=），旧版语义空串=不过滤。
+        // 前端「全部状态」以空串发送（axios 照发 status=），契约约定空串=不过滤。
         q.status.as_deref().filter(|s| !s.is_empty()),
         q.keyword.as_deref(),
     )
@@ -623,7 +623,7 @@ async fn alert_ack(
 // C 端
 // ---------------------------------------------------------------------------
 
-/// 设备管理路由（票 19 热区批并入；与 stations/vendors、capabilities 同文件）。
+/// 设备管理路由。
 pub fn device_admin_router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
         .route("/api/v1/admin/devices", axum::routing::get(list_devices))

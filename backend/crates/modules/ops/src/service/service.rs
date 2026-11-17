@@ -16,7 +16,7 @@ pub enum LoginOutcome {
     Access(AccessReply),
 }
 
-/// 后台令牌响应（JSON 平铺：Profile 字段 + 令牌字段，键名与旧版一致）。
+/// 后台令牌响应。
 #[derive(Debug, serde::Serialize)]
 pub struct AccessReply {
     #[serde(flatten)]

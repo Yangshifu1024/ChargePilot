@@ -1,8 +1,8 @@
-//! 结算域后台门面（票 19 热区批：原 admin_finance.rs 的发票/计量核实/人工退款切片）。
+//! 结算域后台门面。
 
-//! 后台财务路由：钱包风控、发票审核、计量核实与人工退款（路径/权限码对齐旧版 finance 装配）。
+//! 结算域后台路由：发票审核、计量核实与人工退款（路径与权限码与对外契约一致）。
 //! 风控审核要求 finance.wallet_risk.review（客服/财务），解冻要求 finance.wallet_risk.release（仅财务）；
-//! 发票/计量/退款的双审与列表权限码沿用旧版（finance.read、invoice.review、billing.meter.review、
+//! 发票/计量/退款的双审与列表权限码固定（finance.read、invoice.review、billing.meter.review、
 //! finance.refund.read、order.refund.review、finance.refund.retry、order.refund.create），
 //! 审核类角色与权限的最终判定在服务层事务内复核。
 
@@ -74,7 +74,7 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
 }
 
 // ---------------------------------------------------------------------------
-// 发票审核（旧版 invoices.go / invoice_review.go 契约）
+// 发票审核
 // ---------------------------------------------------------------------------
 
 async fn list_invoices(
@@ -100,7 +100,7 @@ async fn list_invoices(
     }
 }
 
-/// 发票审核输入（旧版 settlement.InvoiceReviewInput；approve/reject 各取所需字段）。
+/// 发票审核输入。
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct InvoiceReviewBody {
@@ -130,7 +130,7 @@ async fn reject_invoice(
     review_invoice(state, guard, headers, path, body, false).await
 }
 
-/// 发票审核共用处理器（旧版 reviewInvoice：approve 读 invoice_url，reject 读 reason；
+/// 发票审核共用处理器：approve 读 `invoice_url`，reject 读 `reason`；
 /// 审核人须为拥有 invoice.review 的 customer_finance）。
 async fn review_invoice(
     State(deps): State<Arc<ApiDeps>>,
@@ -158,7 +158,7 @@ async fn review_invoice(
             &rid,
         );
     };
-    // 审批只认 HTTPS 发票链接，驳回必填原因（旧版 operations.ValidPublicURL / ValidText）。
+    // 审批只认 HTTPS 发票链接，驳回必填原因。
     let ok_input = if approve {
         valid_public_url(&input.invoice_url)
     } else {
@@ -191,9 +191,9 @@ async fn review_invoice(
     }
 }
 
-/// 发票审核错误映射（旧版 AdminResourceFailure + asConflict 契约）。
+/// 发票审核错误映射。
 // ---------------------------------------------------------------------------
-// 计量核实（旧版 meter_reviews.go 契约）
+// 计量核实
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -218,7 +218,7 @@ async fn list_meter_reviews(
         return crate::respond(400, Code::BadRequest as i64, "关键词过长或状态无效", &rid);
     }
     let status = q.status.unwrap_or_default();
-    // 状态白名单（旧版 ReadAdminPage(c, "pending resolved")）。
+    // 状态白名单。
     if !status.is_empty() && status != "pending" && status != "resolved" {
         return crate::respond(400, Code::BadRequest as i64, "关键词过长或状态无效", &rid);
     }
@@ -243,7 +243,7 @@ async fn list_meter_reviews(
     }
 }
 
-/// 计量分段输入（旧版 charging.MeterSegment JSON；peak_w 缺省 0 对齐 Go 零值）。
+/// 计量分段输入。
 #[derive(Debug, Clone, Deserialize)]
 struct SegmentBody {
     pub started_at: chrono::DateTime<chrono::Utc>,
@@ -334,7 +334,7 @@ async fn propose_meter(
     .await
     {
         Ok(review_id) => {
-            // 旧版 propose 返回完整核实行（HTTP 不直接写核实记录）。
+            // propose 返回完整核实行（HTTP 不直接写核实记录）。
             match chargepilot_mod_settlement::meter_review::get_meter_review_row(
                 &deps.db, review_id,
             )
@@ -433,7 +433,7 @@ async fn decide_meter(
         input.review_id,
         approve,
         &reason,
-        // 首审人实时权限由模块内事务一致读取（旧版 LookupReviewer 语义）。
+        // 首审人实时权限由模块内事务一致读取。
         None,
     )
     .await
@@ -508,9 +508,9 @@ async fn resolve_meter_amount(
     }
 }
 
-/// 计量核实错误映射（旧版 meterFailure 文案契约）。
+/// 计量核实错误映射。
 // ---------------------------------------------------------------------------
-// 人工退款（旧版 refunds.go / refund.go 契约）
+// 人工退款
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -535,7 +535,7 @@ async fn list_refunds(
     ) {
         return resp;
     }
-    // keyword 不参与退款筛选，但旧版 ReadAdminPage 仍校验其长度。
+    // keyword 不参与退款筛选，但ReadAdminPage 仍校验其长度。
     if q.keyword
         .map(|k| k.trim().chars().count() > 128)
         .unwrap_or(false)
@@ -543,7 +543,7 @@ async fn list_refunds(
         return crate::respond(400, Code::BadRequest as i64, "关键词过长或状态无效", &rid);
     }
     let status = q.status.unwrap_or_default();
-    // 状态白名单（旧版 money.AllRefundStatuses 全量）。
+    // 状态白名单。
     if !status.is_empty()
         && !matches!(
             status.as_str(),
@@ -577,7 +577,7 @@ async fn list_refunds(
     }
 }
 
-/// 退款审核输入（旧版 settlement.RefundReviewInput；approve 读 approve_comment，reject 读 reason）。
+/// 退款审核输入。
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RefundReviewBody {
@@ -607,7 +607,7 @@ async fn reject_refund(
     review_refund(state, guard, headers, path, body, false).await
 }
 
-/// 退款双审共用处理器（旧版 reviewRefund：审核人须为拥有 order.refund.review 的
+/// 退款双审共用处理器（reviewRefund：审核人须为拥有 order.refund.review 的
 /// customer_finance；第一次通过返回 awaiting_second，第二人通过返回 approved）。
 async fn review_refund(
     State(deps): State<Arc<ApiDeps>>,
@@ -663,7 +663,7 @@ async fn review_refund(
         approve,
         &input.approve_comment,
         &input.reason,
-        // 首审人实时权限由模块内事务一致读取（旧版 LookupSigner 语义）。
+        // 首审人实时权限由模块内事务一致读取。
         None,
     )
     .await
@@ -734,7 +734,7 @@ async fn retry_refund(
     }
 }
 
-/// 人工退款申请输入（旧版 settlement.ManualRefundRequest，同时作为首次审计快照）。
+/// 人工退款申请输入。
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ManualRefundBody {
@@ -814,10 +814,10 @@ async fn manual_refund(
 }
 
 // ---------------------------------------------------------------------------
-// 共用助手（校验与审计上下文，语义对齐旧版 operations/admin 助手）
+// 共用助手：文本/链接/UUID 校验与审核上下文
 // ---------------------------------------------------------------------------
 
-/// 审核类端点的财务角色约束（旧版 RequireFinanceActor：403 文案逐字对齐）。
+/// 审核类端点的财务角色约束。
 fn require_finance_actor(guard: &AdminGuard, rid: &str) -> Option<Response> {
     if guard.profile.role == "customer_finance" {
         None
@@ -831,12 +831,12 @@ fn require_finance_actor(guard: &AdminGuard, rid: &str) -> Option<Response> {
     }
 }
 
-/// 文本校验（旧版 operations.ValidText：非空白且不超过 max 个字符）。
+/// 文本校验。
 fn valid_text(s: &str, max: usize) -> bool {
     !s.trim().is_empty() && s.chars().count() <= max
 }
 
-/// HTTPS 公开链接校验（旧版 operations.ValidPublicURL：≤512、scheme https、
+/// HTTPS 公开链接校验（operations.ValidPublicURL：≤512、scheme https、
 /// 有主机名且不含 user:pass 凭据段；用 http::Uri 解析避免新增依赖）。
 fn valid_public_url(s: &str) -> bool {
     if s.is_empty() || s.len() > 512 {
@@ -855,7 +855,7 @@ fn valid_public_url(s: &str) -> bool {
     }
 }
 
-/// UUID 请求号校验（旧版 RequestIDPattern：8-4-4-4-12 十六进制）。
+/// UUID 请求号校验。
 fn valid_uuid(v: &str) -> bool {
     let parts: Vec<&str> = v.split('-').collect();
     let lens = [8usize, 4, 4, 4, 12];
@@ -874,7 +874,7 @@ fn real_ip(headers: &HeaderMap) -> String {
         .to_string()
 }
 
-/// 严格 JSON 解码（旧版 DecodeResource：≤64KiB、拒绝未知字段、单一 JSON 值）。
+/// 严格 JSON 解码。
 fn decode_strict<T: serde::de::DeserializeOwned>(body: &[u8]) -> Option<T> {
     if body.len() > 64 * 1024 {
         return None;

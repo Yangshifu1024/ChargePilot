@@ -1,4 +1,4 @@
-//! 刷卡支付的资金侧表访问（旧版 payment/card_funding_repo.go 与端口占用校验）。
+//! 刷卡支付的资金侧表访问。
 //! 首购写入已付余额支付单与意图，续购累计已付金额；钱包实际扣款与这些写入
 //! 由 card 用例在同一事务原子提交，本模块不扣钱包、不调用支付渠道。
 
@@ -6,7 +6,7 @@ use crate::error::CardFundingConflict;
 use crate::service::channel::futures_bounds::BoxFuture;
 use chargepilot_domain::money::PaymentOrderStatus;
 
-/// 在事务内创建刷卡首购的已付余额支付单，返回支付单主键（旧版 CreateCardPaymentInTx）。
+/// 在事务内创建刷卡首购的已付余额支付单，返回支付单主键。
 pub async fn create_card_payment_in_tx(
     tx: &mut sqlx::MySqlConnection,
     payment_order_id: u64,
@@ -30,7 +30,7 @@ pub async fn create_card_payment_in_tx(
     Ok(())
 }
 
-/// 在事务内保存刷卡支付申请及冻结快照（旧版 CreateCardIntentInTx）。
+/// 在事务内保存刷卡支付申请及冻结快照。
 /// openid 为绑定用户的微信标识（intent 列非空）；charge_order_id 首购同事务回填。
 #[allow(clippy::too_many_arguments)]
 pub async fn create_card_intent_in_tx(
@@ -85,7 +85,7 @@ pub async fn create_card_intent_in_tx(
     Ok(())
 }
 
-/// 在事务内为支付单回填充电订单关联（旧版 SetCardOrderInTx）。
+/// 在事务内为支付单回填充电订单关联。
 pub async fn set_card_order_in_tx(
     tx: &mut sqlx::MySqlConnection,
     payment_order_id: u64,
@@ -99,7 +99,7 @@ pub async fn set_card_order_in_tx(
     Ok(())
 }
 
-/// 在事务内为已付余额单累计续购金额（旧版 ExtendCardPaymentInTx）。
+/// 在事务内为已付余额单累计续购金额。
 /// 只匹配 balance 已付或部分退款支付单；未命中返回冲突（钱包扣款由调用方回滚）。
 pub async fn extend_card_payment_in_tx(
     tx: &mut sqlx::MySqlConnection,
@@ -125,7 +125,7 @@ pub async fn extend_card_payment_in_tx(
     Ok(())
 }
 
-/// 端口占用校验（旧版 CheckoutPortAvailable）：存在未过期申请或已付未完单的
+/// 端口占用校验：存在未过期申请或已付未完单的
 /// 占用返回 false；并发创建仍由端口唯一键兜底（本查询不加锁）。
 pub fn checkout_port_available<'a>(
     tx: &'a mut sqlx::MySqlConnection,

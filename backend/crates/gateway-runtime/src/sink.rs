@@ -2,7 +2,7 @@
 //!
 //! 分工：高频遥测走有界缓冲批量落库（G2）；业务事件（刷卡/结束/故障等）
 //! 与 `domain_event` 同事务写入（事件层 ADR 002），processed_at 立即标记
-//! （单体同步处理，联动由事件处理器在批 4/5 接通）。
+//! （单体同步处理；联动由 DeviceEventDispatcher 等处理器消费 domain_event）。
 
 use std::sync::Arc;
 
@@ -258,9 +258,9 @@ async fn handle_heartbeat(
         }
     }
     tx.commit().await?;
-    // 心跳晚于故障时判定告警恢复（旧版 AlertSyncService.resolveRecovered 的
-    // 事件驱动对应物）：编排归设备域（水印与缺证据语义随迁）；厂商故障码的
-    // 恢复翻译留在网关侧（设备域不依赖协议实现）。失败不影响心跳事实。
+    // 心跳晚于故障时按端口状态判定告警是否自动恢复：编排归设备域
+    // （水印与缺证据语义随迁）；厂商故障码的恢复判定留在网关侧（设备域不依赖协议实现）。
+    // 失败不影响心跳事实落库。
     let device_status = event.device_status;
     let port_states = event.port_states.clone();
     let recovery_check = move |metric: &str| {
@@ -330,7 +330,7 @@ async fn persist_event(pool: &MySqlPool, event: &Event) -> anyhow::Result<()> {
     .await?
     .rows_affected();
     if inserted == 1 {
-        // 领域事件同事务入队（进程内投递；处理器联动在批 4/5 登记校验）。
+        // 领域事件同事务入队（进程内投递；下游处理器据此登记与校验）。
         chargepilot_events::enqueue::in_tx(
             &mut tx,
             chargepilot_events::EventSource::Gateway,

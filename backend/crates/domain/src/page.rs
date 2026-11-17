@@ -1,8 +1,7 @@
-//! 分页参数校验（二期票 15）：双轨上界的唯一入口。
+//! 分页参数校验：双轨页码上界的唯一入口。
 //!
-//! 上界是旧版有意双轨（C 端 [`crate::limits::USER_PAGE_MAX`] / 后台
-//! [`crate::limits::ADMIN_PAGE_MAX`]），由调用方按端点选轨；字段级错误
-//! 供调用方映射各自的错误契约（消息与码保持现状，不在本层统一文案）。
+//! C 端 [`crate::limits::USER_PAGE_MAX`] 与后台 [`crate::limits::ADMIN_PAGE_MAX`]
+//! 由调用方按端点选轨；字段级错误供调用方映射各自的错误契约。
 
 /// 校验通过的分页参数。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

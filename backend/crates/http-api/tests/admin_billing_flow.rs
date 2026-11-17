@@ -5,7 +5,7 @@
 )]
 
 //! 后台财务端点主缝集成测试：发票列表与双审、计量核实 propose→decide 全流程
-//! 与权限分支、人工退款列表/申请/双审/重试（路径、响应形状与权限码对齐旧版契约）。
+//! 与权限分支、人工退款列表/申请/双审/重试（路径、响应形状与权限码与对外 API 契约一致）。
 
 mod support;
 
@@ -526,7 +526,7 @@ async fn invoice_list_and_review_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "已驳回再审批应 409");
-    // 不存在的发票 404。
+    // 不存在的发。
     let (status, _) = req_str(
         &router,
         "POST",
@@ -608,7 +608,7 @@ async fn meter_review_list_propose_decide_flow() {
     .await
     .unwrap();
     assert_eq!(job, "manual_review", "分段守恒争议应转人工");
-    // 计费转人工应同事务写入核实工单（旧版 EnqueueManualFeeReview，uk_order 幂等）。
+    // 计费转人工应同事务写入核实工单。
     let (review_reason, review_wh): (String, u64) = sqlx::query_as(
         "SELECT `reason`, `energy_wh` FROM `manual_fee_review` WHERE `charge_order_id` = ?",
     )
@@ -735,7 +735,7 @@ async fn meter_review_list_propose_decide_flow() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "空依据应 400");
 
     // 3. propose 成功：返回完整核实行（status=awaiting_second、corrected 内嵌对象）。
-    // request_id 每次运行随机（同号残留会触发旧版重放核对冲突）。
+    // request_id 每次运行随机（同号残留会触发重放核对冲突）。
     let request_id = format!(
         "11111111-1111-4111-8111-{:012}",
         u32::from_str_radix(&rand_suffix(), 16).unwrap() as u64
@@ -838,7 +838,7 @@ async fn meter_review_list_propose_decide_flow() {
         .await
         .unwrap();
     assert_eq!(total, 16, "修正 200Wh 应入账 16 分");
-    // 入账事务应关闭待核实工单（旧版 fee_calculation_repo 的 pending→resolved）。
+    // 入账事务应关闭待核实工单。
     let ticket: (String, Option<String>) = sqlx::query_as(
         "SELECT CAST(`status` AS CHAR), CAST(`resolved_at` AS CHAR) \
          FROM `manual_fee_review` WHERE `charge_order_id` = ?",
@@ -849,7 +849,7 @@ async fn meter_review_list_propose_decide_flow() {
     .unwrap();
     assert_eq!(ticket.0, "resolved", "入账后工单应 resolved");
     assert!(ticket.1.is_some(), "resolved_at 应有值");
-    // 重复同一决定重放静默成功（旧版幂等分支）。
+    // 重复同一决定重放静默成功。
     let (status, _) = req_str(
         &router,
         "POST",
@@ -1050,7 +1050,7 @@ async fn refund_list_create_review_retry_flow() {
     assert_eq!(replay["data"]["created"], false, "重放不得重复建单");
     assert_eq!(replay["data"]["refund_no"], refund_no);
 
-    // 4. 列表形状：refund_no 精确过滤命中；扁平字段与旧版 GORM 投影一致。
+    // 4. 列表形状：refund_no 精确过滤命中；扁平字段与后台退款列表投影一致。
     let (status, body) = req_str(
         &router,
         "GET",
@@ -1065,7 +1065,7 @@ async fn refund_list_create_review_retry_flow() {
     assert_eq!(items.len(), 1);
     let row = &items[0];
     assert_eq!(row["refund_no"], refund_no);
-    assert_eq!(row["user_id"], user_id, "user_id 保持数字（旧版 map 投影）");
+    assert_eq!(row["user_id"], user_id, "user_id 保持数字");
     assert_eq!(row["refund_cents"], 50);
     assert_eq!(row["status"], "pending");
     assert_eq!(row["biz_type"], "charge");
@@ -1077,7 +1077,7 @@ async fn refund_list_create_review_retry_flow() {
     assert!(row["first_signer"].is_null());
 
     // 5. 双审：approve_comment/reason 校验；首审 awaiting_second → 列表回填 first_signer →
-    //    二审 approved → execution_policy=automatic。
+    // 二审 approved → execution_policy=automatic。
     let (status, _) = req_str(
         &router,
         "POST",

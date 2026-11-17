@@ -1,4 +1,4 @@
-//! 刷卡准入与扣款用例（旧版 card/swipe.go + card_repo.go applyInTx 的单体对应物）。
+//! 刷卡准入与扣款用例。
 //! 准入：输入校验 → 事件幂等恢复 → 30 秒时效 → 端口解析 → 设备条件 → 方案读取；
 //! 事务：卡 → 钱包 → 会话 → 订单锁序内完成扣款、订单/意图/快照/会话写入、
 //! 操作记录与出站事件；首购出站 charge_payment_confirmed 驱动启动投递。
@@ -27,7 +27,7 @@ use chargepilot_mod_wallet::ledger::{lock_tx, move_tx};
 use chargepilot_platform::ids::{SegmentAllocator, uuid_v4};
 use sqlx::{Acquire, MySqlPool};
 
-/// 刷卡准入输入（旧版 SwipeInput）；occurred_at_unix_micros 为 0 视为缺失。
+/// 刷卡准入输入；occurred_at_unix_micros 为 0 视为缺失。
 #[derive(Debug, Clone)]
 pub struct SwipeInput {
     /// 设备十进制卡号（规范文本，32 位协议范围）。
@@ -40,7 +40,7 @@ pub struct SwipeInput {
     pub occurred_at_unix_micros: i64,
 }
 
-/// 刷卡处理结果（旧版 CardOperation 的对外形态）。
+/// 刷卡处理结果。
 #[derive(Debug, Clone)]
 pub struct CardOperationResult {
     pub operation_id: String,
@@ -57,14 +57,14 @@ pub struct CardOperationResult {
     pub replayed: bool,
 }
 
-/// 刷卡服务：端口解析经 PortScanner 窄接口注入（阶段 06 前为直查桩）。
+/// 刷卡服务：端口解析经 PortScanner 窄接口注入。
 pub struct SwipeService {
     pub pool: MySqlPool,
     pub allocator: SegmentAllocator,
     pub scanner: std::sync::Arc<dyn PortScanner>,
 }
 
-/// 刷卡端口编码白名单（旧版 swipePortPattern）。
+/// 刷卡端口编码白名单。
 fn valid_port_id(port_id: &str) -> bool {
     !port_id.is_empty()
         && port_id.len() <= 64
@@ -74,7 +74,7 @@ fn valid_port_id(port_id: &str) -> bool {
 }
 
 impl SwipeService {
-    /// 刷卡入口（旧版 SwipeService.Apply）：先按事件恢复首次操作，再检查时效
+    /// 刷卡入口：先按事件恢复首次操作，再检查时效
     /// 与设备条件；扣款、订单与会话写入在单一事务内提交。
     pub async fn apply(&self, input: &SwipeInput) -> Result<CardOperationResult, SwipeError> {
         if !valid_port_id(&input.port_id)
@@ -92,7 +92,7 @@ impl SwipeService {
             None => None,
         };
         if let Some((kind, charge_order_id, status, price_cents, minutes, operation_id)) = prior {
-            // 同事件已受理：核对会话归属后原样返回（旧版 replayed 分支）。
+            // 同事件已受理：核对会话归属后原样返回。
             let session = find_card_charge(&self.pool, charge_order_id)
                 .await?
                 .filter(|s| s.port_code == input.port_id);
@@ -126,7 +126,7 @@ impl SwipeService {
             return Err(SwipeError::Expired);
         }
 
-        // 端口解析与设备条件（阶段 06 前直查表，设备视为在线）。
+        // 端口解析与设备在线/可用条件。
         let resolved = self
             .scanner
             .resolve_scan(&input.port_id)
@@ -144,8 +144,7 @@ impl SwipeService {
         if resolved.device_status != "enabled" {
             return Err(SwipeError::Paused);
         }
-        // 协议能力：阶段 06 前唯一适配器 dc589 支持在线卡；接入新协议时在此
-        // 按适配器能力拒绝（Unsupported 保留）。
+        // 协议能力校验待接入；新协议在此按适配器能力拒绝（Unsupported 保留）。
         let active_sessions = crate::repo::active_session_count(&self.pool, &input.port_id).await?;
         // 首购才需要方案；续购沿用会话冻结套餐。
         let rule = if active_sessions == 0 {
@@ -165,7 +164,7 @@ impl SwipeService {
             .await
     }
 
-    /// 扣款事务（旧版 applyInTx）：锁序 卡 → 钱包 → 会话 → 订单；
+    /// 扣款事务：锁序 卡 → 钱包 → 会话 → 订单；
     /// 首购同事务写支付单、订单、意图、快照、会话与出站事件。
     #[allow(clippy::too_many_lines)]
     async fn apply_in_tx(
@@ -545,7 +544,7 @@ async fn start_purchase_in_tx(
     )
     .await
     .map_err(map_order_error)?;
-    // 刷卡会话：active_port 唯一键串行同端口占用，冲突即回滚（旧版语义）。
+    // 刷卡会话：active_port 唯一键串行同端口占用，冲突即回滚。
     let package_json =
         serde_json::to_string(package).map_err(|e| SwipeError::Persist(e.to_string()))?;
     let inserted = swipe::insert_charge_session_tx(
@@ -633,7 +632,7 @@ fn resolved_device_id(port: &chargepilot_mod_payment::scan::ScanPort) -> String 
     port.device_id.clone()
 }
 
-/// 钱包错误映射（旧版 mapWalletMoveError）。
+/// 钱包错误映射。
 // 钱包错误通配：非余额/未激活统一进存储错误（wildcard_enum_match_arm）。
 #[allow(clippy::wildcard_enum_match_arm)]
 fn map_wallet_error(e: chargepilot_mod_wallet::WalletError) -> SwipeError {

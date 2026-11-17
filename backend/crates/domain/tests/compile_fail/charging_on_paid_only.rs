@@ -1,6 +1,6 @@
-// 反例：charging 状态上调用 activate()（paid → charging 迁移）必须编译失败。
+// 反例：charging 状态上调用 activate（paid → charging 迁移）必须编译失败。
 // 该方法只定义在 PaidOrder 上——类型层拒绝非法迁移。
-// 票 14 后构造走 evidence_of 分派（唯一入口），反例聚焦「错误证据上的非法迁移」。
+//
 use chargepilot_domain::charging::state::{OrderId, StateEvidence, evidence_of};
 use chargepilot_domain::order::ChargeOrderStatus;
 

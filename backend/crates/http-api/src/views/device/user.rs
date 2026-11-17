@@ -1,4 +1,4 @@
-//! 设备域用户端门面（票 19 热区批：原 device_and_user.rs 的站点/报修/扫码切片）。
+//! 设备域用户端门面。
 
 //! 后台路由：设备管理、导入、故障工单、告警认领；
 //! C 端路由：故障提交/查询、站点附近/详情（无需登录的部分公开）。
@@ -63,7 +63,7 @@ async fn station_detail(
     let rid = rid_of(&headers);
     match user_station::detail(&deps.db, id).await {
         Ok(mut d) => {
-            // 站点公告（global 生效窗口内，旧版语义：详情页取公告列表）
+            // 站点公告（global 生效窗口内，契约约定：详情页取公告列表）
             if let Ok((items, _, _)) =
                 chargepilot_mod_ops::announcement::public_list(&deps.db, 1, 10).await
             {
@@ -134,10 +134,10 @@ async fn my_fault_history(
 }
 
 // ---------------------------------------------------------------------------
-// 匿名扫码（旧版 ScanAPI：resolve 解析裸码或 HTTPS 二维码链接；port 按端口编码）
+// 匿名扫码
 // ---------------------------------------------------------------------------
 
-/// 端口/设备码合法字符集（旧版 userScanCodePattern：1–64 位字母数字下划线冒号连字符）。
+/// 端口/设备码合法字符集。
 fn is_scan_code(code: &str) -> bool {
     (1..=64).contains(&code.len())
         && code
@@ -145,7 +145,7 @@ fn is_scan_code(code: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':' || c == '-')
 }
 
-/// 裸码或 HTTPS 链接提取（旧版 canonicalScanCode）：
+/// 裸码或 HTTPS 链接提取：
 /// 裸码直接返回；否则要求 https 链接且 query 恰好一个合法 code 参数。
 fn canonical_scan_code(raw: &str) -> Option<String> {
     if is_scan_code(raw) {
@@ -168,7 +168,7 @@ fn canonical_scan_code(raw: &str) -> Option<String> {
     if authority_and_path.is_empty() || authority_and_path.contains('@') {
         return None;
     }
-    // query 中恰好一个 code 参数且值合法（旧版 Query()["code"] 语义：只取同名参数）。
+    // query 中恰好一个 code 参数且值合法。
     let mut codes = Vec::new();
     for pair in query.split('&') {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
@@ -188,7 +188,7 @@ fn canonical_scan_code(raw: &str) -> Option<String> {
     }
 }
 
-/// 扫码错误映射（旧版 handle：404 1004 not found，其余 503 5001）。
+/// 扫码错误映射。
 /// 扫码解析：裸码或 HTTPS 二维码链接 → 设备或端口（匿名）。
 async fn scan_resolve(
     State(deps): State<Arc<ApiDeps>>,
@@ -209,7 +209,7 @@ async fn scan_resolve(
     }
 }
 
-/// 端口查询：端口编码 → 单端口（匿名；命中设备码按旧版输出 port not found）。
+/// 端口查询：端口编码 → 单端口（匿名；命中设备码按输出 port not found）。
 async fn scan_port(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
@@ -235,7 +235,7 @@ async fn scan_port(
         Err(e) => scan_error(e, &rid),
     }
 }
-/// 用户端站点/报修/扫码路由（票 19 热区批）。
+/// 用户端站点/报修/扫码路由。
 pub fn router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
         .route(

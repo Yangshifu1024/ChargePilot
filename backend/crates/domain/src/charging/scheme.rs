@@ -1,6 +1,5 @@
 //! 完整计费方案（Scheme）：模板、发布副本与订单快照使用同一结构；
 //! 校验、套餐查找、计价配置转换、报价与费用预览。
-//! 语义基准：旧仓库 internal/domain/charging/scheme.go，逐条对齐（错误文案与旧版一致）。
 
 use crate::charging::actual::{ActualMeter, Rule};
 use crate::charging::cost::{Fee, cutoff_meter};
@@ -13,14 +12,14 @@ use crate::charging::spec::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-/// 单价上限（旧版 maxRateCents），校验共享。
+/// 单价上限，校验共享。
 pub const MAX_RATE_CENTS: i64 = 1_000_000;
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct SchemeError(pub String);
 
-// ---------- 结构定义（字段与旧版 JSON tag 逐字节一致） ----------
+// ---------- 结构定义（字段与 JSON tag 逐字节一致） ----------
 
 fn is_zero_u64(v: &u64) -> bool {
     *v == 0
@@ -44,7 +43,7 @@ pub struct Scheme {
     pub display: Display,
 }
 
-/// 金额套餐的计费算法与全天费率时段（旧版 AmountMode）。
+/// 金额套餐的计费算法与全天费率时段。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AmountMode {
     pub algorithm: ChargeMode,
@@ -52,19 +51,19 @@ pub struct AmountMode {
     pub periods: Vec<crate::charging::spec::Period>,
 }
 
-/// 电量套餐固定单价，单位分/kWh（旧版 EnergyMode）。
+/// 电量套餐固定单价，单位分/kWh。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EnergyMode {
     pub electric_cents: i64,
     pub service_cents: i64,
 }
 
-/// 方案中的购买档位：价格单位分，额度为分钟或整数 kWh（旧版 Package）。
+/// 方案中的购买档位：价格单位分，额度为分钟或整数 kWh。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Package {
     pub id: u64,
     pub name: String,
-    /// 金额、时长、电量：amount / duration / energy（旧版字面量）。
+    /// 金额、时长、电量：amount / duration / energy。
     pub mode: String,
     pub price_cents: i64,
     #[serde(default, skip_serializing_if = "is_zero_u64")]
@@ -73,7 +72,7 @@ pub struct Package {
     pub kwh: u64,
 }
 
-/// 金额套餐的免单时长、最低电费和最长时长（旧版 AmountPolicy）。
+/// 金额套餐的免单时长、最低电费和最长时长。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AmountPolicy {
     pub free_minutes: i32,
@@ -83,14 +82,14 @@ pub struct AmountPolicy {
     pub channel_bp: i32,
 }
 
-/// 刷卡购买的时长套餐和累计分钟上限（旧版 CardPolicy）。
+/// 刷卡购买的时长套餐和累计分钟上限。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct CardPolicy {
     pub package_id: u64,
     pub max_minutes: u16,
 }
 
-/// 用户端呈现配置，与实际计费参数独立（旧版 Display）。
+/// 用户端呈现配置，与实际计费参数独立。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Display {
     #[serde(default)]
@@ -108,7 +107,7 @@ pub struct DisplayLine {
     pub value: Option<String>,
 }
 
-/// spec_json 的存储包装：新版只读写 `scheme`，历史遗留字段经 `extra` 原样往返不丢失。
+/// spec_json 的存储包装：读写主体为 `scheme`，历史遗留字段经 `extra` 原样往返不丢失。
 /// 计费引擎使用 [`crate::charging::spec::Spec`]（计价配置），两者由 [`Scheme::spec_for`] 衔接。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SpecSnapshot {
@@ -118,13 +117,13 @@ pub struct SpecSnapshot {
     pub extra: Map<String, Value>,
 }
 
-/// 兼容别名：阶段 03 期间存储包装曾命名为 Spec，定价模块按此路径引用。
+/// 定价模块对存储包装的别名（`SpecSnapshot`）。
 pub type Spec = SpecSnapshot;
 
 // ---------- Scheme 方法 ----------
 
 impl Scheme {
-    /// 补齐默认值：最长时长 600 分钟、渠道倍率 10000（旧版 Normalized）。
+    /// 补齐默认值：最长时长 600 分钟、渠道倍率 10000。
     pub fn normalized(mut self) -> Self {
         if self.policy.max_minutes == 0 {
             self.policy.max_minutes = 600;
@@ -138,7 +137,7 @@ impl Scheme {
         self
     }
 
-    /// 全量校验：先补默认值，不修改调用方方案（旧版 Validate；文案逐字节一致）。
+    /// 全量校验：先补默认值，不修改调用方方案。
     pub fn validate(&self) -> Result<(), SchemeError> {
         let s = self.clone().normalized();
         let name_chars = s.name.chars().count();
@@ -276,12 +275,12 @@ impl Scheme {
         Ok(())
     }
 
-    /// 按 id 查找方案内套餐；None 表示未找到（旧版 Package）。
+    /// 按 id 查找方案内套餐；None 表示未找到。
     pub fn package(&self, id: u64) -> Option<Package> {
         self.packages.iter().find(|p| p.id == id).cloned()
     }
 
-    /// 将冻结方案与所选套餐转换为计价配置（旧版 SpecFor，返回计费引擎 Spec）。
+    /// 将冻结方案与所选套餐转换为计价配置。
     pub fn spec_for(&self, p: &Package) -> EngineSpec {
         let s = self.clone().normalized();
         let mut spec = EngineSpec {
@@ -319,7 +318,7 @@ impl Scheme {
         spec
     }
 
-    /// 为各套餐生成报价，ID 由规则 ID 和套餐 ID 组成；电量由 kWh 换算为 Wh（旧版 Offers）。
+    /// 为各套餐生成报价，ID 由规则 ID 和套餐 ID 组成；电量由 kWh 换算为 Wh。
     pub fn offers(&self, rule: &Rule) -> Vec<Offer> {
         let n = self.clone().normalized();
         self.packages
@@ -341,9 +340,9 @@ impl Scheme {
     }
 }
 
-// ---------- 费用预览（旧版 Preview） ----------
+// ---------- 费用预览 ----------
 
-/// 费用预览、退款差额和模拟操作结果；金额单位分，不表示已扣款或退款（旧版 Preview）。
+/// 费用预览、退款差额和模拟操作结果；金额单位分，不表示已扣款或退款。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Preview {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -371,7 +370,7 @@ pub struct Preview {
 }
 
 impl Scheme {
-    /// 计算一次购买的费用与退款；计量不足返回 meter_review 状态，不写入数据（旧版 Preview）。
+    /// 计算一次购买的费用与退款；计量不足返回 meter_review 状态，不写入数据。
     pub fn preview(&self, id: u64, meter: ActualMeter) -> Result<Preview, SchemeError> {
         self.preview_purchases(id, meter, 1)
     }
@@ -518,7 +517,7 @@ impl Scheme {
         Ok(result)
     }
 
-    /// 模拟启动失败、确认中或刷卡续购；wallet 为初始余额（分），仅计算预览（旧版 PreviewScenario）。
+    /// 模拟启动失败、确认中或刷卡续购；wallet 为初始余额（分），仅计算预览。
     pub fn preview_scenario(
         &self,
         id: u64,
@@ -589,7 +588,7 @@ impl Scheme {
     }
 }
 
-/// 协议支持的额度、上报数据、刷卡与停止功能（旧版 Capabilities）。
+/// 协议支持的额度、上报数据、刷卡与停止功能。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Capabilities {
     pub reports_energy: bool,
@@ -602,7 +601,7 @@ pub struct Capabilities {
 }
 
 impl Scheme {
-    /// 校验方案所需功能与设备能力是否匹配（旧版 ValidateCapabilities）。
+    /// 校验方案所需功能与设备能力是否匹配。
     pub fn validate_capabilities(&self, c: &Capabilities) -> Result<(), SchemeError> {
         self.validate()?;
         let n = self.clone().normalized();

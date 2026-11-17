@@ -1,5 +1,4 @@
 //! 实测计量：分段电量/功率证据、计价入口与时长/费用上限判断。
-//! 语义基准：旧仓库 internal/domain/charging/{actual,segments,end_meter}.go，逐行对齐。
 
 use crate::charging::cost::cost;
 use crate::charging::spec::{
@@ -8,7 +7,7 @@ use crate::charging::spec::{
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
-/// 连续时间段的电量和功率；相邻段必须首尾相接（旧版 MeterSegment）。
+/// 连续时间段的电量和功率；相邻段必须首尾相接。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MeterSegment {
     pub started_at: DateTime<Utc>,
@@ -24,12 +23,12 @@ pub struct MeterSegment {
     pub power_w: Option<u32>,
 }
 
-/// 一次充电的实测总量与分段；review_required 为真时拒绝自动计费（旧版 ActualMeter）。
+/// 一次充电的实测总量与分段；review_required 为真时拒绝自动计费。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ActualMeter {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub review_required: bool,
-    /// 时间为零值表示缺失（旧版 IsZero 判定）；chrono 无零值时刻，用 Option 表达。
+    /// 时间为零值表示缺失；chrono 无零值时刻，用 Option 表达。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -40,7 +39,7 @@ pub struct ActualMeter {
     pub segments: Vec<MeterSegment>,
 }
 
-/// 设备结束回执的分段、总电量（Wh）、总时长（秒）和结束时刻（旧版 EndMeter）。
+/// 设备结束回执的分段、总电量（Wh）、总时长（秒）和结束时刻。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct EndMeter {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -51,7 +50,7 @@ pub struct EndMeter {
     pub stop_reason: u8,
 }
 
-/// 逐段比较时间、电量、峰值和可选功率；None 与空列表视为相同（旧版 SameSegments）。
+/// 逐段比较时间、电量、峰值和可选功率；None 与空列表视为相同。
 pub fn same_segments(a: &[MeterSegment], b: &[MeterSegment]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -66,8 +65,8 @@ pub fn same_segments(a: &[MeterSegment], b: &[MeterSegment]) -> bool {
     })
 }
 
-/// 已发布且关联站点的计费规则；预估与结算复用同一份规则及 Cost 算法（旧版 Rule）。
-/// serde 字段名与旧版 JSON tag 一致（rule_id / station_id）——快照与事件载荷共用此形态。
+/// 已发布且关联站点的计费规则；预估与结算复用同一份规则及 Cost 算法。
+/// serde 字段名与 JSON tag 一致（rule_id / station_id）——快照与事件载荷共用此形态。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Rule {
     #[serde(rename = "rule_id", default)]
@@ -80,13 +79,13 @@ pub struct Rule {
     pub version: u32,
     #[serde(default)]
     pub spec: Spec,
-    /// 规则默认的充电启动入口（旧版 channel，omitempty）。
+    /// 规则默认的充电启动入口。
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub channel: String,
 }
 
 /// usage_from_meter 校验计量记录并转换为 Cost 所需的 Usage。
-/// 费用封顶与最终结算共用此校验，保持计量有效性及计费结果一致（旧版 usageFromMeter）。
+/// 费用封顶与最终结算共用此校验，保持计量有效性及计费结果一致。
 pub fn usage_from_meter(rule: &Rule, meter: &ActualMeter) -> Result<Usage, BillingError> {
     if meter.review_required {
         return Err(BillingError::MeterReview);
@@ -96,7 +95,7 @@ pub fn usage_from_meter(rule: &Rule, meter: &ActualMeter) -> Result<Usage, Billi
     }
     let started_at = match meter.started_at {
         Some(t) => t,
-        None => return Err(BillingError::MeterReview), // 旧版 IsZero
+        None => return Err(BillingError::MeterReview), // 缺失实测区间
     };
     let ended_at = match meter.ended_at {
         Some(t) => t,
@@ -171,7 +170,7 @@ pub fn usage_from_meter(rule: &Rule, meter: &ActualMeter) -> Result<Usage, Billi
 }
 
 /// 按 rule 计算实测费用；规则无效返回 InvalidPricing，计量缺失或矛盾返回 MeterReview。
-/// 电量计费跨越不同费率时必须有分段读数，不按时长分配电量（旧版 PriceActual）。
+/// 电量计费跨越不同费率时必须有分段读数，不按时长分配电量。
 pub fn price_actual(
     rule: &Rule,
     meter: &ActualMeter,
@@ -180,7 +179,7 @@ pub fn price_actual(
     cost(&rule.spec, &usage)
 }
 
-/// 停止计划：运行中服务端计费的停止决策（旧版 StopPlan，定义在 device.go）。
+/// 停止计划：运行中服务端计费的停止决策。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct StopPlan {
     pub should_stop: bool,
@@ -192,7 +191,7 @@ pub struct StopPlan {
 }
 
 /// 校验 meter 后判断是否达到 rule 的时长或费用上限。
-/// 规则或计量无效时返回错误；设备计费返回无需平台停机的计划（旧版 StopAtMeter）。
+/// 规则或计量无效时返回错误；设备计费返回无需平台停机的计划。
 pub fn stop_at_meter(rule: &Rule, meter: &ActualMeter) -> Result<StopPlan, BillingError> {
     let usage = usage_from_meter(rule, meter)?;
     let started_at = meter.started_at.ok_or(BillingError::MeterReview)?;

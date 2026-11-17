@@ -1,8 +1,8 @@
-//! 卡域后台门面（票 19 热区批：原 admin_users_cards.rs 的在线卡切片）。
+//! 卡域后台门面。
 //!
 //! 在线卡列表要求 user.read；卡绑定与状态变更要求 online_card.manage。路由层
 //! 只做参数解析与状态码映射，角色与权限的最终判定在各服务函数内复核
-//! （与旧版 actor 实时权限语义一致）。
+//! 服务层在事务内复核操作人实时权限。
 
 use crate::errormap::ops_error;
 use crate::errormap::{card_error, rid_of};
@@ -22,7 +22,7 @@ fn bad_request(message: &str, rid: &str) -> Response {
     ops_error(OpsError::Input(message.to_string()), rid)
 }
 
-/// 路径 ID 必须为正整数（旧版 AdminPathID）。
+/// 路径 ID 必须为正整数。
 fn path_id(raw: &str, rid: &str) -> Result<u64, Response> {
     raw.parse::<u64>()
         .ok()
@@ -33,7 +33,7 @@ fn path_id(raw: &str, rid: &str) -> Result<u64, Response> {
 #[derive(Deserialize)]
 struct BindBody {
     card_no: String,
-    /// 完整用户主键，大整数由十进制字符串保留精度（旧版 DecimalID）。
+    /// 完整用户主键，大整数由十进制字符串保留精度。
     user_id: String,
     /// 人工核验依据。
     reason: String,
@@ -69,7 +69,7 @@ async fn bind_online_card(
     if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ONLINE_CARD_MANAGE, &rid) {
         return resp;
     }
-    // 旧版 DecimalID 解析失败即输入错误，文案与业务输入校验一致。
+    // DecimalID 解析失败即输入错误，文案与业务输入校验一致。
     let Ok(user_id) = body.user_id.parse::<u64>() else {
         return bad_request(BIND_INPUT_MESSAGE, &rid);
     };
@@ -123,7 +123,7 @@ async fn online_card_status(
         Err(e) => card_error(e, "卡状态与依据无效", &rid),
     }
 }
-/// 在线卡路由（票 19 热区批）。
+/// 在线卡路由。
 pub fn router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
         .route(

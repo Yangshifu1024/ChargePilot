@@ -9,7 +9,7 @@ use chargepilot_domain::settlement::{
 };
 use sqlx::{MySqlConnection, MySqlPool};
 
-/// 领取到期的 pending 计费任务（SKIP LOCKED 批次，旧版 Due）。
+/// 领取到期的 pending 计费任务（SKIP LOCKED 批次）。
 pub async fn due_billing_jobs(pool: &MySqlPool, limit: u32) -> Result<Vec<u64>, sqlx::Error> {
     let ids: Vec<(u64,)> = sqlx::query_as(
         "SELECT `charge_order_id` FROM `charge_billing_job` \
@@ -105,7 +105,7 @@ pub async fn approved_meter_review(
     .await
 }
 
-/// 人工最终金额（旧版 FinalFee 语义；request_id 随行返回）。
+/// 人工最终金额登记行；request_id 随行返回供幂等。
 pub async fn manual_settlement(
     pool: &MySqlPool,
     charge_order_id: u64,
@@ -119,7 +119,7 @@ pub async fn manual_settlement(
     .await
 }
 
-/// 支付单锁定并核对（旧版 Apply 的核心核对集合在调用方）。
+/// 支付单 FOR UPDATE 锁定；核对逻辑在 service 调用方。
 pub async fn lock_pay_order_tx(
     c: &mut MySqlConnection,
     payment_order_id: u64,
@@ -199,7 +199,7 @@ pub async fn insert_fee_receipt_tx(
     Ok(())
 }
 
-/// 订单费用列（旧版 SetSettledFeeInTx）。
+/// 写入订单 settled 费用分项与总额。
 pub async fn set_order_fee_tx(
     c: &mut MySqlConnection,
     electric: i64,

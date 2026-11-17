@@ -1,5 +1,5 @@
 //! charging 域：充电生命周期状态机的事件驱动实现（ADR 002）。
-//! 跨域依赖（票 21 审计）：card,order——刷卡首购操作确认与卡会话释放（card）；订单生命周期推进与事件登记（order）。
+//! 跨域依赖：card,order——刷卡首购操作确认与卡会话释放（card）；订单生命周期推进与事件登记（order）。
 //! 依赖图无环（ops 为唯一根；order 不依赖 payment/wallet，无反向边）。
 //! 支付成功（charge_payment_confirmed）→ 启动命令与端口预占 → 设备回执
 //! starting/charging → 用户停止/自动停机（计费截止冻结）→ 结束回执

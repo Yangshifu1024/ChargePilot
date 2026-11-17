@@ -1,5 +1,5 @@
 //! headless 批量模拟器（`simulator-batch` 子命令）：一条命令拉起 N 台虚拟
-//! 设备跑完整协议交互，作为容量验收的加载源（阶段 07）。
+//! 设备跑完整协议交互，作为容量验收与压测的加载源。
 //!
 //! 与网关共用 `protocol-dc589` 帧层（同一实现即契约，互逆免费获得协议覆盖）。
 //! 充电负载表现为心跳携带的充电端口遥测（网关侧缓冲/落库/解析负载真实发生）；
@@ -463,7 +463,7 @@ async fn handle_inbound(
 }
 
 /// 批量预导入设备事实（device_meta 单行即可注册成功）。
-#[allow(clippy::disallowed_methods)] // 票 16 豁免：压测子命令的数据库地址回退
+#[allow(clippy::disallowed_methods)] // 压测子命令：未传参时回退读取 DATABASE_URL
 async fn provision_devices(args: &BatchArgs) -> anyhow::Result<()> {
     let url = args
         .database_url

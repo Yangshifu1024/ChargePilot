@@ -1,6 +1,6 @@
 //! card 域错误类型（蓝图第五章：域内错误词表集中收口）。
 
-/// 刷卡域错误（旧版 SwipeError 阶段 + 哨兵语义）。HTTP/网关把
+/// 刷卡域错误。HTTP/网关把
 /// CardDeclined / CardBalance / Conflict 映射为 409 + 业务码 2009。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SwipeError {
@@ -90,7 +90,7 @@ impl From<sqlx::Error> for CardAdminError {
     }
 }
 
-/// 用户卡状态操作错误（HTTP 映射沿用旧版字面量契约）。
+/// 用户卡状态操作错误。
 #[derive(Debug, thiserror::Error)]
 pub enum UserCardError {
     /// 状态不在 C 端可写子集（lost/unbound 之外，400/1005）。

@@ -1,4 +1,4 @@
-//! 营销域后台门面（票 18 冷区批：原 admin_marketing.rs 归位）。
+//! 营销域后台门面。
 
 use crate::errormap::{coupon_error, rid_of};
 use crate::guard::AdminGuard;
@@ -70,7 +70,7 @@ fn deny(guard: &AdminGuard, permission: &str, rid: &str) -> Option<Response> {
     }
 }
 
-/// 券域错误 → HTTP（映射对齐旧版 failure + AdminResourceFailure）。
+/// 券域错误 → HTTP（输入 400，其余按后台资源失败映射）。
 async fn list_coupons_handler(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
@@ -115,7 +115,7 @@ async fn create_coupon_handler(
         valid_hours: v["valid_hours"].as_u64().unwrap_or(0) as u32,
         total_quota: v["total_quota"].as_u64().unwrap_or(0) as u32,
         per_user_quota: v["per_user_quota"].as_u64().unwrap_or(0) as u32,
-        // 创建时状态由服务端强制 active（旧版忽略提交值），这里仅占位。
+        // 创建时状态由服务端强制 active，这里仅占位。
         status: String::new(),
         start_at: serde_json::from_value(v["start_at"].clone()).unwrap_or(None),
         end_at: serde_json::from_value(v["end_at"].clone()).unwrap_or(None),
@@ -190,7 +190,7 @@ async fn grant_coupon_handler(
     };
     let input = GrantInput {
         request_id: v["request_id"].as_str().unwrap_or_default().to_string(),
-        // 旧版 DTO 为十进制字符串（httpapi.DecimalID，避免 JS 精度丢失），兼容数字。
+        // DTO 为十进制字符串（httpapi.DecimalID，避免 JS 精度丢失），兼容数字。
         user_id: v["user_id"]
             .as_str()
             .and_then(|s| s.parse::<u64>().ok())
@@ -207,7 +207,7 @@ async fn grant_coupon_handler(
     }
 }
 
-/// 活动列表查询参数（旧版 ReadAdminPage：status/keyword；分页经 AdminPaging）。
+/// 活动列表查询参数。
 #[derive(Deserialize)]
 struct ActivityListQuery {
     status: Option<String>,
@@ -243,7 +243,7 @@ async fn list_activities(
     }
 }
 
-/// 主键字段解析：旧版 DTO 为十进制字符串（DecimalID，避免 JS 精度丢失），兼容数字。
+/// 主键字段解析：DTO 为十进制字符串（DecimalID，避免 JS 精度丢失），兼容数字。
 fn id_of(v: &Value) -> u64 {
     v.as_str()
         .and_then(|s| s.parse::<u64>().ok())

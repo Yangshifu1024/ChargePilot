@@ -2,8 +2,8 @@
 
 use sqlx::{MySqlConnection, MySqlPool};
 
-/// 本人尚未解绑的卡（旧版 UserCardRepo.List）。
-/// 输出形状对齐旧版 OnlineCard JSON：id 数字、card_no 字符串、user_id 数值、status 字符串。
+/// 本人尚未解绑的卡。
+/// 输出形状
 pub async fn owned_card_rows(
     pool: &MySqlPool,
     user_id: u64,
@@ -18,7 +18,7 @@ pub async fn owned_card_rows(
     .await
 }
 
-/// 锁读：卡号 + 本人 + 未解绑，避免先读再核对归属的竞态（旧版 LockUserCard）。
+/// 锁读：卡号 + 本人 + 未解绑，避免先读再核对归属的竞态。
 pub async fn lock_user_card_tx(
     conn: &mut MySqlConnection,
     card_no: &str,

@@ -1,5 +1,5 @@
 //! settlement 域表访问（蓝图第五章 repo 层）：SQL 只出现在本目录。
-//! recorder 是 wallet::RefundRecorder trait 的唯一生产实现（原语形态整体归位）；
+//! recorder 是 wallet::RefundRecorder trait 的唯一生产实现；
 //! 其余按用例分文件，快照/计量读取在 billing 与 meter_review 间复用。
 
 pub mod bill;

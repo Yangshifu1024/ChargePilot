@@ -1,5 +1,4 @@
 //! 结算与停止决策：SettleSession 金额拆分、预算停机、购买报价与套餐 Offer。
-//! 语义基准：旧仓库 internal/domain/charging/{device,offer,offer_actual,budget_stop,estimate}.go，逐行对齐。
 
 use crate::charging::actual::{ActualMeter, Rule, StopPlan, price_actual};
 use crate::charging::cost::cost;
@@ -11,7 +10,7 @@ use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-/// 设备上报的停止原因；未知编码保留原值（旧版 StopReason 词表）。
+/// 设备上报的停止原因；未知编码保留原值。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StopReason(pub String);
 
@@ -32,7 +31,7 @@ impl StopReason {
     pub const UNKNOWN: &'static str = "unknown";
 }
 
-/// 支付后下发的设备控制参数；仅当前模式需要的字段有效（旧版 ControlInstruction）。
+/// 支付后下发的设备控制参数；仅当前模式需要的字段有效。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ControlInstruction {
     pub mode: ChargeMode,
@@ -55,7 +54,7 @@ pub struct ControlInstruction {
 }
 
 impl ControlInstruction {
-    /// 校验当前设备模式要求的额度字段和范围（旧版 Valid）。
+    /// 校验当前设备模式要求的额度字段和范围。
     pub fn valid(&self) -> bool {
         if !self.mode.valid() || self.mode.executor() != Some(ChargeExecutor::Device) {
             return false;
@@ -82,7 +81,7 @@ impl ControlInstruction {
     }
 }
 
-/// 设备执行结果记录；reported 为 false 表示推算值（旧版 SessionActual）。
+/// 设备执行结果记录；reported 为 false 表示推算值。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct SessionActual {
     #[serde(default)]
@@ -97,7 +96,7 @@ pub struct SessionActual {
     pub reported: bool,
 }
 
-/// 充电结算金额及执行来源（旧版 Settlement）。
+/// 充电结算金额及执行来源。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Settlement {
     #[serde(default)]
@@ -117,7 +116,7 @@ pub struct Settlement {
     pub stop_reason: String,
 }
 
-/// 来自一份完整方案的套餐报价（旧版 Offer）；字段与旧版 JSON 逐字节一致。
+/// 来自一份完整方案的套餐报价；字段与 JSON 逐字节一致。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Offer {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -147,7 +146,7 @@ pub struct Offer {
 }
 
 impl Offer {
-    /// 校验套餐标识、金额和额度；未填 purchase_count 按一次购买校验（旧版 Valid）。
+    /// 校验套餐标识、金额和额度；未填 purchase_count 按一次购买校验。
     pub fn valid(&self) -> bool {
         let count = if self.purchase_count == 0 {
             1i64
@@ -178,7 +177,7 @@ impl Offer {
     }
 }
 
-/// 按购买时的 spec 和 paid 计算结算金额，不执行资金写入（旧版 SettleSession）。
+/// 按购买时的 spec 和 paid 计算结算金额，不执行资金写入。
 /// 时长按完整分钟折算，电量按实测 Wh 折算，金额套餐最多收购买价；无效规则或计量返回错误。
 pub fn settle_session(
     spec: &Spec,
@@ -327,7 +326,7 @@ pub fn settle_session(
     Ok(settlement)
 }
 
-/// 把一个已计价的结果按新的总额重新分摊，并保证两项之和正好等于它（旧版 splitFee）。
+/// 把一个已计价的结果按新的总额重新分摊，并保证两项之和正好等于它。
 pub fn split_fee(fee: &crate::charging::cost::Fee, total: i64) -> (i64, i64) {
     if fee.total_cents <= 0 {
         return (0, total);
@@ -339,7 +338,7 @@ pub fn split_fee(fee: &crate::charging::cost::Fee, total: i64) -> (i64, i64) {
     (electric, total - electric)
 }
 
-/// 根据生效规则和当前消费判断服务端计费是否达到上限（旧版 DecideStop）。
+/// 根据生效规则和当前消费判断服务端计费是否达到上限。
 pub fn decide_stop(
     spec: &Spec,
     usage: &Usage,
@@ -378,7 +377,7 @@ pub fn decide_stop(
     Ok(plan)
 }
 
-/// 将套餐实收及计量适配为 SettleSession 输入，供充电和计费流程共用（旧版 PriceOfferActual）。
+/// 将套餐实收及计量适配为 SettleSession 输入，供充电和计费流程共用。
 pub fn price_offer_actual(
     rule: &Rule,
     offer: &Offer,
@@ -393,7 +392,7 @@ pub fn price_offer_actual(
     })
 }
 
-/// 保留设备上报的实际时长与电量（旧版 ActualFromMeter）。
+/// 保留设备上报的实际时长与电量。
 pub fn actual_from_meter(meter: &ActualMeter) -> SessionActual {
     let mut actual = SessionActual {
         used_seconds: meter.charged_seconds,
@@ -409,7 +408,7 @@ pub fn actual_from_meter(meter: &ActualMeter) -> SessionActual {
     actual
 }
 
-/// 以费用下界判断预算停机，避免缺失功率片段导致停机规则失效（旧版 BudgetStopAtMeter）。
+/// 以费用下界判断预算停机，避免缺失功率片段导致停机规则失效。
 /// 仅当下界达到购买金额时停机；最终费用须上下界一致或通过严格计价才能返回。
 pub fn budget_stop_at_meter(
     rule: &Rule,
@@ -470,7 +469,7 @@ pub fn budget_stop_at_meter(
     ))
 }
 
-/// 复制费率和分段，用最低或最高可用价格计算费用下界或上界；不修改原始数据（旧版 budgetBound）。
+/// 复制费率和分段，用最低或最高可用价格计算费用下界或上界；不修改原始数据。
 fn budget_bound(
     rule: &Rule,
     meter: &ActualMeter,
@@ -547,7 +546,7 @@ fn budget_bound(
     price_actual(&bounded_rule, &bounded_meter)
 }
 
-/// 报价结果；预计电量用 kWh 文本表示，金额单位为分（旧版 Estimate）。
+/// 报价结果；预计电量用 kWh 文本表示，金额单位为分。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Estimate {
     pub estimated_kwh: String,
@@ -569,7 +568,7 @@ pub struct Estimate {
     pub charge_quantity: u16,
 }
 
-/// 将预计电量均匀分配到请求时长，再调用 Cost 计算报价（旧版 EstimateCharge）。
+/// 将预计电量均匀分配到请求时长，再调用 Cost 计算报价。
 /// 报价使用均匀负载假设，最终结算以实际计量为准；设备计费直接返回预付款金额。
 pub fn estimate_charge(
     rule: &Rule,
@@ -649,14 +648,14 @@ pub fn estimate_charge(
     })
 }
 
-/// shopspring StringFixed(3)：half away from zero 舍入到 3 位小数固定输出。
+/// 预计电量文本固定 3 位小数，half away from zero。
 fn fixed3(value: &Decimal) -> String {
     use rust_decimal::RoundingStrategy;
     let rounded = value.round_dp_with_strategy(3, RoundingStrategy::MidpointAwayFromZero);
     format!("{:.3}", rounded)
 }
 
-/// 单次计费最大切片数引用（保持与旧版常量清单一致；MAX_SLICES 供 usage_from_meter 使用）。
+/// 单次计费最大切片数引用（保持与常量清单一致；MAX_SLICES 供 usage_from_meter 使用）。
 #[allow(dead_code)]
 pub fn max_slices() -> usize {
     MAX_SLICES

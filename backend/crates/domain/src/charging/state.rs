@@ -1,18 +1,17 @@
-//! 充电订单状态机：类型层非法迁移拒绝（阶段 00 初稿，迁移图定案见 docs/design/state-machine.md）。
+//! 充电订单状态机：类型层拒绝非法迁移（迁移图见 `docs/design/state-machine.md`）。
 //!
 //! 设计：每个 DB 状态一个 newtype，迁移方法只定义在合法 from 状态的类型上——
 //! 在非法 from 状态上调用迁移方法会直接编译失败（trybuild 反例 `tests/compile_fail/`）。
-//! 新版收紧旧版两处无保护写点：进入 `Refunded` 一律要求 from 证据类型；
-//! `PendingPayment` / `Cancelled` / `Failed` 为保留取值，不提供任何进入方法（旧版零写入）。
+//! 进入 `Refunded` 一律要求持有 `RefundingOrder` 证据；`PendingPayment` / `Cancelled` /
+//! `Failed` 为保留取值，不提供任何进入方法（库内无写入路径）。
 //!
-//! **构造收敛（票 14）**：状态证据的字段私有，唯一构造入口是 [`evidence_of`]——
+//! **证据构造收敛**：状态证据字段私有，唯一构造入口是 [`evidence_of`]——
 //! 以数据库读到的 [`ChargeOrderStatus`] 分派对应证据类型，证据必然对应行内真实
-//! 状态；仓储迁移函数消费 from 证据、返回目标证据，字面构造（丢弃式证明）在
-//! 编译层不可再写出。
+//! 状态；仓储迁移函数消费 from 证据、返回目标证据，字面构造在编译层不可再写出。
 
 use crate::order::ChargeOrderStatus;
 
-/// 充电订单 ID（新版由号段分配器分配，u64 与 DB bigint unsigned 对应）。
+/// 充电订单 ID（号段分配器分配，u64 与 DB bigint unsigned 对应）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OrderId(pub u64);
 
@@ -78,7 +77,7 @@ impl RefundedOrder {
     }
 }
 
-/// 数据库读出的状态证据：五态证据的枚举视图（票 14 唯一构造入口的返回形态）。
+/// 数据库读出的状态证据：五态证据的枚举视图（[`evidence_of`] 的返回形态）。
 #[derive(Debug)]
 pub enum StateEvidence {
     Paid(PaidOrder),
@@ -140,7 +139,7 @@ impl StateEvidence {
     }
 }
 
-/// 状态证据的唯一构造入口：按数据库读到的状态分派（票 14）。
+/// 状态证据的唯一构造入口：按数据库读到的状态分派。
 /// 保留取值（`pending_payment` / `cancelled` / `failed`）无证据——它们没有
 /// 迁移出口，调用方必须显式处理 `None`。
 pub fn evidence_of(id: OrderId, status: ChargeOrderStatus) -> Option<StateEvidence> {
@@ -156,7 +155,7 @@ pub fn evidence_of(id: OrderId, status: ChargeOrderStatus) -> Option<StateEviden
     }
 }
 
-/// 迁移迁移 1：paid → charging（设备启动成功回执；DB 谓词 status='paid' + RowsAffected==1）。
+/// 迁移 1：paid → charging（设备启动成功回执；DB 谓词 status='paid' + RowsAffected==1）。
 impl PaidOrder {
     pub fn activate(self) -> ChargingOrder {
         ChargingOrder { id: self.id }
@@ -184,7 +183,7 @@ impl CompletedOrder {
     }
 }
 
-/// 迁移 5：refunding → refunded（渠道退款全额成功回执；新版要求 from=refunding 谓词，收紧旧版无谓词写点）。
+/// 迁移 5：refunding → refunded（渠道退款全额成功回执；必须经 refunding 证据类型）。
 impl RefundingOrder {
     pub fn settle_refunded(self) -> RefundedOrder {
         RefundedOrder { id: self.id }
@@ -202,8 +201,7 @@ impl RefundingOrder {
 mod tests {
     use super::*;
 
-    // 合法迁移路径的类型层样例：证据必须经 evidence_of 分派（票 14 后
-    // 字面构造不可用，正例改走唯一入口）。
+    // 合法迁移路径的类型层样例：证据必须经 evidence_of 分派。
     #[test]
     fn mainline_transitions_are_expressible() {
         let paid = evidence_of(OrderId(1), ChargeOrderStatus::Paid)
@@ -213,8 +211,7 @@ mod tests {
         let completed = charging.complete(); // charging → completed
         let refunding = completed.request_channel_refund(); // completed → refunding
         let _refunded = refunding.settle_refunded(); // refunding → refunded
-        // 迁移 6（票 23 补运行期锚点）：渠道退款部分成功恢复完成态——
-        // refunding 的第二出口（运行期尚无写点，正例锚点锁定表达可达）。
+        // 迁移 6：渠道退款部分成功时 refunding 可恢复 completed（第二出口）。
         let refunding2 = evidence_of(OrderId(1), ChargeOrderStatus::Completed)
             .and_then(StateEvidence::into_completed)
             .expect("completed 有证据")
@@ -228,7 +225,7 @@ mod tests {
             .and_then(StateEvidence::into_paid)
             .expect("paid 有证据");
         let refunding = paid.mark_start_rejected("device START rejected: 2");
-        // 余额支付路径在同事务内继续走完 refunding → refunded（旧版迁移 3）
+        // 余额支付路径在同事务内走完 refunding → refunded。
         let _refunded = refunding.settle_refunded();
     }
 

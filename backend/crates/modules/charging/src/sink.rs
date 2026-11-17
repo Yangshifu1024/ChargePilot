@@ -1,7 +1,7 @@
-//! 设备命令下沉通道（旧版 charging→gateway 的窄接口对应物）。
-//! 阶段 06 前由 simulation 实现闭环；接入网关后 cmd 装配替换为 TCP 下发。
+//! 设备命令下沉通道：向网关下发启动/停止命令。
+//! 网关未接入前由 simulation 闭环；接入后由装配层替换为 TCP 下发。
 
-/// 启动命令下沉（旧版 Gateway 接口的启动/停止受理部分）。
+/// 启动命令下沉。
 /// 实现必须可重入：同一 command_id 重复下发等价。
 pub trait CommandSink: Send + Sync {
     /// 下发启动命令。返回 Ok 表示设备侧已受理（ack）；Err 为下发失败（可重试）。
@@ -36,7 +36,7 @@ pub struct StartCommand {
     pub quantity: u16,
 }
 
-/// 模拟通道：直接受理成功（阶段 07 模拟器接入后由设备模拟真实应答）。
+/// 模拟通道：直接受理成功。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SimulationSink;
 

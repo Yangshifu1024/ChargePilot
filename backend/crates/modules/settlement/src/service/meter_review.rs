@@ -1,8 +1,8 @@
-//! 计量核实（仪表审核）与人工最终金额（旧版 meter_review_repo.go + manual_repo.go）。
+//! 计量核实（仪表审核）与人工最终金额。
 //! 计费任务 manual_review 后的两条人工出口：
 //! 1. 修正计量分段（双人审核，批准后重排队计费重算）；
 //! 2. 直接登记最终金额（合计不超过套餐价格，重排队按人工金额入账）。
-//!    权限与审计由 HTTP 层负责；首审人实时权限由调用方传入。SQL 在 repo/meter_review.rs。
+//! 权限与审计由 HTTP 层负责；首审人实时权限由调用方传入。SQL 在 repo/meter_review.rs。
 
 use crate::repo::{billing as billing_repo, meter_review as repo, set_read_committed};
 use chargepilot_domain::charging::actual::price_actual;
@@ -15,7 +15,7 @@ use sqlx::{Acquire, MySqlPool};
 use crate::AuditView;
 use crate::error::ReviewError;
 
-/// 计量核实记录行（旧版 MeterReview JSON 定形；original/corrected 内嵌对象）。
+/// 计量核实记录行。
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct MeterReviewRow {
     pub id: u64,
@@ -35,7 +35,7 @@ pub struct MeterReviewRow {
     pub reviewed_at: Option<String>,
 }
 
-/// 人工定价工单行（旧版 ManualFeeReviewListRow 定形；reviews 由调用方回填）。
+/// 人工定价工单行。
 #[derive(Debug, Clone, Serialize)]
 pub struct ManualFeeReviewRow {
     pub charge_order_id: u64,
@@ -43,14 +43,14 @@ pub struct ManualFeeReviewRow {
     pub reason: String,
     /// pending 待核实、resolved 已处置。
     pub status: String,
-    /// 设备上报的原始计量快照（对象）；user_id 已转字符串（旧版 DecimalizeIDField）。
+    /// 设备上报的原始计量快照（对象）；user_id 已转字符串。
     pub source: Option<serde_json::Value>,
     pub created_at: String,
-    /// 该订单下的核实记录，按 ID 倒序（旧版 ListMeterReviewsByOrder）。
+    /// 该订单下的核实记录，按 ID 倒序。
     pub reviews: Vec<MeterReviewRow>,
 }
 
-/// 读取单条核实记录（旧版 propose HTTP 返回完整行的查询来源）。
+/// 读取单条核实记录。
 pub async fn get_meter_review_row(
     db: &MySqlPool,
     id: u64,
@@ -60,8 +60,7 @@ pub async fn get_meter_review_row(
         .map(repo::MeterReviewRawRow::into_row))
 }
 
-/// 按状态、订单号关键词分页倒序读取人工定价工单，并回填每单全部核实记录
-/// （旧版 ListManualFeeReviews + ListMeterReviewsByOrder + MeterReviewService.List）。
+/// 按状态、订单号关键词分页倒序读取人工定价工单，并回填每单全部核实记录。
 /// 返回（本页行, 符合条件总数）。keyword 由调用方 trim 与限长，空串表示不筛选。
 pub async fn list_manual_fee_reviews(
     db: &MySqlPool,
@@ -108,7 +107,7 @@ pub async fn list_manual_fee_reviews(
     Ok((rows, total))
 }
 
-/// 把对象内的 user_id 数字字段转成字符串（旧版 DecimalizeIDField 语义）。
+/// 把对象内的 user_id 数字字段转成字符串。
 fn decimalize_user_id(mut v: serde_json::Value) -> serde_json::Value {
     if let Some(id) = v.get("user_id").and_then(|x| x.as_u64())
         && let Some(obj) = v.as_object_mut()
@@ -127,7 +126,7 @@ pub struct MeterSegmentInput {
     pub peak_w: u32,
 }
 
-/// 原始计费源：快照 + 结束计量（旧版 readOriginalBillingSource 的对应部分）。
+/// 原始计费源：快照 + 结束计量。
 /// 快照与计量读取复用计费批次的 repo 原语。
 async fn read_billing_source(
     c: &mut sqlx::MySqlConnection,
@@ -157,9 +156,9 @@ fn actual_meter_of(meter: &EndMeter) -> ActualMeter {
     }
 }
 
-/// 提交计量修正提案（旧版 ProposeMeter）：任务须 manual_review、无活跃提案；
+/// 提交计量修正提案：任务须 manual_review、无活跃提案；
 /// 同 request_id 同内容重放复用首次记录；修正分段须经价格校验。
-/// 首次提交时在事务内写审计（重放不写，旧版 prior 分支语义）。
+/// 首次提交时在事务内写审计（重放不写，prior 分支语义）。
 #[allow(clippy::too_many_arguments)]
 pub async fn propose_meter_review(
     pool: &MySqlPool,
@@ -241,7 +240,7 @@ pub async fn propose_meter_review(
     )
     .await?;
     let review_id = repo::last_insert_id_tx(&mut *c).await?;
-    // 首次提交审计（旧版 AuditChange{Action:"propose", Target:"meter_review", After:in}）。
+    // 首次提交审计。
     if let Some(audit) = audit {
         let after = serde_json::json!({
             "request_id": request_id,
@@ -267,7 +266,7 @@ pub async fn propose_meter_review(
     Ok(review_id)
 }
 
-/// 校验已存 corrected_json 的分段与输入一致（旧版 SameSegments + JSON 比对）。
+/// 校验已存 corrected_json 的分段与输入一致。
 fn segments_match_json(corrected_json: &str, segments: &[MeterSegmentInput]) -> bool {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(corrected_json) else {
         return false;
@@ -284,9 +283,9 @@ fn segments_match_json(corrected_json: &str, segments: &[MeterSegmentInput]) -> 
     })
 }
 
-/// 完成计量审核（旧版 ReviewMeter）：仅 awaiting_second 可决定，二审须非首审人。
+/// 完成计量审核：仅 awaiting_second 可决定，二审须非首审人。
 /// 批准核对原始源未变且修正可计价，重排队计费（generation+1）；驳回记录依据。
-/// 首次决定时在事务内写审计（重放不写，旧版 Decide 分支语义）。
+/// 首次决定时在事务内写审计（重放不写，Decide 分支语义）。
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
 pub async fn review_meter(
@@ -314,10 +313,10 @@ pub async fn review_meter(
     let review_status = before_raw.status;
     let first_reviewer = before_raw.first_reviewer_id;
     let second_reviewer = before_raw.second_reviewer_id;
-    // 审计 before 取审前完整行（original/corrected 解析为对象，对齐旧版 MeterReview JSON）。
+    // 审计 before 取审前完整行（original/corrected 解析为 JSON 对象）。
     let before_json =
         serde_json::to_value(before_raw.clone().into_row()).unwrap_or(serde_json::Value::Null);
-    // 相同决定重试（旧版幂等分支）。
+    // 相同决定重试。
     let target = if approve {
         MeterReviewStatus::Approved
     } else {
@@ -387,7 +386,7 @@ pub async fn review_meter(
         }
         repo::reject_review_tx(&mut *c, review_id, actor_id, reason).await?;
     }
-    // 首次决定审计（旧版 AuditChange{Action:"decide", Target:"meter_review", Before:review, After:in}）。
+    // 首次决定审计。
     if let Some(audit) = audit {
         let after = serde_json::json!({
             "review_id": review_id,
@@ -413,7 +412,7 @@ pub async fn review_meter(
     Ok(())
 }
 
-/// 登记人工最终金额（旧版 ResolveAmount）：任务须 manual_review，一单一金额，
+/// 登记人工最终金额：任务须 manual_review，一单一金额，
 /// 同 request_id 重放核对内容；合计不超过套餐价格；重排队按人工金额入账。
 /// 首次登记时在事务内写审计（重放不写）。
 #[allow(clippy::too_many_arguments)]
@@ -493,7 +492,7 @@ pub async fn resolve_manual_amount(
     .await
     .map_err(|e| ReviewError::Storage(e.to_string()))?;
     repo::requeue_job_tx(&mut *c, charge_order_id).await?;
-    // 首次登记审计（旧版 AuditChange{Action:"resolve_amount", Target:"manual_settlement", After:in}）。
+    // 首次登记审计。
     if let Some(audit) = audit {
         let after = serde_json::json!({
             "charge_order_id": charge_order_id,

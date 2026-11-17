@@ -4,9 +4,8 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 差分对照（辅缝 2）：以旧版 Go discountFor 批量产出的黄金样本逐条比对
-//! Rust 实现。样本由旧仓库临时生成器一次性产出（生成期人工预期已核对，
-//! 生成器即删），本测试只读快照。覆盖：三种优惠类型、阈值边界、
+//! 优惠计算黄金样本：读取 `tests/golden/discount.json` 逐条断言
+//! [`discount_for`] 的减免金额与错误类别。覆盖三种优惠类型、阈值边界、
 //! percentage 小数取整边界、减免封顶与参数缺失。
 
 use chargepilot_domain::marketing::{DiscountError, DiscountType, GrantRule, discount_for};
@@ -26,8 +25,7 @@ struct GrantIn {
     free_minutes: u32,
 }
 
-/// 未知折扣类型（如黄金样本中的 cashback）在新范式下的等价行为：
-/// 旧版 match 兜底返回 NotFound，新版在词表 parse 即拒绝——同一错误类别。
+/// 未知折扣类型在词表 parse 即拒绝，等价于 `DiscountError::NotFound`。
 fn parse_of(input: &Value) -> Result<GrantRule, DiscountError> {
     let g: GrantIn = serde_json::from_value(input["grant"].clone()).expect("输入合法");
     let discount_type = DiscountType::parse(&g.kind).map_err(|_| DiscountError::NotFound)?;
@@ -66,7 +64,6 @@ fn discount_golden_matches_legacy() {
         let grant = match parse_of(input) {
             Ok(g) => g,
             Err(e) => {
-                // 未知类型：新旧行为等价为 NotFound，按样本预期断言错误类别。
                 assert_eq!(
                     e,
                     want_err_of(case["want_err"].as_str().unwrap_or("未知类型")),
@@ -81,7 +78,7 @@ fn discount_golden_matches_legacy() {
                 let want = case["want"].as_i64().unwrap_or_else(|| {
                     panic!("{id}: 期望成功但样本无 want 值");
                 });
-                assert_eq!(got, want, "{id}: 优惠金额与旧版不一致");
+                assert_eq!(got, want, "{id}: 优惠金额与样本不一致");
             }
             Err(e) => {
                 assert!(

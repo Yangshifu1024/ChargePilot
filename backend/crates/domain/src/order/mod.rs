@@ -1,8 +1,7 @@
-//! 订单域共享词表（票 07）：充电订单主状态与用户反馈两词表。
+//! 订单域共享词表：充电订单主状态与用户反馈。
 //!
-//! 与 [`crate::charging::state`] 的关系（票 07 裁决，防误判）：状态机是
-//! 每态新类型 + 迁移方法的**进程内证据**机制，词表枚举是**数据库往返**
-//! 机制，两者并存；证据类型的接线归票 14，本票不消费。
+//! 与 [`crate::charging::state`] 的关系：状态机是每态新类型 + 迁移方法的
+//! **进程内证据**机制，词表枚举是**数据库往返**机制，两者并存。
 
 use crate::wordlist::wordlist_enum;
 
@@ -22,7 +21,7 @@ wordlist_enum!(
 );
 
 impl ChargeOrderStatus {
-    /// 占用端口的订单状态：已支付未起充与充电中（旧版 paidOrChargingOrderStatuses）。
+    /// 占用端口的订单状态：已支付未起充与充电中。
     #[must_use]
     pub const fn is_ongoing(self) -> bool {
         matches!(self, Self::Paid | Self::Charging)
@@ -52,7 +51,7 @@ wordlist_enum!(
 mod tests {
     use super::*;
 
-    /// 字面量对照（票 07 硬规则）：serde 输出与 DB ENUM 字面量逐字节一致。
+    /// serde 输出与 DB ENUM 字面量逐字节一致。
     #[test]
     fn db_literals_match_serde() {
         use serde_json::to_string as json;

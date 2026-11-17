@@ -3,13 +3,13 @@
 use chargepilot_domain::card::CardStatus;
 use sqlx::MySqlConnection;
 
-/// 在线卡行（旧版 OnlineCard 的 JSON 契约：id 数字、user_id 十进制字符串）。
+/// 在线卡行。
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct OnlineCard {
     pub id: u64,
     /// 绑定卡号的规范十进制文本（ascii_bin 列读侧 CAST AS CHAR）。
     pub card_no: String,
-    /// 绑定用户主键，响应按十进制字符串传输（旧版 `,string`）。
+    /// 绑定用户主键，响应按十进制字符串传输。
     pub user_id: String,
     /// online_card.status：active/lost/disabled/unbound。
     pub status: String,
@@ -26,7 +26,7 @@ pub async fn admin_card_rows(pool: &sqlx::MySqlPool) -> Result<Vec<OnlineCard>, 
     .await
 }
 
-/// 事务内确认绑定目标用户未删除且启用（旧版 identity.RequireActiveUserInTx 语义）。
+/// 事务内确认绑定目标用户未删除且启用。
 /// id 列为 BIGINT UNSIGNED，读侧按 u64 解码。
 pub async fn active_user_id_tx(
     conn: &mut MySqlConnection,
@@ -40,7 +40,7 @@ pub async fn active_user_id_tx(
     .await
 }
 
-/// 在已锁卡的连接中更新归属并回到 active（旧版 BindOnlineCard）。
+/// 在已锁卡的连接中更新归属并回到 active。
 pub async fn bind_online_card_tx(
     conn: &mut MySqlConnection,
     id: u64,
@@ -54,7 +54,7 @@ pub async fn bind_online_card_tx(
     Ok(())
 }
 
-/// 在调用方事务中保存一条卡审计（旧版 AppendOnlineCardAudit）；失败随事务回滚。
+/// 在调用方事务中保存一条卡审计；失败随事务回滚。
 /// 后台与用户侧审计同表同形态（action 由调用方区分）。
 pub async fn append_audit_tx(
     conn: &mut MySqlConnection,
@@ -75,7 +75,7 @@ pub async fn append_audit_tx(
     Ok(())
 }
 
-/// 唯一键首次绑定：重复键不改归属（旧版 ClaimBindingInTx 的 INSERT IGNORE），
+/// 唯一键首次绑定：重复键不改归属，
 /// 避免对缺失卡先取间隙锁后并发插入的死锁；返回是否为本次新建。
 pub async fn insert_ignore_card_tx(
     conn: &mut MySqlConnection,
@@ -94,7 +94,7 @@ pub async fn insert_ignore_card_tx(
     Ok(created)
 }
 
-/// 行锁按卡号核对归属（旧版 LockCardByNo）：首次绑定也已插行，缺失即存储异常。
+/// 行锁按卡号核对归属：首次绑定也已插行，缺失即存储异常。
 pub async fn lock_card_by_no_tx(
     conn: &mut MySqlConnection,
     card_no: &str,

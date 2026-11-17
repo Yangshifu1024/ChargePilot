@@ -1,4 +1,4 @@
-//! 统一响应信封与请求编号（契约与旧版逐字段一致，属红线层）。
+//! 统一响应信封与请求编号（字段名与序列化形态为对外契约，属红线层）。
 //!
 //! 信封：`{code, message, data, request_id, trace_id, errors?}`；
 //! 请求编号：沿用合法 `X-Request-ID` 头（≤128，`[A-Za-z0-9_-]`），否则生成 16 字节 hex，
@@ -9,7 +9,7 @@ use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
-/// 统一响应信封（字段名与旧版逐字节一致）。
+/// 统一响应信封（JSON 字段名固定，客户端按契约解析）。
 #[derive(Serialize)]
 pub struct Envelope<T: Serialize> {
     pub code: i64,
@@ -22,6 +22,7 @@ pub struct Envelope<T: Serialize> {
 }
 
 impl<T: Serialize> Envelope<T> {
+    /// 成功信封（业务码 0，message 为 ok）。
     pub fn ok(data: T, request_id: &str) -> Self {
         Self {
             code: 0,
@@ -34,7 +35,7 @@ impl<T: Serialize> Envelope<T> {
     }
 }
 
-/// 从请求头取（或生成）请求编号；合法字符集与旧版一致。
+/// 从请求头取（或生成）请求编号；合法字符集为 `[A-Za-z0-9_-]`、长度 ≤128。
 pub fn request_id_from(headers: &axum::http::HeaderMap) -> String {
     use rand::RngCore;
     if let Some(raw) = headers.get("x-request-id").and_then(|v| v.to_str().ok()) {
@@ -68,9 +69,9 @@ pub fn ok<T: Serialize>(data: T, request_id: &str) -> Response {
     respond(StatusCode::OK, request_id, Envelope::ok(data, request_id))
 }
 
-/// 按错误码映射状态码与信封（内部原因记日志，不进响应）。
-/// 显式状态覆盖的错误信封（票 17）：同一业务码在不同场景配不同 HTTP
-/// 状态时使用（如 ChannelInteraction 502 主态与 409 模拟渠道冲突）。
+/// 按给定 HTTP 状态码写错误信封（内部原因记日志，不进响应）。
+/// 同一业务码在不同场景需配不同 HTTP 状态时使用
+/// （如 ChannelInteraction 默认 502，模拟渠道冲突可显式写 409）。
 pub fn error_with_status(
     err: &ApiError,
     status: axum::http::StatusCode,
@@ -90,6 +91,7 @@ pub fn error_with_status(
     respond(status, request_id, body)
 }
 
+/// 按错误码默认 HTTP 映射写错误信封。
 pub fn error(err: &ApiError, request_id: &str) -> Response {
     if let Some(cause) = &err.cause {
         tracing::warn!(code = err.code as i64, cause = %cause, "请求处理失败");
@@ -105,7 +107,7 @@ pub fn error(err: &ApiError, request_id: &str) -> Response {
     respond(err.code.http_status(), request_id, body)
 }
 
-/// 未匹配路径的统一 404（语义与文案沿用旧版）。
+/// 未匹配路径的统一 404 响应。
 pub fn not_found_route(request_id: &str) -> Response {
     error(
         &ApiError::new(Code::NotFound, "接口尚未提供，请确认服务版本"),

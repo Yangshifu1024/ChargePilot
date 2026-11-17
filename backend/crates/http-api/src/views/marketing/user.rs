@@ -1,4 +1,4 @@
-//! 营销域用户端门面（票 18 冷区批：原 user_marketing.rs 归位）。
+//! 营销域用户端门面。
 
 use crate::errormap::{coupon_query_error, rid_of};
 use crate::params::UserPaging;
@@ -19,7 +19,7 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
         .route("/api/v1/user/coupons", axum::routing::get(list_available))
 }
 
-/// 券视图错误 → HTTP（旧版 myCoupons 的映射：输入 400，其余 503 固定文案）。
+/// 券视图错误 → HTTP。
 #[derive(Deserialize)]
 struct MyCouponQuery {
     status: Option<String>,

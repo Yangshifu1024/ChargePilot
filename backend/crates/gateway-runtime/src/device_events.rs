@@ -223,7 +223,7 @@ impl DeviceEventDispatcher {
 
     /// B6 在线卡刷卡：card 域准入（幂等扣款事务）→ 授权/拒绝帧。
     /// 受理成功不发卡回复——启动授权由 charge_payment_confirmed 出站事件
-    /// 经 StartDispatcher 下发 B7（旧版 CardDispatcher.decide 语义）；
+    /// 经 StartDispatcher 下发 B7 启动授权；
     /// 明确拒绝下发 BD（余额不足保留余额显示，其余置无效卡）；
     /// 其他失败返回 Err 交事件层退避重试（受理幂等，重放不重复扣款）。
     async fn handle_card_swipe(&self, f: &CardEventPayload) -> anyhow::Result<()> {
@@ -263,7 +263,7 @@ impl DeviceEventDispatcher {
     }
 
     /// C0 故障上报：协议故障码 → 中性指标名后写告警域（生成/合并升级/重放跳过
-    /// 均由 record_fault 事务保证）。FaultCode=0 按旧版语义忽略。
+    /// 均由 record_fault 事务保证）。FaultCode=0 视为无故障，忽略。
     async fn handle_fault(&self, f: &CardEventPayload) -> anyhow::Result<()> {
         if f.fault_code == 0 {
             tracing::debug!(device = %f.device_id, port = f.port, "故障码为零，忽略");
@@ -317,7 +317,7 @@ impl DeviceEventDispatcher {
     /// 刷卡准入与拒绝应答（B6 与 B4 离线卡共用）。
     async fn swipe_and_reply(&self, f: &CardEventPayload) -> anyhow::Result<()> {
         if f.port == 0xFF {
-            // 端口号错误标志：直接按无效卡拒绝（旧版 decide 语义）。
+            // 端口号错误标志 0xFF：直接按无效卡拒绝。
             return self
                 .send_to_device(
                     &f.device_id,

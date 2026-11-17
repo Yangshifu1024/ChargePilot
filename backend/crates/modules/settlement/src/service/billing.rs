@@ -1,6 +1,5 @@
-//! 计费批次（旧版 BillingService.Run + BillingOrders.Apply 的单体对应物）。
-//! 领取 pending 任务 → 读订单/快照/计量 → domain 结算（批 1 差分验证的
-//! settle_session）→ 资金同事务：费用回执幂等、订单费用列、余款退款登记、
+//! 计费批次：领取 pending 任务 → 读订单/快照/计量 → domain 结算 → 资金同事务。
+//! 资金路径含费用回执幂等、订单费用列、余款退款登记、
 //! 事件出站；计量/快照无效转人工，存储错误退避重试。SQL 在 repo/billing.rs。
 
 use crate::repo::{billing as repo, set_read_committed};
@@ -12,7 +11,7 @@ use sqlx::{Acquire, MySqlPool};
 
 use chargepilot_domain::settlement::BillingJobStatus as JobStatus;
 
-/// 领取到期的 pending 计费任务（SKIP LOCKED 批次，旧版 Due）。
+/// 领取到期的 pending 计费任务（SKIP LOCKED 批次）。
 pub async fn due_jobs(pool: &MySqlPool, limit: u32) -> anyhow::Result<Vec<u64>> {
     Ok(repo::due_billing_jobs(pool, limit).await?)
 }
@@ -44,7 +43,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     };
     let mut meter: EndMeter =
         serde_json::from_str(&meter_json).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    // 融合已批准的计量修正（旧版 readBillingSource）：原始计量未变时替换分段；
+    // 融合已批准的计量修正：原始计量未变时替换分段；
     // 已变（新回执等）则视为无效，交由下方结算校验转人工。
     if let Some((original_json, corrected_json)) =
         repo::approved_meter_review(pool, charge_order_id).await?
@@ -62,7 +61,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         }
     }
 
-    // 人工最终金额优先（仪表审核后的兜底出口；旧版 FinalFee 语义）：
+    // 人工最终金额优先（仪表审核后的兜底出口）：
     // 登记后金额直接入账，仍受预付封顶与回执幂等保护。
     let manual = repo::manual_settlement(pool, charge_order_id).await?;
     let settlement = if let Some((electric, service, _request)) = manual {
@@ -74,7 +73,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
             ..Default::default()
         }
     } else {
-        // domain 结算（批 1 差分验证的入口）：计量校验失败转人工。
+        // domain 结算：计量校验失败转人工。
         let rule = snapshot.rule.clone();
         let actual = ActualMeter {
             review_required: false,
@@ -88,7 +87,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         match settle_session(&rule.spec, &actual, paid.as_ref(), None) {
             Ok(s) => s,
             Err(BillingError::MeterReview) | Err(BillingError::InvalidPricing) => {
-                // 工单快照对齐旧版 readBillingSource：订单/用户/规则/套餐/计量全量。
+                // 工单快照保存订单/用户/规则/套餐/计量全量，供人工定价。
                 let source = serde_json::json!({
                     "charge_order_id": charge_order_id,
                     "order_no": order_no,
@@ -126,7 +125,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
 
-    // 支付单锁定并核对（旧版 Apply 的核心核对集合）。
+    // 支付单锁定并核对：状态须 paid/partial_refunded 且金额自洽。
     let Some((pay_status, paid_cents, refunded_cents, pay_id)) =
         repo::lock_pay_order_tx(&mut *c, payment_order_id).await?
     else {
@@ -146,7 +145,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         return Ok(false);
     }
 
-    // 费用回执幂等：已入账则仅完成任务（旧版 previous.RowsAffected > 0 分支）。
+    // 费用回执幂等：已有回执则仅完成任务并补签账单，不重复入账。
     let calculation_no = calculation_number(&order_no, charge_order_id);
     if repo::find_fee_receipt_tx(&mut *c, charge_order_id)
         .await?
@@ -182,7 +181,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
         shortfall,
     )
     .await?;
-    // 订单费用列（旧版 SetSettledFeeInTx）。
+    // 订单费用列写入实费分项与总额。
     repo::set_order_fee_tx(
         &mut *c,
         settlement.electric_cents,
@@ -208,9 +207,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
             chargepilot_mod_order::month_start_of(chrono::Utc::now()),
         )
         .await?;
-        // 订单进入退款中（渠道退款成功后置 refunded）。证据链（票 14）：
-        // 读取行内状态分派证据，completed → refunding（迁移 4）；行不存在或
-        // 状态非 completed 时不迁移不更新——保留旧版条件 UPDATE 静默 0 行语义。
+        // 有余款时登记自动退款；订单从 completed 证据迁移到 refunding（条件不满足则静默 0 行）。
         let order_status = repo::order_status_tx(&mut *c, charge_order_id).await?;
         let completed = order_status
             .and_then(|st| {
@@ -221,7 +218,7 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
             })
             .and_then(chargepilot_domain::charging::state::StateEvidence::into_completed);
         if completed.is_some() {
-            // 证据链：completed → refunding（迁移 4）。
+            // 证据链：completed → refunding。
             repo::mark_order_refunding_tx(&mut *c, charge_order_id).await?;
         }
     }
@@ -262,17 +259,15 @@ pub async fn process_job(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Resu
     .await
     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     repo::mark_job_done_tx(&mut *c, charge_order_id).await?;
-    // 人工核实后的订单成功入账：关闭待核实工单（旧版 fee_calculation_repo
-    // 的 pending→resolved 同事务推进）。
+    // 成功入账：关闭待核实工单（pending → resolved）。
     repo::resolve_manual_review_tx(&mut *c, charge_order_id).await?;
-    // 账单签发接线：费用入账与账单同一事务落地（旧版生产链路的账单缺口由
-    // Missing 补偿循环兜底，此处直接消除缺口；total<=0 时签发内部返回 None 跳过）。
+    // 账单与费用同事务签发；实费为零时 issue 内部返回 None 跳过。
     crate::service::bill::issue_bill_in_tx(c, charge_order_id).await?;
     tx.commit().await?;
     Ok(true)
 }
 
-/// 转人工：同事务写入人工核实工单（旧版 EnqueueManualFeeReview）并推进任务。
+/// 转人工：同事务写入人工核实工单并推进任务为 manual_review。
 /// 工单按 uk_order（charge_order_id）幂等——重复入队不新增行；
 /// reason 供人工定价参考，source_json 保存来源计量快照。
 pub async fn defer_to_manual_review(
@@ -286,7 +281,7 @@ pub async fn defer_to_manual_review(
         // 订单行缺失（异常清理）：无工单可挂，仅推进任务避免空转。
         return defer_job(pool, charge_order_id, JobStatus::ManualReview, reason).await;
     };
-    // 工单月份列是 varchar(7) 'YYYY-MM'（旧版 Format("2006-01")），取当前 UTC 年月。
+    // 工单月份列 varchar(7) 'YYYY-MM'，取当前 UTC 年月。
     let month = chrono::Utc::now().format("%Y-%m").to_string();
     // 项目事务惯例：先 SET 隔离级别再 begin（事务中 SET 会报错）。
     let mut conn = pool.acquire().await?;
@@ -307,8 +302,7 @@ pub async fn defer_to_manual_review(
     Ok(())
 }
 
-/// 任务状态推进（manual_review 或退避重试；旧版 Defer 的代际核对在新版简化为
-/// 条件更新 pending → 目标状态，done 不可回退）。
+/// 任务状态推进：manual_review 或退避重试；条件更新 pending → 目标状态，done 不可回退。
 pub async fn defer_job(
     pool: &MySqlPool,
     charge_order_id: u64,
@@ -323,8 +317,7 @@ pub async fn defer_job(
     Ok(())
 }
 
-/// 计费编号：B + 订单号去前缀 + 订单 ID（旧版 CalculationNumber 的新版对应；
-/// 差分语义以账单唯一性为准，编号格式不影响资金结果）。
+/// 计费编号：B + 订单 ID 定长十进制；资金结果以回执与账单唯一键为准。
 fn calculation_number(order_no: &str, charge_order_id: u64) -> String {
     let _ = order_no;
     format!("B{charge_order_id:020}")

@@ -1,5 +1,4 @@
-//! 钱包域共享词表（票 06 Comments 裁决自 modules/wallet/lib.rs 迁入；
-//! 对照表 wallet 节四型收尾）。
+//! 钱包域共享词表：账户、冻结记录、流水方向与业务类型。
 
 use crate::wordlist::wordlist_enum;
 

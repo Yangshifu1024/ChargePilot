@@ -1,12 +1,15 @@
 //! 刷新令牌：`<前缀><sid>.<secret>` 编码 + SHA-256 摘要 + Redis Lua 轮换/注销脚本。
-//! 脚本自旧版逐字节移植（保留 32 个旧摘要、KEEPTTL、整数字段防 cjson 浮点）。
+//! Lua 脚本在 Redis 内完成摘要轮换与注销（保留最近 32 条历史摘要、KEEPTTL、整数字段防 cjson 浮点化）。
 
 use base64::Engine as _;
 
 /// 令牌与存储键的前缀组（调用方定义来源，如 `RT_`/`user:session:`）。
+/// 刷新令牌与 Redis 会话键的前缀约定。
 #[derive(Debug, Clone)]
 pub struct Layout {
+    /// 完整令牌字符串前缀（如 `RT_`）。
     pub token_prefix: &'static str,
+    /// Redis 键前缀（拼接 sid 得会话键）。
     pub key_prefix: &'static str,
 }
 
@@ -140,7 +143,7 @@ mod tests {
 
     #[ignore = "真库集成：node tasks.mjs test-integration"]
     #[tokio::test]
-    #[allow(clippy::disallowed_methods)] // 票 16 豁免：测试模块的连接变量
+    #[allow(clippy::disallowed_methods)] // 集成测试：读取 TEST_REDIS_URL 环境变量
     async fn rotate_and_revoke_scripts() {
         // 门控语义：未设 TEST_REDIS_URL 属调用方式错误，判失败而非静默跳过。
         let Ok(url) = std::env::var("TEST_REDIS_URL") else {

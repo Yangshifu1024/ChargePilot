@@ -1,5 +1,4 @@
-//! 在线卡词表与刷卡准入纯规则（旧版 domain/card 与 card.CanExtend 的单体对应物）。
-//! 语义基准：旧仓库 internal/domain/card/*.go 与 internal/card/extension.go，逐行对齐。
+//! 在线卡词表与刷卡准入纯规则（零 IO）。
 
 use crate::charging::scheme::Package;
 use crate::wordlist::wordlist_enum;
@@ -33,14 +32,14 @@ wordlist_enum!(
 
 wordlist_enum!(
     /// card_event_delivery.status 列的卡事件投递状态（两值）。
-    /// 该表当前无 Rust 写点（事件投递接线后的落点，票 10 范围内先建型）。
+    /// 该表当前无 Rust 写点（事件投递接线完成后的落点）。
     CardDeliveryStatus: {
         Pending = "pending",
         Done = "done",
     }
 );
 
-/// 判断同卡是否可购买正价时长套餐（旧版 CanExtend）。
+/// 判断同卡是否可购买正价时长套餐。
 /// 首购传 `card == order_card` 恒真、`purchased = 0`；续购传会话的卡与累计值。
 /// 规则：同卡、时长套餐、价格与时长为正、无待确认扣款、可用余额足够，
 /// 且累计购买不超过会话冻结的时长上限。
@@ -62,7 +61,7 @@ pub fn can_extend(
         && purchased_minutes as u32 + package.minutes as u32 <= max_minutes as u32
 }
 
-/// 卡号规范校验（旧版 applyInTx 内联校验）：非空十进制、32 位协议范围、
+/// 卡号规范校验：非空十进制、32 位协议范围、
 /// 规范文本（去零后回写一致）。
 pub fn valid_card_no(card_no: &str) -> bool {
     if card_no.is_empty() || card_no.len() > 64 {
@@ -151,7 +150,7 @@ mod tests {
 mod wordlist_tests {
     use super::*;
 
-    /// 字面量对照（票 10 硬规则）：serde 输出与 DB ENUM 字面量逐字节一致。
+    /// 字面量对照：serde 输出与 DB ENUM 字面量逐字节一致。
     #[test]
     fn db_literals_match_serde() {
         use serde_json::to_string as json;

@@ -46,7 +46,7 @@ pub async fn find_frozen_intent(
     .await
 }
 
-/// 仅释放本端口已过期的预占，与新意图创建同事务（旧版语义）。
+/// 仅释放本端口已过期的预占，与新意图创建同事务。
 pub async fn expire_stale_intents_tx(
     conn: &mut MySqlConnection,
     port_code: &str,
@@ -63,7 +63,7 @@ pub async fn expire_stale_intents_tx(
     Ok(())
 }
 
-/// 端口可用性：有效预占或进行中订单存在即冲突（旧版 CheckoutPortAvailable）。
+/// 端口可用性：有效预占或进行中订单存在即冲突。
 pub async fn port_busy_count_tx(
     conn: &mut MySqlConnection,
     port_code: &str,

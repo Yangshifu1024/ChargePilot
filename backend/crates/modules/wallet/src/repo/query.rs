@@ -1,4 +1,4 @@
-//! C 端钱包查询组合：余额、流水、充值付款条件与退款进度（旧版 query.go 对齐）。
+//! C 端钱包查询组合：余额、流水、充值付款条件与退款进度。
 //! 只查询调用方用户的数据；未开户返回可用的零余额视图，不以流水重算余额。
 
 use crate::{Page, WalletError, account};
@@ -6,7 +6,7 @@ use chargepilot_domain::money::PaymentOrderStatus;
 use serde::Serialize;
 use sqlx::MySqlPool;
 
-/// 余额视图（旧版 BalanceView）。
+/// 余额视图（含可用额派生）。
 #[derive(Debug, Clone, Serialize)]
 pub struct BalanceView {
     pub balance_cents: i64,
@@ -16,7 +16,7 @@ pub struct BalanceView {
     pub status: String,
 }
 
-/// 读取 userID 的余额；未开户返回可用的零余额视图（旧版 Balance）。
+/// 读取 userID 的余额；未开户返回可用的零余额视图。
 pub async fn balance(pool: &MySqlPool, user_id: u64) -> Result<BalanceView, WalletError> {
     match account::find_by_user(pool, user_id).await? {
         None => Ok(BalanceView {
@@ -37,7 +37,7 @@ pub async fn balance(pool: &MySqlPool, user_id: u64) -> Result<BalanceView, Wall
     }
 }
 
-/// 流水行（旧版 map 输出定形；字段名与旧版 JSON 一致）。
+/// 流水行（API JSON 序列化形态）。
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct TxnRow {
     pub txn_no: String,
@@ -51,7 +51,7 @@ pub struct TxnRow {
     pub created_at: Option<String>,
 }
 
-/// 按用户、分页与 direction 查询流水；空方向查全部（旧版 Transactions）。
+/// 按用户、分页与 direction 查询流水；空方向查全部。
 pub async fn transactions(
     pool: &MySqlPool,
     user_id: u64,
@@ -97,7 +97,7 @@ pub async fn transactions(
     })
 }
 
-/// 充值申请行（旧版 WalletRechargeRow；联表带出支付状态与有效期）。
+/// 充值申请行：联表带出支付状态与有效期。
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct RechargeRow {
     pub request_id: String,
@@ -110,7 +110,7 @@ pub struct RechargeRow {
     pub can_pay: bool,
 }
 
-/// 分页读取 userID 的充值申请及支付状态，按创建顺序倒序（旧版 Recharges）。
+/// 分页读取 userID 的充值申请及支付状态，按创建顺序倒序。
 pub async fn recharges(
     pool: &MySqlPool,
     user_id: u64,
@@ -155,7 +155,7 @@ pub async fn recharges(
     })
 }
 
-/// 退款分笔行（旧版 WalletRefundPartRow）。
+/// 退款分笔行（关联 refund_record）。
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct RefundPartRow {
     pub refund_no: String,
@@ -167,7 +167,7 @@ pub struct RefundPartRow {
     pub completed_at: Option<String>,
 }
 
-/// 审核展示字段（旧版 RefundReviewView）。
+/// 频次风控人工审核展示字段。
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct RefundReviewView {
     pub approved: bool,
@@ -175,7 +175,7 @@ pub struct RefundReviewView {
     pub actor_id: u64,
 }
 
-/// 一笔申请及原路退款的进度（旧版 RefundView；status 为派生展示状态）。
+/// 一笔申请及原路退款的进度；status 为派生展示状态，非库表枚举。
 #[derive(Debug, Clone, Serialize)]
 pub struct RefundView {
     pub request_id: String,
@@ -192,7 +192,7 @@ pub struct RefundView {
     pub review: Option<RefundReviewView>,
 }
 
-/// 分页读取 userID 的退款申请，一次批量补齐本页退款、审核及冻结链接（旧版 Refunds）。
+/// 分页读取 userID 的退款申请，一次批量补齐本页退款、审核及冻结链接。
 /// 每次查询至多四条 SQL，不随本页记录数增长，不执行资金写入。
 pub async fn refunds(
     pool: &MySqlPool,
@@ -310,7 +310,7 @@ pub async fn refunds(
     })
 }
 
-/// 组合退款进度视图（旧版 refundView 逐条对齐）。
+/// 由分笔状态、成功金额与风控链接组合退款进度视图。
 /// 退款成功以渠道确认金额为准；未审核且有关联冻结时显示待人工审核，明确拒绝后才显示 rejected。
 #[allow(clippy::too_many_arguments)]
 fn compose_refund_view(

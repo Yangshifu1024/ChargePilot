@@ -1,4 +1,4 @@
-//! 支付成功处理（旧版 CallbackService.Apply 对齐）：回调与模拟确认共用的
+//! 支付成功处理：回调与模拟确认共用的
 //! 状态机入口。READ COMMITTED 单事务完成支付锁定 → 幂等摘要 → 状态推进 →
 //! （charge 业务）订单创建 + 快照冻结 + 事件出站；钱包充值走钱包入账。
 //! 每一步幂等：重放同报文返回相同回执，不同报文报冲突。SQL 在 repo/。
@@ -11,7 +11,7 @@ use chargepilot_domain::money::{BizType, PaymentOrderStatus};
 use chargepilot_domain::payment::{PaymentIntentStatus, is_late_payment};
 use sqlx::{Acquire, MySqlPool};
 
-/// 已验签（或模拟确认）的支付事实（旧版 VerifiedPayment）。
+/// 已验签（或模拟确认）的支付事实。
 #[derive(Debug, Clone)]
 pub struct VerifiedPayment {
     /// 商户支付单号（P 前缀）。
@@ -26,7 +26,7 @@ pub struct VerifiedPayment {
     pub paid_at_unix_micros: i64,
 }
 
-/// 支付处理结果（旧版 PaymentCallbackResult）。
+/// 支付处理结果。
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct ApplyResult {
     pub charge_order_id: u64,
@@ -37,7 +37,7 @@ pub struct ApplyResult {
     pub refund_required: bool,
 }
 
-/// 通知内容摘要（旧版 callbackDigest）：对关键字段拼接后 sha256。
+/// 通知内容摘要：对关键字段拼接后 sha256。
 fn payment_digest(payment: &VerifiedPayment) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -53,7 +53,7 @@ fn payment_digest(payment: &VerifiedPayment) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// 支付成功处理（旧版 Apply；charge 与 wallet_recharge 分流共用）。
+/// 支付成功处理。
 #[allow(clippy::too_many_lines)]
 pub async fn apply_payment(
     pool: &MySqlPool,
@@ -93,7 +93,7 @@ pub async fn apply_payment(
     };
 
     if biz_type == BizType::WalletRecharge {
-        // 钱包充值分支（旧版 settleWalletRecharge）：支付单推进 paid 后
+        // 钱包充值分支：支付单推进 paid 后
         // 经钱包入账事务落余额与流水；摘要即流水号。
         let previous = find_callback_digest(&mut *conn, &payment.transaction_id).await?;
         if let Some(previous_digest) = &previous
@@ -180,7 +180,7 @@ pub async fn apply_payment(
         return Err(ApplyError::Conflict);
     }
 
-    // 回调幂等：同渠道交易号必须同摘要（旧版 PaymentCallbackDigestRecord）。
+    // 回调幂等：同渠道交易号必须同摘要。
     let previous = find_callback_digest(&mut *conn, &payment.transaction_id).await?;
     if let Some(previous_digest) = &previous
         && previous_digest != &digest
@@ -226,7 +226,7 @@ pub async fn apply_payment(
     }
     insert_callback_digest_tx(&mut *conn, &payment.transaction_id, &digest).await?;
 
-    // 条件更新到 paid：并发竞争失败即冲突（旧版 RowsAffected == 1）。
+    // 条件更新到 paid：并发竞争失败即冲突。
     let updated = repo::mark_charge_order_paid_tx(
         &mut *conn,
         order_id,
@@ -240,7 +240,7 @@ pub async fn apply_payment(
         return Err(ApplyError::Conflict);
     }
 
-    // 迟到支付：登记自动退款与出站事件，不启动充电（旧版 queueLatePaymentRefund）。
+    // 迟到支付：登记自动退款与出站事件，不启动充电。
     let late = is_late_payment(
         now.timestamp_micros(),
         payment.paid_at_unix_micros,
@@ -285,7 +285,7 @@ pub async fn apply_payment(
         });
     }
 
-    // 支付确认到账后才核销优惠券（旧版 RedeemInTx：随资金事务一起提交或回滚；
+    // 支付确认到账后才核销优惠券（RedeemInTx：随资金事务一起提交或回滚；
     // 核销单号在充电行尚不存在时用 PENDING- 派生，重放沿用首次结果）。
     if intent_coupon_grant_id != 0 {
         chargepilot_mod_marketing::coupon::redeem_in_tx(
@@ -301,7 +301,7 @@ pub async fn apply_payment(
         .map_err(|e| ApplyError::Storage(e.to_string()))?;
     }
 
-    // 支付确认到账：创建充电订单（paid）并冻结快照（旧版首段）。
+    // 支付确认到账：创建充电订单（paid）并冻结快照。
     let device_id = repo::intent_device_id_tx(&mut *conn, &intent_id).await?;
     let port_no = repo::intent_port_no_tx(&mut *conn, &intent_id).await?;
     let charge_no = chargepilot_mod_order::new_charge_order_no_tx(
@@ -351,7 +351,7 @@ pub async fn apply_payment(
         return Err(ApplyError::Conflict);
     }
 
-    // 订单事件 + 出站事件（事件驱动状态机的入口信号；批 4 的投递器消费）。
+    // 订单事件 + 出站事件：事件驱动状态机的入口信号。
     let event_id = format!("P{}", &digest[..32.min(digest.len())]);
     chargepilot_mod_order::append_event_in_tx(
         &mut *conn,
@@ -387,7 +387,7 @@ pub async fn apply_payment(
     })
 }
 
-/// 迟到支付退款编号（旧版 stableRefundNo：WR 前缀 + 摘要前 16 字节 hex）。
+/// 迟到支付退款编号。
 fn late_refund_no(digest: &str) -> String {
     format!("WR{}", &digest[..32.min(digest.len())])
 }

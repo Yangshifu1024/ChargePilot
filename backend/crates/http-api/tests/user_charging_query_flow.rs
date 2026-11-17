@@ -1,4 +1,4 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 集成测试在持锁场景下跨 await；已配置 clippy 豁免。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
@@ -6,9 +6,8 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 用户端充电查询族与扫码端点真库集成测试：历史/详情、充电中与快照回退、
-//! 曲线窗口、扫码解析与端口查询、旧形状停止。对照小程序 formatOrder /
-//! scan.js / curve.js 消费字段与旧版响应形状断言。
+//! 用户端充电查询与扫码端点真库集成测试：历史/详情、充电中与快照回退、
+//! 曲线窗口、扫码解析与端口查询、停止接口。断言响应字段形状供小程序消费。
 
 mod support;
 
@@ -542,7 +541,7 @@ async fn ongoing_and_snapshot_fallback() {
     assert_eq!(status, StatusCode::NOT_FOUND, "越权快照应 404: {body}");
 }
 
-/// 场景 3：曲线端点空数据返回空数组；窗口与粒度校验按旧版错误码。
+/// 场景 3：曲线端点空数据返回空数组；窗口与粒度校验按错误码。
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn curve_windows_and_validation() {
@@ -733,7 +732,7 @@ async fn scan_resolve_and_port() {
     assert_eq!(status, StatusCode::NOT_FOUND, "未注册设备应 404: {body}");
     assert_eq!(body["code"], 1004);
 
-    // 端口查询：命中返回单端口；设备码按旧版输出 port not found。
+    // 端口查询：命中返回单端口；设备码按输出 port not found。
     let (status, body) = req(
         &router,
         "POST",

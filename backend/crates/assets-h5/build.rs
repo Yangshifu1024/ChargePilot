@@ -1,10 +1,10 @@
-//! 构建期产物准备（票 22）：前端产物目录存在则复制到本 crate 的 assets/
+//! 构建期产物准备：前端产物目录存在则复制到本 crate 的 assets/
 //! （rust-embed 嵌入 folder），镜像构建可直接预置 assets/；产物缺失时保留
 //! 现有 assets（本地开发为空目录容忍，占位缺失容忍）。产物变更只触发本
 //! crate 重编，业务代码不重编。
 //!
 //! 构建脚本豁免：`CARGO_MANIFEST_DIR` 是 cargo 注入的构建环境变量，不属于
-//! 票 16 业务进程 env 禁令（disallowed-methods）管辖；`expect` 失败即构建
+//! 业务进程 env 禁令（disallowed-methods）管辖；`expect` 失败即构建
 //! 环境损坏，中止构建是正确行为。
 #![allow(clippy::disallowed_methods, clippy::expect_used)]
 

@@ -1,9 +1,9 @@
-//! 统一错误映射（票 17）：各域错误 → HTTP 信封的唯一归宿。
+//! 统一错误映射：各域错误 → HTTP 信封的唯一归宿。
 //!
-//! 收编三处既有映射枢纽——身份错误直映（原 lib.rs）、运营错误映射函数
-//! （原 admin_auth.rs）、停止错误直映（原 user_charging.rs）——码值与文案
-//! 沿用旧版字面量契约；直发码的码表缺口（4291/3001/2018/5000）补进
-//! `platform::error::Code`，一码多 HTTP 状态经 [`respond`] 显式状态参数支持。
+//! 身份、运营、停止充电等枢纽错误在此集中映射；HTTP 状态码、业务码与
+//! 对用户可见文案保持固定契约。直发码（4291/3001/2018/5000 等）登记在
+//! `platform::error::Code`；同一业务码对应多种 HTTP 状态时用 [`respond`]
+//! 显式传入状态。
 
 use axum::response::{IntoResponse, Response};
 use chargepilot_mod_identity::IdentityError as IdE;
@@ -48,7 +48,7 @@ pub fn respond(status: u16, code: i64, message: &str, request_id: &str) -> Respo
     resp
 }
 
-/// identity 域错误 → HTTP 响应（码值与文案沿用旧版字面量契约）。
+/// identity 域错误 → HTTP 响应（码值与文案固定字面量契约）。
 pub fn identity_error(err: IdE, request_id: &str) -> Response {
     match &err {
         IdE::InvalidRefresh => respond(
@@ -138,7 +138,7 @@ pub fn ops_error(err: OpsError, request_id: &str) -> Response {
     }
 }
 
-/// StopError → HTTP 响应（充电停止链直映；原 user_charging.rs 的 match 收编）。
+/// 将 [`StopError`] 直映为 HTTP 响应（充电停止链路各变体一一对应）。
 pub fn stop_error(err: chargepilot_mod_charging::StopError, request_id: &str) -> Response {
     match err {
         chargepilot_mod_charging::StopError::NotFound => respond(
@@ -180,7 +180,7 @@ pub fn stop_error(err: chargepilot_mod_charging::StopError, request_id: &str) ->
     }
 }
 
-// 4291/3001/2018/5000 已入 Code 码表（票 17 缺口补齐）；直发路径逐步
+// 4291/3001/2018/5000 已入 Code 码表；直发路径逐步
 // 迁 ApiError 构造时由响应测试锁定码值与状态不变。
 const _: () = {
     assert!(Code::LoginRateLimited as i64 == 4291);
@@ -189,7 +189,7 @@ const _: () = {
     assert!(Code::InternalError as i64 == 5000);
 };
 
-/// WalletError → HTTP 响应（票 18：从 views/wallet 门面收编，充值桥跨域消费）。
+/// WalletError → HTTP 响应。
 pub fn wallet_error(e: chargepilot_mod_wallet::WalletError, rid: &str) -> Response {
     use chargepilot_mod_wallet::WalletError as E;
     match &e {
@@ -218,8 +218,8 @@ pub fn wallet_error(e: chargepilot_mod_wallet::WalletError, rid: &str) -> Respon
     }
 }
 
-// ── views 局部映射收编（架构评审候选 1 步骤③）────────────────────────
-// 21 个文件局部 *_error 函数归位本文件：映射语义与「域错误 → HTTP 契约」
+// ── views 局部映射
+// 各 view 局部 *_error 已收敛至本文件：映射语义与「域错误 → HTTP 契约」
 // 的唯一枢纽同址，新增错误变体不再散落。状态/码值/文案逐字保留；
 // device_error 合并 user/admin 两份（仅差一条 Storage 臂日志，HTTP 输出
 // 一致，取带日志版）；marketing 的 deny 文案差异保留在原文件。
@@ -239,7 +239,7 @@ use chargepilot_mod_settlement::{
     InvoiceAdminError, RefundAdminError, ReviewError, UserInvoiceError,
 };
 
-/// 从请求头解析 request_id（原 19 份 views 局部 rid_of 副本的唯一归宿）。
+/// 从请求头解析 `request_id`（全 crate 共用）。
 pub fn rid_of(headers: &HeaderMap) -> String {
     httpx::request_id_from(headers)
 }
@@ -282,7 +282,7 @@ pub fn capability_error(e: DeviceError, rid: &str) -> Response {
     }
 }
 
-/// ScanError → HTTP（匿名扫码；英文文案对齐旧版 scan API）。
+/// ScanError → HTTP（匿名扫码；英文文案与对外契约一致）。
 pub fn scan_error(e: ScanError, rid: &str) -> Response {
     match e {
         ScanError::NotFound => respond(404, Code::NotFound as i64, "scan code not found", rid),
@@ -364,7 +364,7 @@ pub fn feedback_submit_error(e: chargepilot_mod_order::FeedbackSubmitError, rid:
     }
 }
 
-/// 后台订单查询的 sqlx 错误直映（原 order/admin storage_error）。
+/// 后台订单查询：存储错误 → 503 固定文案。
 pub fn order_storage_error(e: sqlx::Error, rid: &str) -> Response {
     tracing::warn!(cause = %e, "后台订单查询失败");
     ops_error(OpsError::Storage(anyhow::anyhow!(e.to_string())), rid)
@@ -386,7 +386,7 @@ pub fn card_error(e: CardAdminError, input_message: &str, rid: &str) -> Response
     }
 }
 
-/// PhoneError → HTTP（C 端手机号绑定，文案对齐旧版 PhoneAPI）。
+/// PhoneError → HTTP（C 端手机号绑定，文案与对外 API 契约一致）。
 pub fn phone_error(e: PhoneError, rid: &str) -> Response {
     match &e {
         PhoneError::Authorization => respond(
@@ -523,7 +523,7 @@ pub fn refund_admin_error(e: RefundAdminError, rid: &str) -> Response {
     }
 }
 
-/// UserInvoiceError → HTTP（C 端开票申请，文案对齐旧版 applyInvoice）。
+/// UserInvoiceError → HTTP（C 端开票申请，文案与对外 API 契约一致）。
 pub fn user_invoice_error(e: &UserInvoiceError, rid: &str) -> Response {
     match e {
         UserInvoiceError::Unbilled => respond(
@@ -604,7 +604,7 @@ pub fn coupon_error(e: CouponError, rid: &str) -> Response {
     }
 }
 
-/// CheckoutError → HTTP（下单链，文案对齐旧版 CheckoutError Kind）。
+/// CheckoutError → HTTP（下单链；按错误种类映射固定文案）。
 pub fn checkout_error(e: CheckoutError, rid: &str) -> Response {
     match &e {
         CheckoutError::InvalidInput => respond(400, Code::BadRequest as i64, "请求参数无效", rid),
@@ -653,7 +653,7 @@ pub fn risk_error(e: chargepilot_mod_wallet::WalletError, rid: &str) -> Response
     }
 }
 
-/// MfaError → HTTP（后台 MFA 设置；文案对齐旧版契约）。
+/// MfaError → HTTP（后台 MFA 设置；文案与对外 API 契约一致）。
 pub fn mfa_error(e: MfaError, rid: &str) -> Response {
     match &e {
         MfaError::Input | MfaError::InputMsg(_) => {
@@ -764,7 +764,7 @@ pub fn export_error(e: ExportError, rid: &str) -> Response {
     }
 }
 
-/// C 端充电查询失败视图（原 views/charging 局部枚举；错误映射唯一归宿）。
+/// C 端充电查询失败时的 HTTP 映射。
 pub enum QueryFail {
     /// 输入校验（400 1005）。
     Input(&'static str),

@@ -1,4 +1,4 @@
-//! 退款记录创建与在途聚合（旧版 internal/settlement/refund_creation_repo.go 对齐）。
+//! 退款记录创建与在途聚合。
 //! 归属：refund_record 表写入归 settlement；本实现是 wallet::RefundRecorder 的
 //! 唯一生产实现（cmd 装配注入）。所有退款创建路径都须遵守支付锁，避免旧快照遗漏预占。
 
@@ -6,7 +6,7 @@ use chargepilot_domain::money::{ExecutionPolicy, RefundDraft, RefundStatus};
 use chargepilot_mod_wallet::WalletError;
 use sqlx::MySqlConnection;
 
-/// 退款记录写入器（旧版 RefundRecorder）。
+/// 退款记录写入器；wallet::RefundRecorder 的生产实现。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RefundRecorder;
 
@@ -30,7 +30,7 @@ impl chargepilot_mod_wallet::refund::RefundRecorder for RefundRecorder {
 }
 
 impl RefundRecorder {
-    /// 在支付锁内用当前读合计在途退款，金额单位为分（旧版 ReservedInTx）。
+    /// 在支付锁内用当前读合计在途退款，金额单位为分。
     pub async fn reserved_in_tx(
         &self,
         tx: &mut MySqlConnection,
@@ -49,7 +49,7 @@ impl RefundRecorder {
         Ok(rows.iter().sum())
     }
 
-    /// 登记 automatic/pending 退款并返回主键（旧版 CreateInTx）。
+    /// 登记 automatic/pending 退款并返回主键。
     /// 调用方先锁钱包（适用时）和支付，核对额度；错误整体回滚。
     pub async fn create_in_tx(
         &self,

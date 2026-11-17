@@ -1,20 +1,16 @@
-//! 手机号绑定与解绑（旧版 internal/identity/phone.go + user_repo.go BindPhone
-//! 契约对齐）。号码来源按登录模式分流，语义与旧版 PhoneService 一致：
-//! - development 模式：接受明文 `phone` 输入（旧版 DevelopmentPhoneSource），
-//!   照常走归一化与格式校验，空号或非法号按输入错误拒绝；
-//! - wechat 模式：只接受微信手机号授权 `code` 且不得同时提交明文
-//!   （旧版 WeChatPhoneSource.Resolve 的准入判定）；正式号码交换能力接入前
-//!   统一按「暂不可用」拒绝，不采信客户端明文。
+//! 手机号绑定与解绑。号码来源按登录模式分流：
+//! - development 模式：接受明文 `phone`，归一化与格式校验，非法号拒绝；
+//! - wechat 模式：只接受微信授权 `code` 且不得同时提交明文；交换能力未接入前统一按「暂不可用」拒绝。
 //!
-//! 归属写入与旧版 UserRepo.BindPhone 一致：事务内先按 `phone + id <> + 未删除`
-//! 查重，再更新本人未删除行的 `phone`；并发同号由 `uk_phone` 唯一键最终仲裁。
+//! 归属写入：事务内按「手机号 + 非本人 + 未删除」查重，再更新本人行的 `phone`；
+//! 并发同号由 `uk_phone` 唯一键仲裁。
 
 use crate::error::PhoneError;
 use crate::repo::phone::bind_phone;
 use crate::service::wechat::Exchanger;
 use sqlx::MySqlPool;
 
-/// 绑定请求字段（旧版 PhoneInput）：正式路径仅收 `code`，开发路径用 `phone`。
+/// 绑定请求字段：正式路径仅收 `code`，开发路径用 `phone`。
 #[derive(Debug, Clone, Default)]
 pub struct PhoneInput {
     /// 开发输入的号码；正式绑定不得填写。
@@ -23,19 +19,19 @@ pub struct PhoneInput {
     pub code: Option<String>,
 }
 
-/// 绑定成功响应（旧版 PhoneResult）：只返回掩码，不回显原号码。
+/// 绑定成功响应：只返回掩码，不回显原号码。
 #[derive(Debug, serde::Serialize)]
 pub struct PhoneResult {
     pub bound: bool,
     pub phone_masked: String,
 }
 
-/// 去除号码首尾空白（旧版 phone.Normalize）。
+/// 去除号码首尾空白。
 pub fn normalize(value: &str) -> String {
     value.trim().to_string()
 }
 
-/// 校验 11 位中国大陆手机号：1 开头、第二位 3-9、全数字（旧版 phone.Valid）。
+/// 校验 11 位中国大陆手机号：1 开头、第二位 3-9、全数字。
 pub fn valid(value: &str) -> bool {
     let v = value.trim().as_bytes();
     v.len() == 11
@@ -44,7 +40,7 @@ pub fn valid(value: &str) -> bool {
         && v.iter().all(|c| c.is_ascii_digit())
 }
 
-/// 掩码展示：保留前 3 后 4，中间 4 星；不足 7 字节返回 ***（旧版 phone.Mask）。
+/// 掩码展示：保留前 3 后 4，中间 4 星；不足 7 字节返回 ***。
 pub fn mask(value: &str) -> String {
     let v = value.trim().as_bytes();
     if v.len() < 7 {
@@ -57,7 +53,7 @@ pub fn mask(value: &str) -> String {
     )
 }
 
-/// 解析号码来源并校验，成功后绑定到当前用户（旧版 PhoneService.Bind）。
+/// 解析号码来源并校验，成功后绑定到当前用户。
 /// 失败不声称绑定成功，也不记录原号码或凭据。
 pub async fn bind(
     pool: &MySqlPool,
@@ -66,17 +62,17 @@ pub async fn bind(
     input: &PhoneInput,
 ) -> Result<PhoneResult, PhoneError> {
     let value = match exchanger {
-        // 开发模式：明文输入不经过正式授权实现（旧版 DevelopmentPhoneSource）。
+        // 开发模式：明文输入不经过正式授权实现。
         Exchanger::Development => input.phone.clone().unwrap_or_default(),
         Exchanger::Wechat { .. } => {
-            // 正式路径准入：必须提交 code 且不得携带明文（旧版 WeChatPhoneSource.Resolve）。
+            // 正式路径准入：必须提交 code 且不得携带明文。
             let code = input.code.as_deref().unwrap_or("");
             let has_phone = input.phone.as_deref().is_some_and(|p| !p.is_empty());
             if code.is_empty() || has_phone {
                 return Err(PhoneError::Authorization);
             }
             // 微信手机号交换能力未接入：显式按暂不可用拒绝，不采信客户端明文
-            // （旧版 Exchange == nil → ErrPhoneUnavailable 的诚实语义）。
+            //。
             return Err(PhoneError::Unavailable);
         }
     };
@@ -91,8 +87,8 @@ pub async fn bind(
     })
 }
 
-/// 解除当前用户手机号绑定：号码原子设为 NULL（旧版 PhoneService.Unbind）。
-/// 未绑定用户重复解绑同样成功（UPDATE 零行不视为错误，旧版语义）。
+/// 解除当前用户手机号绑定：号码原子设为 NULL。
+/// 未绑定用户重复解绑同样成功。
 pub async fn unbind(pool: &MySqlPool, user_id: u64) -> Result<(), PhoneError> {
     bind_phone(pool, user_id, None).await
 }
@@ -109,7 +105,7 @@ mod tests {
         assert!(!valid("1381234567")); // 短缺
         assert!(!valid("1381234567a")); // 非数字
         assert!(!valid(""));
-        // 旧版 Valid 内部先 Normalize（trim）再匹配，带空白号码同样通过。
+        // ）再匹配，带空白号码同样通过。
         assert!(valid(" 13812345678"));
     }
 

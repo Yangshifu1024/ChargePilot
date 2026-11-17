@@ -3,7 +3,7 @@
 use chargepilot_domain::money::{BizType, PaymentOrderStatus, RefundStatus};
 use sqlx::{MySqlConnection, MySqlPool};
 
-/// 到期自动退款领取列表（旧版 idx_refund_dispatch 路径）。
+/// 到期自动退款领取列表（按 next_attempt_at 与 automatic 策略索引）。
 pub type DueRefundRow = (u64, i64, u64, u64, u64, BizType);
 
 /// 领取：automatic、pending、到期。

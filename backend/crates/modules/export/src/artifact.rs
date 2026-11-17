@@ -1,4 +1,4 @@
-//! 导出文件的生成、发布与校验（旧版 artifact.go + format.go 的单体对应物）。
+//! 导出文件的生成、发布与校验。
 //! 内容文件与私有校验文件先写 .partial 再改名发布；下载核对校验文件的
 //! 任务、范围、脱敏与 SHA-256 摘要。文件名只由可信任务号推导。
 
@@ -21,7 +21,7 @@ fn valid_task_no(task_no: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_lowercase())
 }
 
-/// 文件名校验未通过（载荷无信息，调用方只区分成败；旧版语义）。
+/// 文件名校验未通过。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FileNameRejected;
 
@@ -50,7 +50,7 @@ pub fn file_names(
     ))
 }
 
-/// 私有校验文件（旧版 artifactProof）：只有 completed 且任务、摘要、范围、
+/// 私有校验文件：只有 completed 且任务、摘要、范围、
 /// 脱敏规则均匹配时才可下载。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ArtifactProof {
@@ -78,7 +78,7 @@ fn csv_cell(value: &str) -> String {
     }
 }
 
-/// 编码 CSV（含 BOM 兼容 Excel 中文表头？——旧版不加 BOM，保持一致）。
+/// 编码 CSV。
 fn encode_csv(headers: &[&str], lines: &[Vec<String>]) -> Vec<u8> {
     let mut out = String::new();
     let head: Vec<String> = headers.iter().map(|h| csv_cell(h)).collect();
@@ -108,7 +108,7 @@ fn encode_xlsx(headers: &[&str], lines: &[Vec<String>]) -> anyhow::Result<Vec<u8
     Ok(book.save_to_buffer()?)
 }
 
-/// 查询行按列取值转文本（旧版 stringifyCell）。
+/// 查询行按列取值转文本。
 fn cell_text(record: &serde_json::Value, column: &str) -> String {
     let value = &record[column];
     match value {
@@ -123,7 +123,7 @@ fn cell_text(record: &serde_json::Value, column: &str) -> String {
 
 /// 发布导出文件：生成内容与校验文件（先 .partial 再改名），返回内容文件
 /// 相对路径（v1/<name>）。调用方须在任务锁事务内写完成状态。
-/// 发布参数即旧版契约字段，不引入参数对象。
+/// 参数为调用方传入的扁平字段，不单独引入发布 DTO。
 #[allow(clippy::too_many_arguments)]
 pub fn publish(
     root: &Path,
@@ -232,9 +232,8 @@ pub struct VerifiedArtifact {
     pub name: String,
 }
 
-/// 校验已发布文件：路径与数据库一致、校验文件任务/范围/脱敏匹配、SHA-256 一致
-/// （旧版 verifyArtifact + expectedPath；versioned 恒为 true——新仓库只发布 v1）。
-/// 校验参数即旧版契约字段，不引入参数对象。
+/// 校验已发布文件：路径与数据库一致、校验文件任务/范围/脱敏匹配、SHA-256 一致。
+/// 参数为调用方传入的扁平字段，不单独引入校验 DTO。
 #[allow(clippy::too_many_arguments)]
 pub fn verify_artifact(
     root: &Path,
@@ -264,7 +263,7 @@ pub fn verify_artifact(
     };
     let proof_bytes = match std::fs::read(root.join(&v1_proof)) {
         Ok(p) => p,
-        // 缺校验文件一律拒绝（新仓库只有 v1 布局，无旧根目录兼容规则）。
+        // 缺校验文件一律拒绝（仅 v1 目录布局）。
         Err(_) => return Err(ArtifactError::Unavailable),
     };
     if proof_bytes.len() > 64 * 1024 {

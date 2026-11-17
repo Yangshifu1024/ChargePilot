@@ -1,4 +1,4 @@
-//! 身份域共享词表（票 11）：C 端用户状态与性别。
+//! 身份域共享词表：C 端用户状态与性别。
 
 use crate::wordlist::wordlist_enum;
 
@@ -24,7 +24,7 @@ wordlist_enum!(
 mod wordlist_tests {
     use super::*;
 
-    /// 字面量对照（票 11 硬规则）：serde 输出与 DB ENUM 字面量逐字节一致。
+    /// 字面量对照：serde 输出与 DB ENUM 字面量逐字节一致。
     #[test]
     fn db_literals_match_serde() {
         use serde_json::to_string as json;

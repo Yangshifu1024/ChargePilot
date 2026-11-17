@@ -1,5 +1,5 @@
 //! 会话服务编排：登录 / 刷新 / 注销 / 实时鉴权 / profile。
-//! 错误到 HTTP 的映射在 http-api（保持旧版码值与文案）。
+//! 错误到 HTTP 的映射在 http-api。
 
 use crate::repo::{self, user::UserProfile};
 use crate::service::session::{self, USER_TOKEN_LAYOUT};
@@ -10,7 +10,7 @@ use sqlx::MySqlPool;
 
 pub const ACCESS_TTL_SECS: u64 = chargepilot_platform::jwt::USER_TTL_SECS;
 
-/// 登录响应（JSON 平铺，键名与旧版逐字节一致）。
+/// 登录响应。
 #[derive(Debug, serde::Serialize)]
 pub struct LoginResult {
     pub jwt: String,
@@ -18,7 +18,7 @@ pub struct LoginResult {
     pub token: String,
     pub refresh_token: String,
     pub jwt_expires_in: u64,
-    /// 精确十进制字符串，避免数值精度丢失（旧版语义）。
+    /// 精确十进制字符串，避免数值精度丢失。
     pub user_id: String,
     pub is_new_user: bool,
 }
@@ -32,7 +32,7 @@ pub struct AccessResult {
     pub jwt_expires_in: u64,
 }
 
-/// profile 响应（钱包来自 wallet 薄模块只读投影；未用券数在阶段 05 接入前恒为 0）。
+/// profile 响应（钱包来自 wallet 薄模块只读投影；未用券数在）。
 #[derive(Debug, serde::Serialize)]
 pub struct Profile {
     #[serde(serialize_with = "ser_u64_string")]

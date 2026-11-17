@@ -1,5 +1,5 @@
 //! 计量匹配：交易入口按端口的 station+device 找生效方案（设备自有优先于站点默认，
-//! 同目标取最新版本），spec 校验通过后交调用方冻结快照（阶段 04 事务内保存）。
+//! 同目标取最新版本），spec 校验通过后交调用方冻结快照。
 
 use crate::publication::SpecWrapper;
 use crate::{PricingError, PricingResult};

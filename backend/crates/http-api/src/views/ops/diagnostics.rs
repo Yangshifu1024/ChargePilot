@@ -1,4 +1,4 @@
-//! 运营域后台门面·诊断（票 18 冷区批：原 admin_diagnostics.rs 归位）。
+//! 运营域后台门面·诊断。
 
 use crate::guard::AdminGuard;
 use crate::state::ApiDeps;

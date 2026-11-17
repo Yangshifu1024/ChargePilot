@@ -1,4 +1,4 @@
-//! 定价域后台门面（票 18：先归位方案预览；admin_pricing_device 热区批并入）。
+//! 定价域后台门面。
 use crate::errormap::pricing_error;
 use crate::errormap::rid_of;
 use crate::guard::AdminGuard;
@@ -58,7 +58,7 @@ async fn preview_scheme(
     let package_id = v["package_id"].as_u64().unwrap_or(0);
     let scenario = v["scenario"].as_str().unwrap_or_default();
     let wallet_cents = v["wallet_cents"].as_i64().unwrap_or(0);
-    // 旧版 Scheme.PreviewScenario 的零值 package_id 与计量缺省行为一致。
+    // Scheme.PreviewScenario 的零值 package_id 与计量缺省行为一致。
     let meter = normalize_meter(meter);
     match scheme.preview_scenario(package_id, meter, scenario, wallet_cents) {
         Ok(result) => match serde_json::to_value(&result) {
@@ -74,7 +74,7 @@ async fn preview_scheme(
     }
 }
 
-/// 补齐计量缺省：起止时刻缺省时以当前时刻构造零时长会话（旧版 ActualMeter 零值语义）。
+/// 补齐计量缺省：起止时刻缺省时以当前时刻构造零时长会话。
 fn normalize_meter(
     mut meter: chargepilot_domain::charging::actual::ActualMeter,
 ) -> chargepilot_domain::charging::actual::ActualMeter {
@@ -88,7 +88,7 @@ fn normalize_meter(
     meter
 }
 
-/// 方案预览路由（票 18：原 admin_misc 区块归位）。
+/// 方案预览路由。
 pub fn router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new().route(
         "/api/v1/admin/settings/charging-schemes/preview",
@@ -100,10 +100,10 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
 // 反馈工单
 // ---------------------------------------------------------------------------
 
-// ---- 计费方案管理（票 19：原 admin_pricing_device.rs 的 schemes 切片）----
+// ---- 计费方案管理----
 
 // 后台路由：计费方案（模板/发布/继承/生效）、站点、厂商。
-// 权限码与路径对齐旧版（pricing.read、pricing.rule.create|update、station.*、vendor.*）。
+// 权限码与路径与对外 API 契约一致（pricing.read、pricing.rule.create|update、station.*、vendor.*）。
 
 // ---------------------------------------------------------------------------
 // 计费方案
@@ -336,7 +336,7 @@ async fn inherit_scheme(
 // ---------------------------------------------------------------------------
 // 站点
 // ---------------------------------------------------------------------------
-/// 计费方案路由（票 19 热区批并入；与 preview 路由同文件）。
+/// 计费方案路由。
 pub fn scheme_router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
         .route(

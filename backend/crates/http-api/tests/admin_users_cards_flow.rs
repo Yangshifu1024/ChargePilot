@@ -5,7 +5,7 @@
 )]
 
 //! 后台用户与在线卡主缝集成测试：用户列表/详情/充值页、卡列表/绑定/状态变更
-//! 与权限分支（旧版 admin/user 契约对齐）。种子自建自清理，全局流锁串行。
+//! 与权限分支。种子自建自清理，全局流锁串行。
 
 mod support;
 
@@ -596,7 +596,7 @@ async fn admin_users_and_online_cards_flow() {
     .unwrap();
     assert_eq!(audits, 1, "幂等重放不得重复审计");
 
-    // 目标用户未启用：frozen 的 B 不能作为绑定目标 → 404（旧版先校验用户再锁卡）。
+    // 目标用户未启用：frozen 的 B 不能作为绑定目标 → 404。
     let (status, _) = req_str(
         &router,
         "POST",
@@ -717,7 +717,7 @@ async fn admin_users_and_online_cards_flow() {
             .unwrap();
     assert_eq!(card_status, "unbound", "冲突后状态不变");
 
-    // 同状态 unbound → unbound 允许（旧版约束只禁改回其他状态）。
+    // 同状态 unbound → unbound 允许。
     let (status, _) = req_str(
         &router,
         "POST",

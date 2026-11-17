@@ -1,6 +1,6 @@
 //! identity 域错误类型（蓝图第五章：域内错误词表集中收口）。
 
-/// 手机号业务错误（HTTP 映射沿用旧版字面量契约，见 http-api 适配层）。
+/// 手机号业务错误。
 #[derive(Debug, thiserror::Error)]
 pub enum PhoneError {
     /// 正式路径须凭授权 code 且不得提交明文（400/1005）。
@@ -24,7 +24,7 @@ pub enum PhoneError {
 }
 impl From<sqlx::Error> for PhoneError {
     fn from(e: sqlx::Error) -> Self {
-        // 并发同号最终由 uk_phone 唯一键仲裁（旧版 1062 → ErrPhoneTaken）。
+        // 并发同号最终由 uk_phone 唯一键仲裁。
         if let sqlx::Error::Database(db) = &e
             && db.code().as_deref() == Some("23000")
         {
@@ -34,13 +34,13 @@ impl From<sqlx::Error> for PhoneError {
     }
 }
 
-/// 后台用户查询错误（旧版 operations 哨兵与记录缺失的组合，HTTP 层翻译状态码）。
+/// 后台用户查询错误。
 #[derive(Debug, thiserror::Error)]
 pub enum AdminUserError {
-    /// 实时权限不足（旧版 operations.ErrForbidden，403/1003）。
+    /// 实时权限不足。
     #[error("当前账号无权执行此操作")]
     Forbidden,
-    /// 用户不存在或已软删（旧版 gorm.ErrRecordNotFound，404/1004）。
+    /// 用户不存在或已软删。
     #[error("记录不存在或已删除")]
     NotFound,
     /// 存储不可用（503/5003）。

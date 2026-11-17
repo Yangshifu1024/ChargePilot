@@ -97,7 +97,7 @@ pub fn parse_heartbeat(data: &[u8]) -> Result<HeartbeatData, PayloadError> {
     Ok(result)
 }
 
-/// 把心跳数据装配为协议无关事件（电量为 Wh：mWh/1000 与旧版事件键一致）。
+/// 把心跳数据装配为协议无关事件（上报电量统一为 Wh：由 mWh 除以 1000）。
 #[must_use]
 pub fn heartbeat_event(
     device_id: &str,
@@ -191,7 +191,7 @@ pub fn parse_charge_end(data: &[u8]) -> Result<ChargeEndData, PayloadError> {
     })
 }
 
-/// 把结束订单装配为协议无关事件（电量为 Wh：mWh/1000 与旧版事件键一致）。
+/// 把结束订单装配为协议无关事件（上报电量统一为 Wh：由 mWh 除以 1000）。
 #[must_use]
 pub fn charge_end_event(
     device_id: &str,

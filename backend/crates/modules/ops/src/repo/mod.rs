@@ -9,7 +9,7 @@ pub mod mfa;
 pub mod scope;
 
 // `admin_user` 表访问：账号校验、锁定、MFA 消费、Profile 组合、审计与 bootstrap。
-// 锁定语义对齐旧版：连续失败 5 次锁 30 分钟，成功清零。
+// 锁定语义
 
 use crate::{AdminAccount, OpsError, Profile};
 use chrono::Datelike as _;
@@ -130,7 +130,7 @@ pub async fn verify_login(
 }
 
 /// MFA 完成：事务内校验验证码（±1 步 + mfa_last_step 防重放）→ 消费挑战 → 记审计。
-/// `consume` 由调用方提供（先于本函数删除挑战者才能登录，旧版顺序：SQL 内校验，
+/// `consume` 由调用方提供（先于本函数删除挑战者才能登录，
 /// Redis 删除由外层完成——此处校验通过即视为可登录，挑战删除由 service 层执行）。
 pub async fn verify_mfa(
     pool: &MySqlPool,
@@ -253,7 +253,7 @@ pub async fn auth_version(pool: &MySqlPool, account_id: u64) -> anyhow::Result<O
     Ok(v)
 }
 
-/// 账号事务内写认证审计（字段与旧版一致，含月分区键）。
+/// 账号事务内写认证审计。
 pub async fn write_auth_audit(
     pool: &MySqlPool,
     account: &AdminAccount,
@@ -264,7 +264,7 @@ pub async fn write_auth_audit(
     write_auth_audit_tx(&mut conn, account, action, ip).await
 }
 
-/// 在调用方事务内写认证审计（旧版 WriteAuthAudit；MFA 设置等与状态写入同事务提交）。
+/// 在调用方事务内写认证审计。
 pub async fn write_auth_audit_tx(
     tx: &mut sqlx::MySqlConnection,
     account: &AdminAccount,
@@ -403,7 +403,7 @@ pub async fn lock_customer_admin_role_tx(
     Ok(id)
 }
 
-/// 锁定操作者并实时核对其权限（写路径的锁内复核，旧版 lockedManagementActor 语义）。
+/// 锁定操作者并实时核对其权限。
 pub async fn lock_actor_tx(
     tx: &mut sqlx::MySqlConnection,
     actor_id: u64,
@@ -463,7 +463,7 @@ pub async fn load_profile_tx(
     })
 }
 
-/// 退役权限码（旧版语义：展示与授权一律剔除）。
+/// 退役权限码。
 pub fn without_retired(codes: Vec<String>) -> Vec<String> {
     const RETIRED: &[&str] = &[
         "customer_service.",
@@ -526,7 +526,7 @@ pub async fn permission_codes_by_id_tx(
     Ok(without_retired(codes))
 }
 
-/// 锁定读取有效账号（旧版 LockActiveAdmin）：status=active 且未删除，FOR UPDATE。
+/// 锁定读取有效账号：status=active 且未删除，FOR UPDATE。
 /// 不存在或已停用返回 None（调用方按凭据失效处理）。
 pub async fn lock_active_admin_tx(
     tx: &mut sqlx::MySqlConnection,
@@ -559,7 +559,7 @@ pub async fn lock_active_admin_tx(
     ))
 }
 
-/// 锁定读取未删除角色（旧版 LockRole），FOR UPDATE。
+/// 锁定读取未删除角色，FOR UPDATE。
 pub async fn lock_role_tx(
     tx: &mut sqlx::MySqlConnection,
     id: u64,
@@ -573,7 +573,7 @@ pub async fn lock_role_tx(
     Ok(row)
 }
 
-/// 角色权限码（旧版 RolePermissionCodesInTx），FOR SHARE 共享锁读最新集合。
+/// 角色权限码，FOR SHARE 共享锁读最新集合。
 pub async fn role_permission_codes_tx(
     tx: &mut sqlx::MySqlConnection,
     role_id: u64,

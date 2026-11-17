@@ -1,13 +1,13 @@
-//! 设备启动/结束回执应用（旧版 charging/start/result_repo.go 与
-//! charging/finish/result_repo.go 对齐；本批覆盖微信支付路径，卡随批 6）。
-//! 幂等（红线）：同命令同内容重放静默确认，不同内容报冲突。SQL 在 repo/。
+//! 设备启动/结束回执应用：消费设备应答，推进订单状态并登记计量证据。
+//! 覆盖微信支付路径；刷卡路径由 card 域同事务确认。
+//! 幂等红线：同命令同内容重放静默确认，不同内容报冲突。SQL 在 repo/。
 
 use crate::error::ReceiptError;
 use crate::repo::{receipts, set_read_committed};
 use chargepilot_domain::charging::actual::{EndMeter, same_segments};
 use sqlx::{Acquire, MySqlPool};
 
-/// 启动回执输入（旧版 StartResult）。
+/// 启动回执输入。
 #[derive(Debug, Clone)]
 pub struct StartReceiptInput {
     pub command_id: String,
@@ -50,7 +50,7 @@ pub async fn locate_pending_start(
     }))
 }
 
-/// 应用启动回执（旧版 StartResultService.Apply，微信支付路径）。
+/// 应用启动回执。
 /// 返回 true 表示同内容重放。成功 → 订单 charging + 端口占用确认；
 /// 失败 → 订单 refunding + 登记渠道退款记录 + 出站退款事件。
 pub async fn apply_start_receipt(
@@ -86,7 +86,7 @@ pub async fn apply_start_receipt(
     {
         return Err(ReceiptError::Conflict);
     }
-    // 幂等：同命令已登记。同内容静默确认，不同内容冲突（旧版逐列核对）。
+    // 幂等：同命令已登记。同内容静默确认，不同内容冲突。
     if let Some((existing_order, existing_no, existing_device, existing_port, existing_success)) =
         receipts::find_start_receipt_tx(&mut *c, &input.command_id).await?
     {
@@ -101,7 +101,7 @@ pub async fn apply_start_receipt(
         tx.commit().await?;
         return Ok(true);
     }
-    // 状态必须是 paid（旧版 view.Status != paid 冲突）。
+    // 状态必须是 paid。
     let status = receipts::order_status_tx(&mut *c, id).await?;
     if status != chargepilot_domain::order::ChargeOrderStatus::Paid {
         return Err(ReceiptError::Conflict);
@@ -123,10 +123,10 @@ pub async fn apply_start_receipt(
 
     let event_id = format!("S{}", &input.command_id[..32.min(input.command_id.len())]);
     if input.success {
-        // paid → charging + 启动时间；命令 acked。消费目标状态证据（票 14）。
+        // paid → charging + 启动时间；命令 acked。消费目标状态证据。
         let _charging =
             chargepilot_mod_order::mark_charging_tx(&mut *c, id, &order_no, occurred_at).await?;
-        // 端口占用（旧版成功分支写 activePortCharge，结束回执按订单释放；
+        // 端口占用：成功回执写入 active_port_charge，结束回执按订单释放；
         // 同端口重复占用由唯一键仲裁，重复启动回执在上方幂等分支已拦下）。
         chargepilot_mod_order::occupy_port_tx(
             &mut *c,
@@ -154,7 +154,7 @@ pub async fn apply_start_receipt(
         tx.commit().await?;
         return Ok(false);
     }
-    // 失败：订单 refunding（旧版 MarkStartRejectedInTx 语义）+ 登记自动渠道退款
+    // 失败：订单 refunding+ 登记自动渠道退款
     // + 出站事件；退款执行成功后由执行器收尾 refunding → refunded。
     let reason = format!("设备启动失败（结果码 {}）", input.result_code);
     let _refunding =
@@ -188,7 +188,7 @@ pub async fn apply_start_receipt(
     Ok(false)
 }
 
-/// 结束回执输入（旧版 EndResult）。
+/// 结束回执输入。
 #[derive(Debug, Clone)]
 pub struct EndReceiptInput {
     pub charge_order_id: u64,
@@ -200,7 +200,7 @@ pub struct EndReceiptInput {
     pub meter: EndMeter,
 }
 
-/// 应用结束回执（旧版 EndResultService.Apply）。
+/// 应用结束回执。
 /// 返回 true 表示同内容重放。回执、订单完成、端口释放、计费任务与出站事件同事务。
 pub async fn apply_end_receipt(
     pool: &MySqlPool,
@@ -223,7 +223,7 @@ pub async fn apply_end_receipt(
     let mut tx = conn.begin().await?;
     let c = tx.acquire().await?;
 
-    // 锁订单（卡会话锁随批 6 接入，微信路径先订单）。
+    // 锁订单（刷卡路径另锁卡会话；微信支付路径先锁订单）。
     let view = chargepilot_mod_order::lock_for_lifecycle_tx(
         &mut *c,
         input.charge_order_id,
@@ -260,7 +260,7 @@ pub async fn apply_end_receipt(
     {
         return Err(ReceiptError::Conflict);
     }
-    // 成功启动凭据核对（旧版 start.PortID 匹配）。
+    // 成功启动凭据核对。
     let Some((start_cmd, start_success, start_port)) =
         receipts::find_start_credential_tx(&mut *c, input.charge_order_id).await?
     else {
@@ -272,7 +272,7 @@ pub async fn apply_end_receipt(
     {
         return Err(ReceiptError::Conflict);
     }
-    // 计量校验：分段、总电量与时长一致性（旧版在计费侧校验，这里先存证据）。
+    // 计量校验：分段、总电量与时长一致性。
     receipts::insert_end_receipt_tx(
         &mut *c,
         input.charge_order_id,
@@ -281,7 +281,7 @@ pub async fn apply_end_receipt(
     )
     .await?;
     // 订单完成：charging → completed + 计量列（Wh→kWh 四位小数）。
-    // Wh → kWh：四位定点小数（旧版 StringFixed(4) 语义；电量非负，除法安全）。
+    // Wh → kWh：四位定点小数。
     let kwh = (rust_decimal::Decimal::from(input.meter.charged_wh)
         / rust_decimal::Decimal::from(1000u32))
     .round_dp(4)
@@ -308,7 +308,7 @@ pub async fn apply_end_receipt(
     }
     // 刷卡会话释放端口占用（非刷卡订单无行，天然幂等）。
     chargepilot_mod_card::card_charge_port_release_tx(&mut *c, input.charge_order_id).await?;
-    // 订单事件 + 计费任务 + 出站事件（批 5 的结算批次消费）。
+    // 订单事件 + 计费任务登记 + 出站事件（供结算批次后续消费）。
     chargepilot_mod_order::append_event_in_tx(
         &mut *c,
         input.charge_order_id,

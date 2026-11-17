@@ -137,7 +137,7 @@ pub async fn last_insert_id_tx(c: &mut MySqlConnection) -> Result<u64, sqlx::Err
         .await
 }
 
-/// 行 → 响应对象（旧版 Bill 结构的 JSON 形状：id/user_id 十进制字符串，
+/// 行 → 响应对象（Bill 结构的 JSON 形状：id/user_id 十进制字符串，
 /// charge_order_id/payment_order_id 数字，payment 可空；19 列超 sqlx 元组
 /// FromRow 上限，逐列 try_get）。
 pub fn bill_row_value(row: &sqlx::mysql::MySqlRow, read: bool) -> serde_json::Value {

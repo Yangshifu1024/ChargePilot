@@ -1,5 +1,4 @@
-//! 后台用户充值支付页（旧版 wallet/recharge_history.go 与
-//! payment/payment_view_repo.go 的 wallet_recharge 子集对齐）。
+//! 后台用户充值支付页只读查询（wallet_recharge 业务类型）。
 //! 只读：不把待支付单视为已到账，金额取已保存的支付与退款记录；
 //! 用户存在性与权限由身份用例核对，本模块不提供资金写入。
 
@@ -7,8 +6,7 @@ use crate::{Page, WalletError};
 use serde::Serialize;
 use sqlx::MySqlPool;
 
-/// 后台充值历史的一行（旧版 AdminRechargeRow 逐字段对齐；
-/// user_id 沿用旧版 `,string` 契约按十进制字符串输出）。
+/// 后台充值历史的一行；user_id 以十进制字符串输出（防 JS 精度丢失）。
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct AdminRechargeRow {
     /// 支付主键，保持既有整数契约。
@@ -41,7 +39,7 @@ pub struct AdminRechargeRow {
     pub charge_order_no: Option<String>,
 }
 
-/// 分页读取 userID 的充值支付（旧版 WalletRecharges → PaymentOrders 子集）。
+/// 分页读取 userID 的充值支付单。
 /// 标量子查询保持一条，历史异常关联也不会放大分页总数；充值单始终无关联充电单。
 pub async fn admin_recharges(
     pool: &MySqlPool,
@@ -53,7 +51,7 @@ pub async fn admin_recharges(
       WHEN p.`refunded_cents` > 0 THEN 'partial_refunded' \
       WHEN p.`paid_cents` > 0 OR p.`status` IN ('paid','partial_refunded','refunded') THEN 'paid' \
       ELSE 'pending' END";
-    // 标量子查询限制为一条（旧版 linked 定义），与充电支付列表同一形状。
+    // 标量子查询至多一条关联充电单，与充电支付列表投影形状一致。
     const LINKED_FROM: &str = " FROM `charge_order` c WHERE p.`biz_type` = 'charge' \
       AND c.`payment_order_id` = p.`id` AND c.`user_id` = p.`user_id` \
       AND c.`deleted_at` IS NULL ORDER BY c.`created_at` DESC, c.`id` DESC LIMIT 1";

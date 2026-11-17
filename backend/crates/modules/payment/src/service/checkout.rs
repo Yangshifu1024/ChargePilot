@@ -1,5 +1,5 @@
-//! 下单与支付准备（旧版 CheckoutService 对齐）：套餐查询、支付意图冻结与
-//! 预支付参数。下单即冻结计费快照（红线层语义照搬）；预支付失败保留申请，
+//! 下单与支付准备：套餐查询、支付意图冻结与
+//! 预支付参数。下单即冻结计费快照；预支付失败保留申请，
 //! 相同 client_request_id 可原单号恢复。SQL 在 repo/checkout.rs。
 
 use super::channel::PrepayRequest;
@@ -15,12 +15,12 @@ use chargepilot_domain::payment::intent_estimate;
 use chargepilot_platform::ids::SegmentAllocator;
 use sqlx::{Acquire, MySqlPool};
 
-/// 端口当前套餐与展示配置（旧版 CheckoutOffers）。
+/// 端口当前套餐与展示配置。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CheckoutOffers {
     pub station_id: u64,
     pub port_id: String,
-    /// 在售套餐（旧版 Offers）。
+    /// 在售套餐。
     pub items: Vec<Offer>,
     /// 用户端呈现配置。
     pub display: chargepilot_domain::charging::scheme::Display,
@@ -28,7 +28,7 @@ pub struct CheckoutOffers {
     pub stop_when_full: bool,
 }
 
-/// 下单请求（旧版 CheckoutInput）。
+/// 下单请求。
 #[derive(Debug, Clone)]
 pub struct CheckoutInput {
     /// 客户端幂等请求 ID（UUID）。
@@ -37,13 +37,13 @@ pub struct CheckoutInput {
     pub port_code: String,
     /// 在售套餐 ID（rule.id*100+package.id）。
     pub offer_id: u64,
-    /// 券发放 ID。当前套餐下单不支持优惠券（旧版 Reserve 互斥约束：
+    /// 券发放 ID。当前套餐下单不支持优惠券（Reserve 互斥约束：
     /// "当前套餐不允许使用优惠券"，非 0 返回冲突）；报价与核销见
     /// chargepilot-mod-marketing 的 quote/redeem_in_tx。
     pub coupon_grant_id: u64,
 }
 
-/// 支付准备响应（旧版 CheckoutResult；不含内部支付主键与 openid）。
+/// 支付准备响应。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CheckoutResult {
     pub intent_id: String,
@@ -56,7 +56,7 @@ pub struct CheckoutResult {
     pub service_cents: i64,
     /// 优惠前总额，分。
     pub total_cents: i64,
-    /// 已冻结优惠额，分（本阶段恒 0，阶段 05 接入券）。
+    /// 已冻结优惠额，分（当前套餐下单恒为 0，券未接入）。
     pub discount_cents: i64,
     /// 应付金额，分。
     pub payable_cents: i64,
@@ -85,7 +85,7 @@ pub struct FrozenIntent {
 }
 
 /// 冻结快照的信封（pricing_snapshot JSON 的结构；settlement 批次只读）。
-/// rule.spec 为选中套餐的引擎规格（旧版 SpecFor 替换语义）。
+/// rule.spec 为选中套餐的引擎规格。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PricingSnapshot {
     /// 当前生效方案及规则版本（首次创建冻结）。
@@ -98,7 +98,7 @@ pub struct PricingSnapshot {
     pub computed_at_unix_micros: i64,
 }
 
-/// 下单服务（旧版 CheckoutService）。依赖经 cmd 装配注入。
+/// 下单服务。依赖经 cmd 装配注入。
 pub struct CheckoutService {
     pub pool: MySqlPool,
     pub allocator: SegmentAllocator,
@@ -107,7 +107,7 @@ pub struct CheckoutService {
 }
 
 impl CheckoutService {
-    /// 返回端口的当前套餐和展示配置；无需登录，不创建支付或订单（旧版 Offers）。
+    /// 返回端口的当前套餐和展示配置；无需登录，不创建支付或订单。
     pub async fn offers(&self, port_code: &str) -> Result<CheckoutOffers, CheckoutError> {
         let port = self.scan_port(port_code).await?;
         if port.device_status != "enabled" {
@@ -124,7 +124,7 @@ impl CheckoutService {
         })
     }
 
-    /// 为用户准备付款：先恢复同请求的支付，再读取当前设备与方案（旧版 Start）。
+    /// 为用户准备付款：先恢复同请求的支付，再读取当前设备与方案。
     /// 支付申请提交后才请求预支付参数；失败保留申请供原单号重试。
     pub async fn start(
         &self,
@@ -138,7 +138,7 @@ impl CheckoutService {
         {
             return Err(CheckoutError::InvalidInput);
         }
-        // 套餐下单不支持优惠券（旧版 Reserve 的互斥约束）；quote/redeem 服务
+        // 套餐下单不支持优惠券；quote/redeem 服务
         // 已在 marketing 模块就位，非套餐支付路径开放时接入。
         if input.coupon_grant_id != 0 {
             return Err(CheckoutError::Conflict);
@@ -179,12 +179,12 @@ impl CheckoutService {
         self.prepare(intent).await
     }
 
-    /// 按扫码编码读取端口事实（旧版 port；NotFound 与网关故障区分）。
+    /// 按扫码编码读取端口事实。
     async fn scan_port(&self, code: &str) -> Result<ScanResult, CheckoutError> {
         Ok(self.scanner.resolve_scan(code).await?)
     }
 
-    /// 读取站点/设备生效规则（旧版 ActiveDeviceRule）。
+    /// 读取站点/设备生效规则。
     async fn active_rule(
         &self,
         port: &ScanResult,
@@ -202,7 +202,7 @@ impl CheckoutService {
     }
 
     /// 同（user, request）的意图恢复：参数一致返回冻结事实，不一致报冲突
-    /// （旧版 Replay + existingIntent 的逐项核对）。
+    /// 。
     async fn replay(
         &self,
         user_id: u64,
@@ -231,12 +231,12 @@ impl CheckoutService {
             expires_at,
             snapshot_value,
         ) = row;
-        // 重放必须与请求同端口同套餐同券（旧版逐项核对；不使用当前规则替换快照）。
+        // 重放必须与请求同端口同套餐同券。
         let port = self.scan_port(&input.port_code).await?;
         if port.device_id != device_id || offer_id != input.offer_id {
             return Err(CheckoutError::Conflict);
         }
-        // 重放必须使用首次意图绑定的优惠券（旧版 CouponGrantID 核对）。
+        // 重放必须使用首次意图绑定的优惠券。
         if intent_coupon_id != input.coupon_grant_id {
             return Err(CheckoutError::Conflict);
         }
@@ -269,7 +269,7 @@ impl CheckoutService {
         }))
     }
 
-    /// 冻结意图事务（旧版 Reserve）：READ COMMITTED，同事务完成
+    /// 冻结意图事务：READ COMMITTED，同事务完成
     /// 过期预占释放 → 端口可用性 → openid → 支付单 → 意图。
     #[allow(clippy::too_many_arguments)]
     async fn reserve(
@@ -285,7 +285,7 @@ impl CheckoutService {
         let scan_port = port.port.clone().ok_or(CheckoutError::PortBusy)?;
         let intent_id = new_uuid_v4();
         let expires_at = chrono::Utc::now() + chrono::Duration::minutes(5);
-        // 快照 rule.spec 为选中套餐的引擎规格（旧版 SpecFor 替换语义）。
+        // 快照 rule.spec 为选中套餐的引擎规格。
         let snapshot = PricingSnapshot {
             rule: Rule {
                 id: active.rule_id,
@@ -311,9 +311,9 @@ impl CheckoutService {
         let mut tx = conn.begin().await?;
         let conn = tx.acquire().await?;
 
-        // 仅释放本端口已过期的预占，与新意图创建同事务（旧版语义）。
+        // 仅释放本端口已过期的预占，与新意图创建同事务。
         repo::expire_stale_intents_tx(&mut *conn, &scan_port.port_id).await?;
-        // 端口可用性：有效预占或进行中订单存在即冲突（旧版 CheckoutPortAvailable）。
+        // 端口可用性：有效预占或进行中订单存在即冲突。
         let busy = repo::port_busy_count_tx(&mut *conn, &scan_port.port_id).await?;
         if busy != 0 {
             return Err(CheckoutError::PortBusy);
@@ -322,7 +322,7 @@ impl CheckoutService {
         let Some(openid) = repo::user_openid_tx(&mut *conn, user_id).await? else {
             return Err(CheckoutError::Conflict);
         };
-        // 套餐下单不支持优惠券（旧版互斥约束，start 已拦截）：优惠额恒 0；
+        // 套餐下单不支持优惠券：优惠额恒 0；
         // 报价与到账核销见 marketing::coupon 的 quote/redeem_in_tx。
         let discount_cents = 0i64;
         let payable = estimate.total_cents - discount_cents;
@@ -386,7 +386,7 @@ impl CheckoutService {
         })
     }
 
-    /// 为意图复用或首写预支付参数；失败不撤销已提交申请（旧版 prepare）。
+    /// 为意图复用或首写预支付参数；失败不撤销已提交申请。
     /// 保存后重读首次参数，避免并发请求返回不同的支付参数。
     async fn prepare(&self, intent: FrozenIntent) -> Result<CheckoutResult, CheckoutError> {
         let params_json = match find_prepay_params(&self.pool, intent.payment_order_id).await? {
@@ -417,7 +417,7 @@ impl CheckoutService {
                 if saved == 1 {
                     body
                 } else {
-                    // 并发者已保存：以先到者为准（旧版重读语义）。
+                    // 并发者已保存：以先到者为准。
                     find_prepay_params(&self.pool, intent.payment_order_id)
                         .await?
                         .ok_or(CheckoutError::Storage("预支付参数读取失败".to_string()))?
@@ -460,7 +460,7 @@ pub fn new_uuid_v4() -> String {
     chargepilot_platform::ids::uuid_v4()
 }
 
-/// 宽松 UUID 校验（8-4-4-4-12 十六进制；旧版 uuid.Validate 的等价判定）。
+/// 宽松 UUID 校验（8-4-4-4-12 十六进制；uuid.Validate 的等价判定）。
 pub fn is_uuid(s: &str) -> bool {
     let parts: Vec<&str> = s.split('-').collect();
     parts.len() == 5

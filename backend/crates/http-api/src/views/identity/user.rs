@@ -1,7 +1,5 @@
-//! 身份域用户端门面（票 19 热区批：原 user_auth.rs 归位；phone 切片随本票并入）。
-
-//! C 端身份路由（路径与响应形状为前端契约，逐字节对齐旧版）：
-//! POST /api/v1/user/auth/login | refresh | logout，GET /api/v1/user/profile。
+//! 身份域用户端门面：登录/刷新/登出、资料、手机号绑定。
+//! 路径与响应形状为前端契约：`POST …/auth/login|refresh|logout`，`GET …/profile`。
 
 use crate::errormap::rid_of;
 use crate::state::ApiDeps;
@@ -26,7 +24,7 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
         .route("/api/v1/user/auth/refresh", axum::routing::post(refresh))
         .route("/api/v1/user/auth/logout", axum::routing::post(logout))
         .route("/api/v1/user/profile", axum::routing::get(profile))
-        // 手机号绑定/解绑（票 19：原 user_identity_cards 的 phone 切片归位）。
+        // 手机号绑定/解绑。
         .route("/api/v1/user/phone/bind", axum::routing::post(phone_bind))
         .route(
             "/api/v1/user/phone/unbind",
@@ -132,20 +130,10 @@ async fn profile(State(deps): State<Arc<ApiDeps>>, headers: HeaderMap) -> Respon
 #[allow(dead_code)]
 type _EnvelopeCheck = Envelope<serde_json::Value>;
 
-// ---- 手机号绑定（票 19：原 user_identity_cards.rs 的 phone 切片）----
+// ---- 手机号绑定 ----
+// development 模式可提交明文号码；wechat 模式仅收授权 code，交换未接入前返回「暂不可用」。
 
-// C 端身份与在线卡路由：手机号绑定/解绑、在线卡列表/状态变更、订单反馈提交。
-// 路径、码值与文案逐字对齐旧版（internal/http/user/identity/phone.go、
-// card/api.go、order/feedback.go）。
-//
-// 挂载行：`crates/http-api/src/lib.rs` 的 build_router 中追加
-// `.merge(user_identity_cards::router())`（本文件不改 lib.rs，由协调者统一挂载）。
-//
-// 手机号绑定按登录模式分流（deps.exchanger）：development 接受明文 phone；
-// wechat 仅收授权 code，正式号码交换能力接入前统一按「暂不可用」拒绝
-// （旧版 ErrPhoneUnavailable 语义）。在线卡状态 C 端仅可写 lost/unbound。
-
-/// 手机号域错误 → HTTP（码值与文案沿用旧版字面量契约）。
+/// 手机号域错误 → HTTP（固定业务码与文案）。
 #[derive(Deserialize)]
 struct PhoneBody {
     #[serde(default)]
@@ -154,7 +142,7 @@ struct PhoneBody {
     code: Option<String>,
 }
 
-/// 绑定手机号：成功只返回掩码（旧版 PhoneAPI.bind）。
+/// 绑定手机号：成功只返回掩码。
 async fn phone_bind(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
@@ -162,7 +150,7 @@ async fn phone_bind(
     body: Option<AxumJson<PhoneBody>>,
 ) -> Response {
     let rid = rid_of(&headers);
-    // 严格 JSON 输入：缺失或类型不符按请求无效处理（旧版 ShouldBindJSON）。
+    // 严格 JSON 输入：缺失或类型不符按请求无效处理。
     let Some(AxumJson(body)) = body else {
         return crate::respond(400, Code::BadRequest as i64, "手机号请求无效", &rid);
     };
@@ -176,7 +164,7 @@ async fn phone_bind(
     }
 }
 
-/// 解除手机号绑定（旧版 PhoneAPI.unbind；重复解绑同样成功）。
+/// 解除手机号绑定。
 async fn phone_unbind(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,

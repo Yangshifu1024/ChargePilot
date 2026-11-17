@@ -1,10 +1,10 @@
-//! 充值到账：支付回调所需的申请锁定与钱包入账（旧版 recharge_credit_repo.go 对齐）。
+//! 充值到账：支付回调所需的申请锁定与钱包入账。
 //! 调用前须锁支付与充值申请；重复通知由支付回调幂等表提前识别，不会二次入账。
 
 use crate::WalletError;
 use sqlx::MySqlConnection;
 
-/// 支付回调所需的充值申请查询结果（旧版 RechargeReceipt）。
+/// 支付回调所需的充值申请查询结果。
 #[derive(Debug, Clone)]
 pub struct RechargeReceipt {
     pub request_id: String,
@@ -15,7 +15,7 @@ pub struct RechargeReceipt {
 }
 
 /// 在调用方事务中锁定 paymentID 的充值申请；无申请返回 NotFound。
-/// 支付回调必须先锁支付行再调用；锁序为支付→申请→钱包（旧版 LockRechargeForPayment）。
+/// 支付回调必须先锁支付行再调用；锁序为支付→申请→钱包。
 pub async fn lock_recharge_for_payment_tx(
     tx: &mut MySqlConnection,
     payment_id: u64,
@@ -39,7 +39,7 @@ pub async fn lock_recharge_for_payment_tx(
     })
 }
 
-/// 将已确认金额（分）计入钱包，并保存申请关联流水（旧版 CreditRechargeInTx）。
+/// 将已确认金额（分）计入钱包，并保存申请关联流水。
 /// digest 是至少 32 字符的验签通知摘要（作流水号与业务引用）。
 /// 余额、版本与流水同事务，失败全部回滚；钱包冻结不拒收到账资金。
 pub async fn credit_recharge_in_tx(

@@ -10,8 +10,8 @@ pub struct AccountView {
     pub frozen_cents: i64,
 }
 
-/// 在业务事务内为新建用户创建零余额钱包（与用户建户同事务，旧版语义）。
-/// `account_id` 由调用方分配（与用户 ID 同源号段，旧版两者取同一 ID）。
+/// 在业务事务内为新建用户创建零余额钱包（与用户建户同一事务提交或回滚）。
+/// `account_id` 由调用方分配，与用户 ID 同源号段时两者可取同一 ID。
 pub async fn ensure_account_tx(
     tx: &mut MySqlConnection,
     account_id: u64,
@@ -40,11 +40,11 @@ pub async fn find_by_user(
     Ok(row)
 }
 
-// ---------- 事务内账户操作（旧版 wallet_account_repo.go 对齐） ----------
+// ---------- 事务内账户操作 ----------
 
 use crate::WalletError;
 
-/// 钱包账户完整行（旧版 WalletRow）：充值与退款都要读余额与冻结额。
+/// 钱包账户完整行：充值与退款都要读余额与冻结额。
 #[derive(Debug, Clone)]
 pub struct AccountRow {
     pub id: u64,
@@ -56,7 +56,7 @@ pub struct AccountRow {
 }
 
 /// 在调用方事务中锁 userID 未删除的钱包，返回当前行；缺账户为 NotFound。
-/// 调用方负责提交，不自行开户（旧版 LockWalletAccount）。
+/// 调用方负责提交，不自行开户。
 pub async fn lock_wallet_account_tx(
     tx: &mut MySqlConnection,
     user_id: u64,
@@ -79,7 +79,7 @@ pub async fn lock_wallet_account_tx(
     })
 }
 
-/// 在调用方事务中为 userID 开户，初始余额、冻结额为零且状态 active（旧版 OpenWalletAccount）。
+/// 在调用方事务中为 userID 开户，初始余额、冻结额为零且状态 active。
 pub async fn open_wallet_account_tx(
     tx: &mut MySqlConnection,
     user_id: u64,
@@ -96,7 +96,7 @@ pub async fn open_wallet_account_tx(
 }
 
 /// 在调用方事务中读取 userID 未删除身份的 openid；缺用户或空身份返回空串
-/// 由退款/充值用例拒绝（旧版 FindUserOpenID）。
+/// openid 为空时由退款/充值用例拒绝。
 pub async fn find_user_openid_tx(
     tx: &mut MySqlConnection,
     user_id: u64,
@@ -111,7 +111,7 @@ pub async fn find_user_openid_tx(
     Ok(openid.flatten().unwrap_or_default())
 }
 
-/// 在调用方事务中锁 userID 未删除的用户行（旧版 LockUser）；缺行 NotFound，不检查 active。
+/// 在调用方事务中锁 userID 未删除的用户行；缺行 NotFound，不检查 active。
 pub async fn lock_user_tx(tx: &mut MySqlConnection, user_id: u64) -> Result<(), WalletError> {
     let n = sqlx::query(
         "SELECT `id` FROM `user` WHERE `id` = ? AND `deleted_at` IS NULL LIMIT 1 FOR UPDATE",
@@ -126,7 +126,7 @@ pub async fn lock_user_tx(tx: &mut MySqlConnection, user_id: u64) -> Result<(), 
 }
 
 /// 在调用方事务中将 walletID 钱包置为 frozen 并增加版本号；
-/// 不改变余额或已冻结金额（旧版 FreezeWallet）。
+/// 不改变余额或已冻结金额，仅标记 frozen。
 pub async fn freeze_wallet_tx(tx: &mut MySqlConnection, wallet_id: u64) -> Result<(), WalletError> {
     sqlx::query(
         "UPDATE `wallet_account` SET `status` = ?, `version` = `version` + 1 WHERE `id` = ?",
@@ -138,7 +138,7 @@ pub async fn freeze_wallet_tx(tx: &mut MySqlConnection, wallet_id: u64) -> Resul
     Ok(())
 }
 
-/// 将 walletID 钱包恢复 active 并增加版本号（旧版 ActivateWallet）。
+/// 将 walletID 钱包恢复 active 并增加版本号。
 pub async fn activate_wallet_tx(
     tx: &mut MySqlConnection,
     wallet_id: u64,

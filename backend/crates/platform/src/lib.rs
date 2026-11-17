@@ -1,4 +1,4 @@
-//! 平台通用能力：无业务语义的横切组件（对应旧版 internal/platform）。
+//! 平台通用能力：无业务语义的横切组件。
 //!
 //! 模块：config（环境配置）/ error（错误码）/ httpx（信封与请求编号）/
 //! ids（号段 ID）/ jwt / totp / password / sessiontoken / redisx / metrics / lifecycle。

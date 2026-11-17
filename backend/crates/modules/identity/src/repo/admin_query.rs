@@ -1,18 +1,16 @@
-//! 后台充电用户查询：列表、档案与统计装饰（旧版 identity/query.go +
-//! charge_user_repo.go 对齐）。只读组合：手机号、钱包余额与订单统计按当页
-//! ID 批量回填，不逐用户查询；不冻结账号或改写金额。权限复核与旧版一致，
-//! 由调用方传入实时 Profile 后再次判定 user.read。
+//! 后台充电用户查询：列表、档案与统计装饰。只读组合：手机号、钱包余额与订单统计按当页
+//! ID 批量回填，不逐用户查询；不冻结账号或改写金额。权限由调用方传入实时 Profile 后复核 user.read。
 
 use crate::error::AdminUserError;
 use chargepilot_mod_ops::Profile;
 use serde::Serialize;
 use sqlx::{MySqlPool, Row};
 
-/// 时间列统一按旧版信封格式输出（微秒 + UTC 偏移，前端 dayjs 可解析）。
+/// 时间列统一按 UTC ISO 微秒格式输出（前端 dayjs 可解析）。
 const TS: &str = "DATE_FORMAT(%C, '%Y-%m-%dT%H:%i:%s.%f+00:00')";
 
-/// 后台充电用户列表的一行（旧版 ChargeUserRow 逐字段对齐）。
-/// id / inviter_id 沿用旧版 `,string` 契约按十进制字符串输出；
+/// 后台充电用户列表的一行。
+/// id / inviter_id 按十进制字符串输出；
 /// openid / unionid 为 varbinary 列，读侧一律 CAST AS CHAR。
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct ChargeUserRow {
@@ -44,7 +42,7 @@ pub struct ChargeUserRow {
     pub last_order_at: Option<String>,
 }
 
-/// 列表响应（旧版 persist.Page 形状 + 权限清单）。
+/// 列表响应。
 #[derive(Debug, Clone, Serialize)]
 pub struct ChargeUserPage {
     pub items: Vec<ChargeUserRow>,
@@ -54,7 +52,7 @@ pub struct ChargeUserPage {
     pub permissions: Vec<String>,
 }
 
-/// 用户档案中的最近订单摘要（旧版 ChargeUserOrderBrief）。
+/// 用户档案中的最近订单摘要。
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct ChargeUserOrderBrief {
     pub order_id: u64,
@@ -74,7 +72,7 @@ pub struct ChargeUserOrderBrief {
     pub started_at: Option<String>,
 }
 
-/// 单个充电用户的档案（旧版 ChargeUserDetail：列表行的超集，扁平输出）。
+/// 单个充电用户的档案。
 #[derive(Debug, Clone, Serialize)]
 pub struct ChargeUserDetail {
     #[serde(flatten)]
@@ -91,10 +89,10 @@ pub struct ChargeUserDetail {
     pub fault_reports: i64,
 }
 
-/// 档案最近订单条数上限（旧版 ChargeUserDetailOrderLimit）。
+/// 档案最近订单条数上限。
 pub const DETAIL_ORDER_LIMIT: i64 = 20;
 
-/// 关键词模糊查询的转义模式（旧版 dbutil.LikePattern）。
+/// 关键词模糊查询的转义模式。
 fn like_pattern(value: &str) -> String {
     format!(
         "%{}%",
@@ -105,7 +103,7 @@ fn like_pattern(value: &str) -> String {
     )
 }
 
-/// 中国大陆手机号格式（旧版 phone.Valid：trim 后 1[3-9] 开头的 11 位数字）。
+/// 中国大陆手机号格式。
 fn phone_valid(value: &str) -> bool {
     let v = value.trim();
     v.len() == 11
@@ -114,7 +112,7 @@ fn phone_valid(value: &str) -> bool {
         && v.bytes().skip(2).all(|b| b.is_ascii_digit())
 }
 
-/// 一次性聚合出的派生统计（旧版 ChargeUserStat）。
+/// 一次性聚合出的派生统计。
 struct ChargeUserStat {
     phone: String,
     balance_cents: i64,
@@ -132,7 +130,7 @@ fn require_read(actor: &Profile) -> Result<(), AdminUserError> {
     }
 }
 
-/// 分页列出充电用户（旧版 UserQueryService.List）。
+/// 分页列出充电用户。
 /// 关键词匹配昵称、openid、unionid 和手机号；完整手机号精确查询，
 /// 号码片段模糊查询。派生列按当页 ID 批量回填。
 pub async fn list_users(
@@ -144,7 +142,7 @@ pub async fn list_users(
     status: &str,
 ) -> Result<ChargeUserPage, AdminUserError> {
     require_read(actor)?;
-    /// 关键词过滤方式（旧版语义：完整手机号精确，其余模糊，空值不过滤）。
+    /// 关键词过滤方式。
     enum KwFilter {
         None,
         Phone(String),
@@ -233,7 +231,7 @@ pub async fn list_users(
     })
 }
 
-/// 按 rows 中的用户 ID 批量回填手机号、钱包与订单统计（旧版 DecorateChargeUsers）。
+/// 按 rows 中的用户 ID 批量回填手机号、钱包与订单统计。
 async fn decorate(pool: &MySqlPool, rows: &mut [ChargeUserRow]) -> Result<(), AdminUserError> {
     if rows.is_empty() {
         return Ok(());
@@ -261,7 +259,7 @@ async fn decorate(pool: &MySqlPool, rows: &mut [ChargeUserRow]) -> Result<(), Ad
     Ok(())
 }
 
-/// 按 ids 批量查询手机号、钱包与订单聚合（旧版 ChargeUserStats）。
+/// 按 ids 批量查询手机号、钱包与订单聚合。
 /// 缺失查询结果保持零值；不假定每用户严格单一钱包（后写覆盖）。
 async fn charge_user_stats(
     pool: &MySqlPool,
@@ -335,7 +333,7 @@ fn zero_stat() -> ChargeUserStat {
     }
 }
 
-/// 读取未删除用户的档案本体（旧版 LoadChargeUserDetail）：
+/// 读取未删除用户的档案本体：
 /// 用户行、钱包状态、最近订单与券/报障计数；用户缺失返回 NotFound。
 pub async fn load_user_detail(
     pool: &MySqlPool,
@@ -361,7 +359,7 @@ pub async fn load_user_detail(
     .await?
     .ok_or(AdminUserError::NotFound)?;
 
-    // 钱包状态与 user.status 取值串相同但分立；无钱包行为空串（旧版 Scan 零值）。
+    // 钱包状态与 user.status 取值串相同但分立；无钱包行为空串。
     let wallet_status: Option<String> = sqlx::query_scalar(
         "SELECT CAST(`status` AS CHAR) FROM `wallet_account` \
          WHERE `user_id` = ? AND `deleted_at` IS NULL LIMIT 1",
@@ -413,7 +411,7 @@ pub async fn load_user_detail(
     })
 }
 
-/// 单个用户档案（旧版 UserQueryService.Detail）：读取后按单行批量回填统计。
+/// 单个用户档案：读取后按单行批量回填统计。
 pub async fn user_detail(
     pool: &MySqlPool,
     actor: &Profile,
@@ -427,7 +425,7 @@ pub async fn user_detail(
     Ok(detail)
 }
 
-/// 核对用户未删除（旧版 RequireUserExists）；冻结用户仍可读取历史。
+/// 核对用户未删除；冻结用户仍可读取历史。
 pub async fn require_user_exists(pool: &MySqlPool, id: u64) -> Result<(), AdminUserError> {
     // id 列为 BIGINT UNSIGNED，读侧按 u64 解码。
     let found: Option<u64> =

@@ -79,8 +79,8 @@ impl StartDispatcher {
             Err(e) => return Err(e.into()),
             Ok(_) => {}
         }
-        // 命令落库即标记已发送；设备确认随回执推进（旧版 sent_at 语义）。
-        // 端口占用不在受理时写：与旧版一致，成功回执（apply_start_receipt）
+        // 命令落库即标记已发送；设备确认随回执推进。
+        // 端口占用不在受理时写入；收到成功启动回执（apply_start_receipt）
         // 才占 active_port_charge，结束回执按订单释放。
         dispatch::mark_command_sent_tx(conn, &command_id).await?;
         tx.commit().await?;

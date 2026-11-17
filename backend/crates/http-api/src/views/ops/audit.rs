@@ -1,4 +1,4 @@
-//! 运营域后台门面·审计与 MFA（票 18：原 admin_misc.rs 的审计/MFA 区块）。
+//! 运营域后台门面·审计与 MFA。
 use crate::errormap::{mfa_error, rid_of};
 use crate::guard::AdminGuard;
 use crate::guard::deny;
@@ -34,7 +34,7 @@ async fn list_audit_logs(
     if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::AUDIT_READ, &rid) {
         return resp;
     }
-    // 仅解析 RFC3339 输入（旧版 time.Parse(time.RFC3339)；无效返回 400）。
+    // 仅解析 RFC3339 输入。
     let parse_bound =
         |raw: Option<&str>| -> Result<Option<chrono::DateTime<chrono::Utc>>, Response> {
             match raw.filter(|s| !s.is_empty()) {
@@ -129,7 +129,7 @@ async fn self_mfa_status(
     }
 }
 
-/// 本人 MFA 设置（POST；动作 enrol/confirm/disable，旧版 mfaSettings 契约）。
+/// 本人 MFA 设置（POST；动作 enrol/confirm/disable，mfaSettings 契约）。
 async fn self_mfa_settings(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
@@ -156,10 +156,10 @@ async fn self_mfa_settings(
     }
 }
 
-/// MFA 错误映射（旧版 mfaSettingsFailure + AdminManagementFailure）。
+/// MFA 错误映射。
 // ---------------------------------------------------------------------------
 // 方案预览与设备能力
-/// 审计与 MFA 路由（票 18：原 admin_misc 区块归位）。
+/// 审计与 MFA 路由。
 pub fn router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
         .route(

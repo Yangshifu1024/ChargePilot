@@ -1,5 +1,5 @@
-//! 发票申请后台队列与双审（旧版 ListInvoiceRequests + InvoiceReviewRepo.Review 的单体对应物）。
-//! 列表为全量倒序（旧版无分页参数），user_id 与审核人 ID 输出十进制字符串防止 JS 精度丢失。
+//! 发票申请后台队列与双审。
+//! 列表为全量倒序，user_id 与审核人 ID 输出十进制字符串防止 JS 精度丢失。
 //! 双审：通过须两名不同且仍有 invoice.review 权限的 customer_finance，两次提交的发票链接一致；
 //! 驳回单人即可。审核表、申请单状态与审计同事务提交；同人复核与状态不符一律冲突。
 //! SQL 在 repo/invoice_admin.rs。
@@ -12,9 +12,9 @@ use sqlx::{Acquire, MySqlPool};
 
 pub use crate::repo::invoice_admin::InvoiceAdminRow;
 
-/// 执行发票通过或驳回（旧版 InvoiceReviewService.Review + InvoiceReviewRepo.Review）。
+/// 执行发票通过或驳回。
 /// 审核人角色与权限在本函数内实时复核；二审通过前用事务内一致读取复查首位
-/// 审核人的当前角色与权限（旧版 LookupReviewer 语义）。
+/// 审核人的当前角色与权限。
 /// 返回决定后的队列状态：awaiting_second / approved / rejected。
 #[allow(clippy::too_many_arguments)]
 pub async fn review_invoice(
@@ -27,7 +27,7 @@ pub async fn review_invoice(
     client_ip: &str,
     request_id: &str,
 ) -> Result<&'static str, InvoiceAdminError> {
-    // 服务内实时复核（旧版 audit.Actor.Role / HasPermission 判定）。
+    // 服务内实时复核。
     if actor.role != "customer_finance"
         || !actor
             .permissions
@@ -81,7 +81,7 @@ pub async fn review_invoice(
         }
         Some((review_status, first_reviewer_id, _, review_url)) => {
             let Some(first) = first_reviewer_id else {
-                // 审核记录存在却无首审人：状态不完整，拒绝（旧版会走到重复主键失败）。
+                // 审核记录存在却无首审人：状态不完整，拒绝。
                 return Err(InvoiceAdminError::Conflict);
             };
             if *first == actor.id
@@ -93,7 +93,7 @@ pub async fn review_invoice(
                 return Err(InvoiceAdminError::Conflict);
             }
             // 复查首位审核人的当前角色与权限（不信任首审时保存的身份）。
-            // 旧版经注入的 LookupReviewer 查询；此处用事务内一致读取（权限 FOR SHARE）。
+            // 事务内一致读取二审人角色与权限（FOR SHARE）。
             let first_profile = chargepilot_mod_ops::repo::load_profile_tx(&mut *c, *first)
                 .await
                 .map_err(|_| InvoiceAdminError::Conflict)?;
@@ -118,7 +118,7 @@ pub async fn review_invoice(
     Ok(status)
 }
 
-/// 审核队列的审计写入（旧版 AppendAuditInTx：module/target 同为 invoice）。
+/// 审核队列的审计写入。
 #[allow(clippy::too_many_arguments)]
 async fn append_audit(
     tx: &mut sqlx::MySqlConnection,

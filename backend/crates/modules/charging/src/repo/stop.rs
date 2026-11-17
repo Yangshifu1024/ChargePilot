@@ -5,7 +5,7 @@ use chargepilot_domain::charging::command::{ChargeCommandStatus, ChargeStopComma
 use chargepilot_domain::order::ChargeOrderStatus;
 use sqlx::{MySqlConnection, MySqlPool};
 
-/// 活跃停止授权行（旧版 FindActiveStopAuthorization 投影）。
+/// 活跃停止授权行。
 pub type ActiveStopRow = (u64, String, u64, String, u8, String);
 
 /// 授权查询：属于用户、charging、有成功启动回执。

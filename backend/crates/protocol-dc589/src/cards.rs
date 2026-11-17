@@ -98,7 +98,7 @@ mod tests {
         assert_eq!(swipe.port, 2);
         assert_eq!(swipe.card_number, 17564161);
         assert_eq!(swipe.local_debit_tenths, 10);
-        // 端口 0 拒绝；0xFF（端口号错误标志）按旧版语义原样透传给上层判断。
+        // 端口 0 解析失败；0xFF（端口号错误标志）由解析层原样上送，由网关判定无效卡。
         assert_eq!(
             parse_card_swipe(0xB6, &[0, 1, 0, 0, 0, 0, 0, 0, 0, 0]),
             Err(PayloadError)

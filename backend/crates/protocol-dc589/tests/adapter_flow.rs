@@ -1,13 +1,13 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 适配器回环集成测试：真实 TCP 连接驱动注册握手、心跳应答与节奏切换、
+//! 刷卡事件、同设备互踢、会话审计收尾。
+//! 测试在持锁状态下 await；进程内互斥锁尚未统一为跨进程端口锁，故豁免
+//! `clippy::await_holding_lock`。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::wildcard_enum_match_arm
 )]
-
-//! 适配器回环集成测试：真实 TCP 连接驱动注册握手、心跳应答与节奏切换、
-//! 刷卡事件、同设备互踢、会话审计收尾（旧版 adapter_test 对应物）。
 
 use std::sync::{Arc, Mutex};
 

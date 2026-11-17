@@ -1,10 +1,6 @@
-//! 结算域用户端门面（票 19 热区批：原 user_settlement.rs 归位；admin 切片随本票并入）。
-
-//! C 端账单与发票路由：账单列表/详情/已读、开票申请与我的发票（路径与响应
-//! 形状对齐旧版 internal/http/user/settlement/{bill,invoice}.go）。
-//!
-//! 挂载行：.merge(user_settlement::router())
-//! （lib.rs build_router 中与其余 user 路由并列；模块声明 pub mod user_settlement;）
+//! C 端账单与发票路由：账单列表/详情/已读、开票申请与我的发票；
+//! 路径与响应形状与对外 API 契约一致。
+//! 在 `build_router` 里与其余 user 路由并列挂载（`user_settlement::router()`）。
 
 use crate::errormap::{rid_of, user_invoice_error};
 use crate::params::UserPaging;
@@ -35,7 +31,7 @@ pub fn router() -> axum::Router<Arc<ApiDeps>> {
         .route("/api/v1/user/invoice/my", axum::routing::get(invoice_my))
 }
 
-/// 路径账单 ID 解析：非法或为零一律 400（旧版 strconv.ParseUint + id==0 校验）。
+/// 路径账单 ID 解析：非法或为零一律 400。
 fn bill_id_of(raw: &str, rid: &str) -> Result<u64, Response> {
     match raw.parse::<u64>() {
         Ok(id) if id > 0 => Ok(id),
@@ -137,7 +133,7 @@ struct InvoiceApplyBody {
 }
 
 /// POST /api/v1/user/invoice/apply：校验开票参数并提交申请；金额由订单回执确定。
-/// 错误映射对齐旧版 applyInvoice 的字面量契约（状态码、业务码与文案）。
+/// 开票申请错误 → HTTP（状态码、业务码与文案固定）。
 async fn invoice_apply(
     State(deps): State<Arc<ApiDeps>>,
     headers: HeaderMap,
@@ -148,7 +144,7 @@ async fn invoice_apply(
     let Some(axum::Json(body)) = body else {
         return crate::respond(400, Code::BadRequest as i64, "发票申请无效", &rid);
     };
-    // 前置校验顺序与文案对齐旧版 HTTP 层（服务层仍全量校验兜底）。
+    // HTTP 层先做参数形态校验（服务层仍全量业务校验兜底）。
     if body.request_id.trim().is_empty() || body.order_no.trim().is_empty() {
         return crate::respond(
             400,
@@ -192,7 +188,7 @@ async fn invoice_apply(
     }
 }
 
-/// 发票域错误 → HTTP（旧版 applyInvoice 的 switch 字面量契约）。
+/// 发票域错误 → HTTP。
 /// GET /api/v1/user/invoice/my：分页返回当前用户的发票申请。
 async fn invoice_my(
     State(deps): State<Arc<ApiDeps>>,

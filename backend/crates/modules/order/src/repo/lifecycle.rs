@@ -1,7 +1,7 @@
 //! 订单生命周期表访问（蓝图第五章 repo 层）：charge_order / charge_order_pricing /
 //! charge_event_log / domain_event / active_port_charge 的写入与锁读。
 //! 支付成功事务由 payment 模块编排，这里只提供订单侧的存储原语。
-//! 跨域依赖（票 21 审计）：ops——操作员归属约束（admin_query 的数据范围按操作员权限过滤）。
+//! 跨域依赖：ops——操作员归属约束（admin_query 的数据范围按操作员权限过滤）。
 
 use crate::error::OrderError;
 use chargepilot_domain::money::PaymentOrderStatus;
@@ -10,14 +10,14 @@ use chargepilot_platform::ids::SegmentAllocator;
 use chrono::Datelike;
 use sqlx::MySqlConnection;
 
-/// 月分区归属日期：取给定时刻对应月份的第一天（旧版 dbutil.MonthStart）。
+/// 月分区归属日期：取给定时刻对应月份的第一天。
 /// 分区表主键含 created_month，所有按月分区表的写入都带此值。
 pub fn month_start_of(now: chrono::DateTime<chrono::Utc>) -> chrono::NaiveDate {
     let date = now.date_naive();
     chrono::NaiveDate::from_ymd_opt(date.year(), date.month(), 1).unwrap_or(date)
 }
 
-/// 支付成功时创建的充电订单字段（旧版 ChargeOrderRecord 的写入侧）。
+/// 支付成功时创建的充电订单字段。
 #[derive(Debug, Clone)]
 pub struct PaidOrderDraft {
     pub order_no: String,
@@ -33,7 +33,7 @@ pub struct PaidOrderDraft {
     pub discount_cents: i64,
 }
 
-/// 生成并查重充电业务单号（旧版 NewChargeOrderNumber）。
+/// 生成并查重充电业务单号。
 /// 同秒同设备同端口重复时报冲突，由调用方整体回滚重试。
 pub async fn new_charge_order_no_tx(
     tx: &mut MySqlConnection,
@@ -56,7 +56,7 @@ pub async fn new_charge_order_no_tx(
     Ok(no)
 }
 
-/// 在事务内创建已支付充电订单，返回订单主键（旧版 CreatePaidInTx）。
+/// 在事务内创建已支付充电订单，返回订单主键。
 /// 分区表主键含 created_month，插入必须带月首日期。
 pub async fn create_paid_in_tx(
     tx: &mut MySqlConnection,
@@ -87,7 +87,7 @@ pub async fn create_paid_in_tx(
     Ok(id)
 }
 
-/// 冻结计费方案快照到订单（旧版 FreezePricingInTx）。
+/// 冻结计费方案快照到订单。
 pub async fn freeze_pricing_in_tx(
     tx: &mut MySqlConnection,
     charge_order_id: u64,
@@ -111,7 +111,7 @@ pub async fn freeze_pricing_in_tx(
     Ok(())
 }
 
-/// 追加订单事件（旧版 AppendEventInTx）；event_id 唯一，重复即冲突。
+/// 追加订单事件；event_id 唯一，重复即冲突。
 pub async fn append_event_in_tx(
     tx: &mut MySqlConnection,
     charge_order_id: u64,
@@ -139,7 +139,7 @@ pub async fn append_event_in_tx(
     Ok(())
 }
 
-/// 支付单号：P + 号段分配 ID（旧版 NewOrderNumber；新版号段替代旧雪花表）。
+/// 支付单号：P + 号段分配 ID。
 pub async fn new_payment_order_no(allocator: &SegmentAllocator) -> Result<String, OrderError> {
     let id = allocator
         .next_id()
@@ -148,7 +148,7 @@ pub async fn new_payment_order_no(allocator: &SegmentAllocator) -> Result<String
     Ok(format!("P{id}"))
 }
 
-/// 生命周期推进所需的订单行锁视图（旧版 LifecycleView + LockForLifecycleInTx）。
+/// 生命周期推进所需的订单行锁视图。
 #[derive(Debug, Clone)]
 pub struct LifecycleView {
     pub charge_order_id: u64,
@@ -161,7 +161,7 @@ pub struct LifecycleView {
     pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// 锁订单行并读取生命周期推进所需事实；不存在返回 None（旧版 LockForLifecycleInTx）。
+/// 锁订单行并读取生命周期推进所需事实；不存在返回 None。
 pub async fn lock_for_lifecycle_tx(
     tx: &mut MySqlConnection,
     charge_order_id: u64,
@@ -201,8 +201,8 @@ pub async fn lock_for_lifecycle_tx(
     ))
 }
 
-/// 状态证据分派辅助：读取行内真实状态并构造对应证据类型（票 14 的唯一
-/// 构造入口 [`evidence_of`]）。行不存在返回 None。
+/// 状态证据分派辅助：读取行内真实状态并构造对应证据类型（[`evidence_of`] 的唯一
+/// 构造入口）。行不存在返回 None。
 async fn read_state_evidence(
     tx: &mut MySqlConnection,
     charge_order_id: u64,
@@ -222,9 +222,9 @@ async fn read_state_evidence(
     }))
 }
 
-/// 启动成功：paid → charging 并写业务启动时间（旧版 StartInTx 的状态推进）。
+/// 启动成功：paid → charging 并写业务启动时间。
 /// 条件更新保证只在 paid 状态推进一次；RowsAffected==0 视为冲突。
-/// 返回目标状态证据（票 14：调用方消费证据类型，字面构造清零）。
+/// 返回目标状态证据。
 pub async fn mark_charging_tx(
     tx: &mut MySqlConnection,
     charge_order_id: u64,
@@ -256,10 +256,8 @@ pub async fn mark_charging_tx(
 }
 
 /// 启动被拒（设备明确拒绝或超时兜底）：paid → refunding 并记录原因。
-/// 旧版 MarkStartRejectedInTx 语义——订单进入退款流程，渠道退款由执行器
-/// 按 refund_record 推进，成功收尾 refunding → refunded；failed 保持死值
-/// （state-machine.md 定案，旧版逐写点核实：生产零写入）。
-/// 返回目标状态证据（票 14）。
+/// 渠道退款由执行器按 refund_record 推进，成功收尾 refunding → refunded；failed 保持死值。
+/// 返回目标状态证据。
 pub async fn mark_start_rejected_tx(
     tx: &mut MySqlConnection,
     charge_order_id: u64,
@@ -290,9 +288,9 @@ pub async fn mark_start_rejected_tx(
     Ok(refunding)
 }
 
-/// 结束回执：charging → completed 并写计量列（旧版 CompleteInTx）。
+/// 结束回执：charging → completed 并写计量列。
 /// 电量文本由调用方按 Wh→kWh 四位小数换算（StringFixed(4) 语义）。
-/// 返回目标状态证据（票 14）。
+/// 返回目标状态证据。
 #[allow(clippy::too_many_arguments)]
 pub async fn complete_tx(
     tx: &mut MySqlConnection,
@@ -329,7 +327,7 @@ pub async fn complete_tx(
     Ok(completed)
 }
 
-/// 预占端口（旧版 active_port_charge 写入）；重复预占冲突由主键仲裁。
+/// 预占端口；重复预占冲突由主键仲裁。
 pub async fn occupy_port_tx(
     tx: &mut MySqlConnection,
     device_id: &str,
@@ -339,7 +337,7 @@ pub async fn occupy_port_tx(
     started_at: chrono::DateTime<chrono::Utc>,
 ) -> Result<(), OrderError> {
     // port_id 复合编码：device 哈希无法逆，直接用 (device_id,port_no) 唯一键并令
-    // port_id 取 charge_order_id（同单同端口一一对应，旧版为 gateway 端口主键）。
+    // port_id 取 charge_order_id。
     sqlx::query(
         "INSERT INTO `active_port_charge` \
          (`port_id`, `device_id`, `port_no`, `charge_order_id`, `user_id`, `started_at`) \
@@ -376,10 +374,10 @@ pub async fn release_port_tx(
     Ok(n == 1)
 }
 
-/// 退款完成收尾：refunding → refunded（迁移 5，旧版 SetStatusRefunded 语义）。
+/// 退款完成收尾：refunding → refunded。
 /// 证据链封装在原语内部（[`mark_charging_tx`] 范式）：行不存在或状态非
-/// refunding 时静默返回 false（保留旧版条件 UPDATE 静默 0 行语义，调用方
-/// 不重复判定）；`payment_order_id` 参与条件谓词防跨单误推进。
+/// refunding 时静默返回 false（由调用方区分未命中，无需重复判定）；
+/// `payment_order_id` 参与条件谓词防跨单误推进。
 pub async fn advance_refunded_tx(
     tx: &mut MySqlConnection,
     charge_order_id: u64,

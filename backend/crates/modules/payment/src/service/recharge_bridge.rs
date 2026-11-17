@@ -1,4 +1,4 @@
-//! 钱包充值的支付能力实现（旧版 recharge_payment_repo.go 对齐）。
+//! 钱包充值的支付能力实现。
 //! 归属：payment_order / charge_prepay 表访问归 payment（repo/recharge_bridge.rs）；
 //! 本实现是 wallet::RechargePayments 的唯一生产实现（cmd 装配注入）。
 
@@ -10,7 +10,7 @@ use chargepilot_mod_wallet::recharge::futures_bounds::BoxFuture;
 use chargepilot_platform::ids::SegmentAllocator;
 use sqlx::MySqlPool;
 
-/// 充值支付桥（旧版 RechargePaymentRepo）。
+/// 充值支付桥。
 pub struct RechargePaymentBridge {
     pub pool: MySqlPool,
     pub allocator: SegmentAllocator,
@@ -18,7 +18,7 @@ pub struct RechargePaymentBridge {
 }
 
 impl RechargePaymentBridge {
-    /// payment_order 行 → 钱包所需投影（旧版 rechargePaymentView）。
+    /// payment_order 行 → 钱包所需投影。
     fn view(
         id: u64,
         order_no: String,
@@ -57,7 +57,7 @@ impl chargepilot_mod_wallet::recharge::RechargePayments for RechargePaymentBridg
         amount_cents: i64,
     ) -> BoxFuture<'a, Result<RechargePayment, chargepilot_mod_wallet::WalletError>> {
         Box::pin(async move {
-            // 充值支付单号：P + 号段分配 ID（旧版 NewOrderNumber）。
+            // 充值支付单号：P + 号段分配 ID。
             let id = self
                 .allocator
                 .next_id()
@@ -120,7 +120,7 @@ impl chargepilot_mod_wallet::recharge::RechargePayments for RechargePaymentBridg
                     if saved == 1 {
                         body
                     } else {
-                        // 并发者已保存：重读首次参数（旧版语义）。
+                        // 并发者已保存：重读首次参数。
                         find_prepay_params(&self.pool, pay.id).await?.ok_or(
                             chargepilot_mod_wallet::WalletError::Storage(
                                 "预支付参数读取失败".to_string(),

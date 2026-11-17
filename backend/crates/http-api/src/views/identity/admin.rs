@@ -1,9 +1,7 @@
-//! 身份域后台门面（票 19 热区批：原 admin_users_cards.rs 的用户查询切片）。
-
-//! 后台用户与在线卡路由（对齐旧版 admin/user 装配：charge_users + online_cards）。
+//! 身份域后台路由：用户查询与分页筛选（`charge_users` 视图）。
 //! 用户列表/详情/充值页与在线卡列表要求 user.read；卡绑定与状态变更要求
 //! online_card.manage。路由层只做参数解析与状态码映射，角色与权限的
-//! 最终判定在各服务函数内复核（与旧版 actor 实时权限语义一致）。
+//! 最终判定在各服务函数内复核（以请求时权限快照为准）。
 
 use crate::errormap::ops_error;
 use crate::errormap::{admin_user_error, rid_of};
@@ -18,12 +16,12 @@ use chargepilot_platform::httpx;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// 400/1005 参数错误（旧版 httpapi.BadRequest）。
+/// 400/1005 参数错误。
 fn bad_request(message: &str, rid: &str) -> Response {
     ops_error(OpsError::Input(message.to_string()), rid)
 }
 
-/// 路径 ID 必须为正整数（旧版 AdminPathID）。
+/// 路径 ID 必须为正整数。
 fn path_id(raw: &str, rid: &str) -> Result<u64, Response> {
     raw.parse::<u64>()
         .ok()
@@ -31,7 +29,7 @@ fn path_id(raw: &str, rid: &str) -> Result<u64, Response> {
         .ok_or_else(|| bad_request("ID 必须为正整数", rid))
 }
 
-/// 用户查询错误映射（旧版 AdminResourceFailure 的身份侧子集）。
+/// 用户查询错误映射。
 async fn list_users(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
@@ -48,7 +46,7 @@ async fn list_users(
         return bad_request("关键词过长或状态无效", &rid);
     }
     let status = q.get("status").map(String::as_str).unwrap_or("");
-    // 状态白名单与旧版 ReadAdminPage 一致：active frozen。
+    // 状态白名单与ReadAdminPage 一致：active frozen。
     if !status.is_empty() && status != "active" && status != "frozen" {
         return bad_request("关键词过长或状态无效", &rid);
     }
@@ -104,7 +102,7 @@ async fn user_recharges(
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    // 旧版逐参数校验：仅支持单值非空 page 和 page_size，其他参数一律拒绝。
+    // 逐参数校验：仅支持单值非空 page 和 page_size，其他参数一律拒绝。
     let mut page = 1u32;
     let mut page_size = 20u32;
     if let Some(q) = raw.as_deref() {
@@ -148,7 +146,7 @@ async fn user_recharges(
         }
     }
 }
-/// 用户查询路由（票 19 热区批）。
+/// 用户查询路由。
 pub fn router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
         .route("/api/v1/admin/users", axum::routing::get(list_users))

@@ -105,7 +105,7 @@ pub async fn insert_command_tx(
     Ok(())
 }
 
-/// 命令落库即标记已发送；设备确认随回执推进（旧版 sent_at 语义）。
+/// 命令落库即标记已发送；设备确认随回执推进。
 pub async fn mark_command_sent_tx(
     conn: &mut MySqlConnection,
     command_id: &str,

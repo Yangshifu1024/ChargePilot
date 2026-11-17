@@ -53,7 +53,7 @@ pub async fn login_or_create(
     .bind(unionid)
     .execute(&mut *tx)
     .await?;
-    // 零余额钱包与用户同事务（旧版语义）；账户 ID 与用户 ID 同源取号
+    // 零余额钱包与用户同事务；账户 ID 与用户 ID 同源取号
     let wallet_id = allocator.next_id().await?;
     account::ensure_account_tx(&mut tx, wallet_id, user_id).await?;
     tx.commit().await?;
@@ -113,8 +113,7 @@ pub async fn find_profile(pool: &MySqlPool, user_id: u64) -> anyhow::Result<Opti
     Ok(row)
 }
 
-/// 事务内锁定用户行并返回状态（旧版 LockStatusInTx 语义：发放/核销前
-/// 校验用户可参与营销，锁序为 用户 → 券模板 → 发放行）。
+/// 事务内锁定用户行并返回状态（发放/核销前校验；锁序 用户 → 券模板 → 发放行）。
 /// 用户不存在或已软删返回 None；调用方按不可参与处理。
 pub async fn lock_status_tx(
     tx: &mut sqlx::MySqlConnection,

@@ -2,7 +2,7 @@
 
 use chargepilot_domain::payment::IntentError;
 
-/// 下单域错误（HTTP 层映射旧版 CheckoutError 的 Kind 族）。
+/// 下单域错误（HTTP 层映射CheckoutError 的 Kind 族）。
 /// 下单与支付准备错误（语义分类 → HTTP 映射在 views/payment 门面）。
 #[derive(Debug, thiserror::Error)]
 pub enum CheckoutError {
@@ -57,7 +57,7 @@ impl From<IntentError> for CheckoutError {
     }
 }
 
-/// 扫码解析错误（旧版 gatewaycontract.ErrScanNotFound 语义族）。
+/// 扫码解析错误。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScanError {
     /// 编码未命中任何端口或设备。
@@ -75,14 +75,14 @@ impl std::fmt::Display for ScanError {
 }
 impl std::error::Error for ScanError {}
 
-/// 模拟确认错误（HTTP 层映射旧版 Err 族）。
+/// 模拟确认错误（HTTP 层映射Err 族）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SimulationError {
-    /// 支付单不存在或归属不符（旧版 gorm.ErrRecordNotFound → 404/1004）。
+    /// 支付单不存在或归属不符。
     NotFound,
-    /// 非模拟渠道的支付（旧版 ErrNotSimulationCheckout → 409/3001）。
+    /// 非模拟渠道的支付。
     NotSimulation,
-    /// 处理冲突（旧版 ErrPaymentCallbackConflict → 409/3001）。
+    /// 处理冲突。
     Conflict,
     /// 存储错误。
     Storage(String),
@@ -145,6 +145,6 @@ impl From<chargepilot_mod_wallet::WalletError> for ApplyError {
     }
 }
 
-/// 卡续购没有匹配到已付余额支付单（旧版 ErrCardFundingConflict）。
+/// 卡续购没有匹配到已付余额支付单。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardFundingConflict;

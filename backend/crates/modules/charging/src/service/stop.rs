@@ -1,4 +1,4 @@
-//! 用户停止充电（旧版 charging/stop/authorization.go 对齐）：
+//! 用户停止充电：
 //! 授权校验 → 同事务冻结计费截止（no-op upsert，重试不延长）→ 下发停止命令。
 //! SQL 在 repo/stop.rs。
 
@@ -7,13 +7,13 @@ use crate::repo::{set_read_committed, stop};
 use crate::sink::CommandSink;
 use sqlx::{Acquire, MySqlPool};
 
-/// 停止服务（旧版 AuthorizationService + 网关停止受理）。
+/// 停止服务。
 pub struct StopService {
     pub pool: MySqlPool,
     pub sink: std::sync::Arc<dyn CommandSink>,
 }
 
-/// 活跃停止授权（旧版 ActiveStopAuthorization）。
+/// 活跃停止授权。
 #[derive(Debug, Clone)]
 pub struct ActiveStop {
     pub charge_order_id: u64,
@@ -25,10 +25,10 @@ pub struct ActiveStop {
 }
 
 impl StopService {
-    /// 用户停止入口（旧版 AuthorizationService.Stop）：
+    /// 用户停止入口：
     /// 归属与充电中校验 → 计费截止冻结 → 停止命令下发与登记。
     pub async fn stop(&self, order_no: &str, user_id: u64) -> Result<ActiveStop, StopError> {
-        // 授权查询：属于用户、charging、有成功启动回执（旧版 FindActiveStopAuthorization）。
+        // 授权查询：属于用户、charging、有成功启动回执。
         let Some((id, no, uid, device_id, port_no, start_command_id)) =
             stop::find_active_stop(&self.pool, order_no, user_id).await?
         else {

@@ -1,8 +1,5 @@
-//! 订单域用户端门面（票 19 热区批：原 user_identity_cards.rs 的报修/评价提交切片）。
-
-//! C 端身份与在线卡路由：手机号绑定/解绑、在线卡列表/状态变更、订单反馈提交。
-//! 路径、码值与文案逐字对齐旧版（internal/http/user/identity/phone.go、
-//! card/api.go、order/feedback.go）。
+//! 订单域用户端门面：充电订单报修/评价提交。
+//! 路径与错误码、文案与对外 API 契约一致。
 
 use crate::errormap::rid_of;
 use crate::state::ApiDeps;
@@ -38,7 +35,7 @@ async fn feedback_submit(
         Err(e) => crate::errormap::feedback_submit_error(e, &rid),
     }
 }
-/// 报修/评价提交路由（票 19 热区批；路径为原 /user/feedback）。
+/// 报修/评价提交路由。
 pub fn router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new().route(
         "/api/v1/user/charge/{order_id}/feedback",

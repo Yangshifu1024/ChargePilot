@@ -1,4 +1,4 @@
-# 工作区格式化（二期票 03）：现行风格即默认 rustfmt + 行宽 100。
+# 工作区格式化：默认 rustfmt + 行宽 100。
 # nightly 项备而不用（CI 用稳定版 fmt；启用前需切 nightly 工具链并全量格式化一次）：
 # imports_granularity = "Crate"
 # group_imports = "StdExternalCrate"

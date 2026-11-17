@@ -1,6 +1,6 @@
 //! ops 域错误类型（蓝图第五章：域内错误词表集中收口）。
 
-/// 业务错误：映射码值与文案沿用旧版。
+/// 业务错误：映射码值与文案沿用。
 #[derive(Debug, thiserror::Error)]
 pub enum OpsError {
     /// 凭据错误或登录已失效（401/1001）。
@@ -66,7 +66,7 @@ impl From<redis::RedisError> for OpsError {
     }
 }
 
-/// MFA 业务错误（HTTP 层按旧版 mfaSettingsFailure / AdminManagementFailure 映射）。
+/// MFA 业务错误。
 #[derive(Debug, thiserror::Error)]
 pub enum MfaError {
     /// 输入不合法（400/1005）。
@@ -78,7 +78,7 @@ pub enum MfaError {
     /// 密码或验证码校验失败（400/1002）。
     #[error("密码或验证码校验失败")]
     Proof,
-    /// 验证码已被消费（400/1002；文案与旧版 ErrUsedTOTP 一致）。
+    /// 验证码已被消费。
     #[error("该验证码已使用，请等待下一个验证码")]
     UsedTotp,
     /// 待绑定记录已过期或被替换（409/2009）。

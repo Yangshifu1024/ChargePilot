@@ -1,5 +1,5 @@
 //! C 端会话存储：Redis 记录 `{uid, openid, digest, previous[]}`，7 天绝对寿命，
-//! 轮换/注销走 platform::sessiontoken 的 Lua 脚本（与旧版逐字节一致）。
+//! 轮换/注销走 platform::sessiontoken 的 Lua 脚本。
 
 use crate::IdentityError;
 use chargepilot_platform::sessiontoken::{Layout, REVOKE_SCRIPT, ROTATE_SCRIPT, digest};
@@ -30,7 +30,7 @@ pub async fn create(redis_url: &str, user_id: u64, openid: &str) -> anyhow::Resu
         .await?;
     let (sid, token, secret) = USER_TOKEN_LAYOUT.mint()?;
     let record = serde_json::json!({
-        "uid": user_id.to_string(),   // 精确十进制字符串，防 cjson 浮点（旧版语义）
+        "uid": user_id.to_string(),   // 精确十进制字符串，防 cjson 浮点
         "openid": openid,
         "digest": digest(&secret),
         "previous": [],
@@ -46,7 +46,7 @@ pub async fn create(redis_url: &str, user_id: u64, openid: &str) -> anyhow::Resu
 }
 
 /// 原子轮换：校验旧摘要 → Lua 更新（KEEPTTL，保留 32 旧摘要）→ 返回用户身份与新令牌。
-/// 轮换语义为「同键换密钥」：sid 不变、只换 secret（新令牌指向同一会话键，与旧版一致）。
+/// 轮换语义为「同键换密钥」：sid 不变、只换 secret。
 pub async fn rotate(redis_url: &str, token: &str) -> Result<Rotated, IdentityError> {
     let Some((sid, secret)) = USER_TOKEN_LAYOUT.parse(token) else {
         return Err(IdentityError::InvalidRefresh);

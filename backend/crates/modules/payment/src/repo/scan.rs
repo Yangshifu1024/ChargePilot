@@ -1,5 +1,5 @@
 //! 扫码直查桩的表访问：device_port / device（蓝图第五章 repo 层）。
-//! 阶段 06 前直查表；接入网关后由 cmd 装配替换为网关客户端实现。
+//! 网关未配置时直查表；接入网关后由 cmd 装配替换为网关客户端。
 
 use crate::error::ScanError;
 use crate::service::scan::{ScanPort, ScanResult};
@@ -8,7 +8,7 @@ use sqlx::MySqlPool;
 /// 扫码行投影（端口、设备状态与站点归属）。
 pub type ScanPortRow = (String, u8, String, u64, Option<String>);
 
-/// 按端口二维码读 device_port 与 device 表（旧版未配置网关时 checkout 拒绝创建支付）。
+/// 按端口二维码读 device_port 与 device 表。
 pub async fn scan_port_row(
     pool: &MySqlPool,
     code: &str,

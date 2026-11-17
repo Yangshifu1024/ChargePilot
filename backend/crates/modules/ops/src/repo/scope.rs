@@ -1,4 +1,4 @@
-//! 数据范围与字段脱敏表访问（旧版 scope_repo.go 的单体对应物）：
+//! 数据范围与字段脱敏表访问：
 //! 读取 admin_data_scope / admin_field_mask 并归并为 domain 内存集合。
 //! 锁定读（FOR SHARE）供导出等发布路径保证文件与保存的规则一致。
 
@@ -7,7 +7,7 @@ use chargepilot_domain::operations::{self, DataScope, FieldMask};
 use sqlx::MySqlConnection;
 
 /// 读取并合并账号范围；shared=true 时 FOR SHARE（须在事务内调用）。
-/// 无记录返回 unrestricted=true（旧版 LoadDataScope / LockDataScopeInTx）。
+/// 无记录返回 unrestricted=true。
 pub async fn load_data_scope_tx(
     c: &mut MySqlConnection,
     profile: &Profile,
@@ -25,7 +25,7 @@ pub async fn load_data_scope_tx(
 }
 
 /// 读取角色脱敏规则；role_id=0 返回空规则，不脱敏
-/// （旧版 LoadFieldMask / LockFieldMaskInTx）。
+///。
 pub async fn load_field_mask_tx(
     c: &mut MySqlConnection,
     role_id: u64,

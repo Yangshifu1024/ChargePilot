@@ -1,34 +1,34 @@
 //! settlement 域错误类型（蓝图第五章：域内错误词表集中收口）。
 
-/// 用户端发票域错误（语义对齐旧版 ErrInvoiceInput 族，HTTP 映射在路由层）。
+/// 用户端发票域错误；HTTP 映射在路由层。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserInvoiceError {
-    /// 申请内容无效（旧版 ErrInvoiceInput；正常请求已被 HTTP 层前置校验）。
+    /// 申请内容无效（正常请求已被 HTTP 层前置校验）。
     InvalidInput,
-    /// 本人订单不存在（旧版 ErrInvoiceOrderLookup + gorm.ErrRecordNotFound）。
+    /// 本人订单不存在。
     OrderNotFound,
-    /// 订单读取故障（旧版 ErrInvoiceOrderLookup；事务内锁定读取失败）。
+    /// 订单读取故障（事务内锁定读取失败）。
     OrderLookup(String),
-    /// 订单尚未完成，暂不能申请（旧版 ErrInvoiceUnfinished）。
+    /// 订单尚未完成，暂不能申请。
     Unfinished,
-    /// 计费回执缺失（旧版 ErrInvoiceUnbilled）。
+    /// 计费回执缺失。
     Unbilled,
-    /// 已确认费用未确定或非正数（旧版 ErrInvoiceZero）。
+    /// 已确认费用未确定或非正数。
     ZeroFee,
-    /// 订单已有申请，或同号申请的身份与内容不一致（旧版 ErrInvoiceDuplicate）。
+    /// 订单已有申请，或同号申请的身份与内容不一致。
     Duplicate,
     /// 存储错误。
     Storage(String),
 }
 
-/// 发票审核域错误（语义对齐旧版 ErrInvoiceConflict 族）。
+/// 发票审核域错误。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InvoiceAdminError {
     /// 发票申请不存在或已删除。
     NotFound,
-    /// 状态、签名或内容冲突（旧版 ErrInvoiceConflict）。
+    /// 状态、签名或内容冲突。
     Conflict,
-    /// 服务内实时权限复核失败（旧版 ErrForbidden；正常请求已被 HTTP 层拦截）。
+    /// 服务内实时权限复核失败（正常请求已被 HTTP 层拦截）。
     Forbidden,
     /// 存储错误。
     Storage(String),
@@ -50,12 +50,12 @@ impl From<sqlx::Error> for InvoiceAdminError {
     }
 }
 
-/// 人工复核域错误（语义对齐旧版 ErrBillingConflict 族）。
+/// 人工复核域错误。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewError {
     /// 请求冲突：状态、内容或审核人不允许该操作。
     Conflict,
-    /// 计量或快照无效（旧版 ErrMeterReview / ErrInvalidPricing）。
+    /// 计量或快照无效。
     InvalidSource,
     /// 记录不存在。
     NotFound,

@@ -1,11 +1,9 @@
 //! 遥测类型与计量分段生成：按设备累计读数差值构建计费分段，不做时间分摊。
-//! 语义基准：旧仓库 internal/domain/devices/telemetry.go 与
-//! internal/domain/charging/measured_segments.go，逐行对齐。
 
 use crate::charging::actual::MeterSegment;
 use chrono::{DateTime, Duration, Utc};
 
-/// 某端口的累计电量与瞬时功率读数（旧版 devices.Reading）。
+/// 某端口的累计电量与瞬时功率读数。
 /// 功率零值表示设备上报 0 W，不能当作缺测，也不能从电量反推功率。
 #[derive(Debug, Clone)]
 pub struct Reading {
@@ -19,7 +17,7 @@ pub struct Reading {
     pub power_w: u32,
 }
 
-/// 一组设备读数及服务端接收时间（旧版 devices.ReadingSample）。
+/// 一组设备读数及服务端接收时间。
 #[derive(Debug, Clone)]
 pub struct ReadingSample {
     pub device_id: String,
@@ -27,7 +25,7 @@ pub struct ReadingSample {
     pub readings: Vec<Reading>,
 }
 
-/// 设备上报的会话起止、总时长和总电量（旧版 devices.SessionSpan）。
+/// 设备上报的会话起止、总时长和总电量。
 #[derive(Debug, Clone, Default)]
 pub struct SessionSpan {
     pub device_id: String,
@@ -40,16 +38,16 @@ pub struct SessionSpan {
     pub energy_wh: u32,
 }
 
-/// 单次计费的最大心跳条数（旧版 maxSamples），与网关取数上限一致。
+/// 单次计费的最大心跳条数，与网关取数上限一致。
 const MAX_SAMPLES: usize = 10080;
 
-/// 设备时钟与充电开始时刻的最大偏差（旧版 clockSkewTolerance）。
+/// 设备时钟与充电开始时刻的最大偏差。
 const CLOCK_SKEW_TOLERANCE: Duration = Duration::seconds(5);
 
-/// 相邻心跳间隔不超过该值时，才用前次功率描述该区间（旧版 powerJoinWindow）。
+/// 相邻心跳间隔不超过该值时，才用前次功率描述该区间。
 const POWER_JOIN_WINDOW: Duration = Duration::seconds(60);
 
-/// 按设备累计读数生成计费分段，不用接收时间分摊电量（旧版 MeasuredSegments）。
+/// 按设备累计读数生成计费分段，不用接收时间分摊电量。
 /// start 来自中央启动回执，span.started_at 来自设备结束帧，两者允许存在时钟偏差。
 /// 起充前容差内且没有新增电量的读数可跳过，仍保留其功率供后续区间使用。
 /// 时长、时钟、精度、读数顺序或电量合计不符时返回 None（空），交由计量复核。

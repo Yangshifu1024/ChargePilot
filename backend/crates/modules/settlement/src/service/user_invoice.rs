@@ -1,5 +1,5 @@
-//! 用户端发票申请与我的发票（旧版 settlement/invoice.go + user_invoice_repo.go
-//! 的单体对应物）。开票额来自费用回执，客户端只提交票种及抬头等内容，不决定
+//! 用户端发票申请与我的发票列表。
+//! 开票额来自费用回执，客户端只提交票种及抬头等内容，不决定
 //! 金额；一单只允许一份申请（uk_invoice_active），同号同内容重放幂等复用。
 //! 可开票状态与计费任务共用同一判定：completed / refunding / refunded。
 //! SQL 在 repo/user_invoice.rs。
@@ -18,13 +18,13 @@ pub struct InvoiceApplication {
     pub invoice_no: String,
     /// 发票申请主键。
     pub id: u64,
-    /// 固定 pending（旧版 InvoiceRequestPending）。
+    /// 固定 pending。
     pub review_status: &'static str,
     /// 已确认费用回执的确定总额，分。
     pub total_cents: i64,
 }
 
-/// 发票申请内容（旧版 settlement.InvoiceInput；金额由回执提供）。
+/// 发票申请内容。
 #[derive(Debug, Clone, Default)]
 pub struct InvoiceInput {
     pub request_id: String,
@@ -35,12 +35,12 @@ pub struct InvoiceInput {
     pub email: String,
 }
 
-/// 订单已可开票的状态判定（旧版 invoiceableStatus：发票申请与计费任务共用）。
+/// 订单已可开票的状态判定。
 fn invoiceable_status(status: &str) -> bool {
     matches!(status, "completed" | "refunding" | "refunded")
 }
 
-/// 合法紧凑 UUID（旧版 uuid.Validate：8-4-4-4-12 位十六进制）。
+/// 合法紧凑 UUID。
 fn is_uuid(s: &str) -> bool {
     let b = s.as_bytes();
     if b.len() != 36 {
@@ -63,8 +63,8 @@ fn is_uuid(s: &str) -> bool {
     true
 }
 
-/// 核对本人订单和结算回执后申请发票。校验在服务层完整重做（旧版 Create
-/// 同样全量校验 ErrInvoiceInput），HTTP 层的前置校验只负责提前给出更细文案。
+/// 核对本人订单和结算回执后申请发票；服务层完整重做全部校验，
+/// HTTP 层前置校验仅提供更细的错误文案。
 #[allow(clippy::too_many_lines)]
 pub async fn apply_invoice(
     pool: &MySqlPool,
@@ -87,7 +87,7 @@ pub async fn apply_invoice(
     {
         return Err(UserInvoiceError::InvalidInput);
     }
-    // 本人订单：订单号 + 用户双条件（旧版 FindInvoiceableOrder）。
+    // 本人订单：订单号 + 用户双条件。
     let Some((order_id, status)) = repo::find_user_order(pool, &input.order_no, user_id)
         .await
         .map_err(|e| UserInvoiceError::OrderLookup(e.to_string()))?
@@ -97,7 +97,7 @@ pub async fn apply_invoice(
     if !invoiceable_status(&status) {
         return Err(UserInvoiceError::Unfinished);
     }
-    // 费用回执：金额不由客户端决定（旧版 LoadInvoiceFee + Fees）。
+    // 费用回执：金额不由客户端决定。
     let Some((total,)) = repo::fee_total(pool, order_id)
         .await
         .map_err(|e| UserInvoiceError::Storage(e.to_string()))
@@ -124,7 +124,7 @@ pub async fn apply_invoice(
     if !invoiceable_status(&locked_status) {
         return Err(UserInvoiceError::Unfinished);
     }
-    // 幂等重放：同发票号必须复用相同身份和内容（旧版 ApplyInvoice 前半）。
+    // 幂等重放：同发票号必须复用相同身份和内容。
     let existing = repo::find_existing_invoice_tx(&mut *c, &invoice_no)
         .await
         .map_err(storage_err)?;
@@ -154,7 +154,7 @@ pub async fn apply_invoice(
             id
         }
         None => {
-            // 一单一申请：已有未删除申请即冲突（旧版 Count 分支）。
+            // 一单一申请：已有未删除申请即冲突。
             let duplicate = repo::active_invoice_count_tx(&mut *c, order_id)
                 .await
                 .map_err(storage_err)?;
@@ -191,8 +191,8 @@ pub async fn apply_invoice(
     })
 }
 
-/// 分页倒序读取本人未删除的发票申请（旧版 ListUserInvoiceRequests；
-/// 字段与旧版 map 投影一致，id/biz_id 为数字，可空列输出 null）。
+/// 分页倒序读取本人未删除的发票申请（ListUserInvoiceRequests；
+/// 字段与map 投影一致，id/biz_id 为数字，可空列输出 null）。
 pub async fn list_user_invoices(
     pool: &MySqlPool,
     user_id: u64,

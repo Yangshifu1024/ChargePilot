@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 事件产生域（`domain_event.source` 列词表）。
+/// 事件产生域（写入 `domain_event.source`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EventSource {
@@ -16,8 +16,7 @@ pub enum EventSource {
 
 /// 事件类别词表（`domain_event.kind`，进程内约束——该列为无约束 VARCHAR，
 /// 枚举只约束注册表路由与入队校验；载荷透传，未知类别保持「无处理器」路径）。
-/// 名单与全仓实际写入点一一对应（架构评审候选 3：补 4 个实写值、删 3 个
-/// 从无写入者的愿望值）。
+/// 枚举值与全仓 `domain_event.kind` 实际写入字面量一一对应。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventKind {
     /// 充电结束回执（charging/receipts，BB 帧）。
@@ -71,7 +70,7 @@ impl EventKind {
     }
 }
 
-/// 事件类别常量（旧 `kind::` 模块的兼容入口；新代码用 [`EventKind`]）。
+/// 事件类别字符串常量（兼容既有 `kind::` 引用；新代码优先用 [`EventKind`]）。
 pub mod kind {
     use super::EventKind;
     pub const CHARGE_ENDED: &str = EventKind::ChargeEnded.as_str();
@@ -87,8 +86,7 @@ pub mod kind {
 chargepilot_domain::wordlist_enum!(
     /// domain_event.status 列的投递状态（四值；pending 领取中、
     /// published 处理器已确认、failed 待退避重排、dead 重试上限后死信终态）。
-    /// 词表宏生成（架构评审遗留 A：宏自 domain 导出，手抄三件套与既有
-    /// 文案漂移随此消除）。
+    /// 由 domain 词表宏生成，与库表 `domain_event.status` 取值一致。
     EventDeliveryStatus: {
         Pending = "pending",
         Published = "published",
@@ -97,7 +95,7 @@ chargepilot_domain::wordlist_enum!(
     }
 );
 
-/// 已入队待投递的事件行（`domain_event` 读模型）。
+/// 从 `domain_event` 表读出的待投递行。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnqueuedEvent {
     pub id: u64,

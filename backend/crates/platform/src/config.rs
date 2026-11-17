@@ -1,12 +1,12 @@
-//! 环境变量配置：统一收编与校验（required / 取值 / 密钥长度），语义对齐旧版 caarlos0/env 用法。
+//! 环境变量配置：统一加载与校验（必填项 / 取值 / 密钥长度）。
 //!
-//! **全量分组（票 16）**：全部应用环境变量经本结构加载（数据库/监听/认证/支付/
-//! 登录/微信凭据/静态资源/导出/引导账号），支付与登录模式为枚举型配置——非法
-//! 取值启动即失败。加载提供可注入的环境读取口（[`EnvSource`]），供测试断言
-//! 默认值、校验路径与「实际读取集合 == 冻结清单」的一致性。
-//! 环境变量清单冻结（阶段 09）；清单外变量启动时显式告警，不静默忽略。
+//! 全部应用环境变量经 [`Config`] 分组加载（数据库/监听/认证/支付/
+//! 登录/微信凭据/导出/引导账号等）；支付与登录模式为枚举——非法取值启动即失败。
+//! 通过可注入的 [`EnvSource`] 读取环境，便于测试断言默认值、校验路径，以及
+//! 「实际读取集合 == 冻结清单」的一致性。
+//! 清单外变量启动时打 WARN，不静默忽略。
 
-/// 进程配置（票 16 全量分组）。
+/// 进程级配置（自环境变量组装）。
 #[derive(Debug, Clone)]
 pub struct Config {
     /// 数据库组：单库 DSN（ADR 001）。
@@ -34,20 +34,20 @@ pub struct Config {
 pub struct ListenConfig {
     /// HTTP 监听地址。
     pub http_addr: String,
-    /// 设备 TCP 监听地址（阶段 06 生效，此处校验格式）。
+    /// 设备 TCP 监听地址（启动时校验 host:port 格式）。
     pub device_addr: String,
 }
 
 /// 认证组。
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
-    /// JWT 签名密钥（≥32 字节，旧版同语义）。
+    /// JWT 签名密钥（≥32 字节）。
     pub jwt_secret: String,
-    /// paid 态启动超时秒数（旧版缺口补齐，见 docs/design/state-machine.md）。
+    /// 订单 paid 态等待设备启动的最长秒数（见 docs/design/state-machine.md）。
     pub paid_start_timeout_secs: i64,
 }
 
-/// 支付渠道模式（旧版 PAYMENT_MODE 三个取值，枚举化后非法取值启动失败）。
+/// 支付渠道模式（环境变量 `PAYMENT_MODE` 的三个合法取值）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaymentMode {
     /// 模拟渠道（开发/测试默认）：确认端点开放，无真实出站。
@@ -71,7 +71,7 @@ impl PaymentMode {
     }
 }
 
-/// 登录模式（旧版 LOGIN_MODE 两个取值）。
+/// 登录模式（环境变量 `LOGIN_MODE` 的两个合法取值）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoginMode {
     /// 开发登录（dev:<account> 伪码换 token）。
@@ -100,7 +100,7 @@ pub struct WechatCreds {
     pub private_key_pem: String,
     /// 平台证书（序列号,PEM;... 多条分号分隔）。
     pub platform_certs: String,
-    /// APIv3 密钥（32 字节；原实现直读但冻结清单漏登记，票 16 收编修正）。
+    /// 微信支付 APIv3 密钥（32 字节）。
     pub api_v3_key: String,
     pub notify_url: String,
 }
@@ -119,7 +119,7 @@ pub struct BootstrapConfig {
     pub password: String,
 }
 
-/// 可注入的环境读取口（票 16）：`read` 取单变量、`all` 供未知变量告警。
+/// 可注入的环境读取口：`read` 取单变量、`all` 供未知变量告警。
 /// 生产实现 [`SystemEnv`]；测试注入假环境以断言默认值/校验路径/读取集合。
 pub trait EnvSource {
     fn read(&self, name: &str) -> Option<String>;
@@ -130,12 +130,12 @@ pub trait EnvSource {
 pub struct SystemEnv;
 
 impl EnvSource for SystemEnv {
-    #[allow(clippy::disallowed_methods)] // 统一配置入口：全仓唯一豁免点（票 16）
+    #[allow(clippy::disallowed_methods)] // 统一配置入口：全仓唯一允许直读环境变量
     fn read(&self, name: &str) -> Option<String> {
         std::env::var(name).ok()
     }
 
-    #[allow(clippy::disallowed_methods)] // 统一配置入口：全仓唯一豁免点（票 16）
+    #[allow(clippy::disallowed_methods)] // 统一配置入口：全仓唯一允许直读环境变量
     fn all(&self) -> Vec<(String, String)> {
         std::env::vars().collect()
     }
@@ -147,7 +147,7 @@ impl Config {
         Self::load(&SystemEnv)
     }
 
-    /// 可注入加载（票 16）：环境读取经 [`EnvSource`]，测试可注入假环境。
+    /// 经 [`EnvSource`] 加载并校验；测试可注入假环境。
     pub fn load(src: &impl EnvSource) -> anyhow::Result<Self> {
         warn_unknown_env_vars(&src.all()[..]);
         let database_url = require(src, "DATABASE_URL")?;
@@ -232,7 +232,7 @@ impl Config {
     }
 }
 
-/// 环境变量冻结清单（阶段 09）：应用可识别的全部变量。
+/// 应用可识别的环境变量冻结清单。
 /// **一致性测试锁定**：`Config::load` 实际读取的变量名集合（含 RUST_LOG 的
 /// 日志层直读）必须与本清单相等——新增/删除变量两处同步，漂移即测试失败。
 pub const KNOWN_ENV_VARS: &[&str] = &[
@@ -243,7 +243,7 @@ pub const KNOWN_ENV_VARS: &[&str] = &[
     "DEVICE_ADDR",
     "JWT_SECRET",
     "PAID_START_TIMEOUT_SECS",
-    // 静态产物（票 22 后编译期嵌入，目录变量退役）与导出
+    // 静态产物（编译期内嵌）与导出
     "EXPORT_DIR",
     "EXPORT_MAX_ROWS",
     // 引导账号
@@ -321,8 +321,7 @@ const SYSTEM_ENV_PREFIXES: &[&str] = &[
     "ONEHEADER",
 ];
 
-/// 清单外且非系统前缀的变量名集合（告警判定谓词提纯，票 23：行为测试直测
-/// 该集合语义，替代被删清单字面考据测试的守护职责）。
+/// 清单外且非系统前缀的变量名集合（用于启动告警，行为测试覆盖其语义）。
 fn unknown_env_var_names(all: &[(String, String)]) -> Vec<&str> {
     all.iter()
         .map(|(name, _)| name.as_str())
@@ -370,7 +369,7 @@ mod tests {
     const REDIS: &str = "redis://127.0.0.1:6380";
     const SECRET_OK: &str = "0123456789abcdef0123456789abcdef";
 
-    /// 假环境（票 16 注入口）：记录被查询的变量名供一致性测试。
+    /// 测试用假环境：记录被查询的变量名供一致性测试。
     struct FakeEnv {
         vars: BTreeMap<String, String>,
         queried: RefCell<Vec<String>>,
@@ -417,7 +416,7 @@ mod tests {
         assert_eq!(cfg.listen.http_addr, "0.0.0.0:8080");
         assert_eq!(cfg.listen.device_addr, "0.0.0.0:9100");
         assert_eq!(cfg.auth.paid_start_timeout_secs, 300);
-        // 模式默认值：simulation / development（旧版 unwrap_or 语义）。
+        // 未配置时默认：simulation / development。
         assert_eq!(cfg.payment_mode, PaymentMode::Simulation);
         assert_eq!(cfg.login_mode, LoginMode::Development);
         // 引导账号缺省为空（开发形态）。
@@ -498,7 +497,7 @@ mod tests {
         pairs.push(("WECHAT_APPID", "wx123"));
         let cfg = Config::load(&FakeEnv::new(&pairs)).unwrap();
         assert_eq!(cfg.wechat.appid, "wx123");
-        // 静态目录变量退役（票 22）：清单内不再读取。
+        // ADMIN_STATIC_DIR 已从清单移除，配置加载不再读取。
         pairs.push(("ADMIN_STATIC_DIR", " /srv/admin "));
         let env = FakeEnv::new(&pairs);
         Config::load(&env).unwrap();
@@ -508,11 +507,8 @@ mod tests {
         );
     }
 
-    /// 一致性测试（票 16，替代两个考据型测试）：`Config::load` 实际读取的
-    /// 变量名集合 == 冻结清单 − RUST_LOG（日志层 EnvFilter 直读，不经 Config）。
-    /// 系统前缀吞掉清单变量的情形在此同样暴露（实际读取集合缺项即失败），
-    /// 故原清单字面考据测试（system_prefixes_do_not_shadow_known_vars，
-    /// 票 23 删除项）随一致性测试落地而退役。
+    /// `Config::load` 实际读取的变量名集合须等于冻结清单（不含 `RUST_LOG`，
+    /// 日志层单独直读）。
     #[test]
     fn frozen_list_equals_actually_read_set() {
         let env = FakeEnv::new(&minimal_env());
@@ -528,9 +524,7 @@ mod tests {
         assert_eq!(read, frozen, "配置读取集合必须与冻结清单一致（漂移即失败）");
     }
 
-    /// 未知变量告警（票 23 补测承接）：`Config::load` 不因清单外变量阻断，
-    /// 告警集合恰好为「清单外且非系统前缀」的变量（清单内与系统注入不告警），
-    /// 直测提纯后的 `unknown_env_var_names`。
+    /// 清单外变量不阻断启动；`unknown_env_var_names` 只包含清单外且非系统前缀项。
     #[test]
     fn unknown_env_vars_warn_without_blocking() {
         let mut pairs = minimal_env();

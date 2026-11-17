@@ -1,11 +1,10 @@
 #![allow(dead_code)] // 各测试二进制只用到支撑全集的子集
 
-//! 共享集成测试支撑（票 04）：构建器装配、跨文件互斥锁、请求与登录辅助。
+//! 共享集成测试支撑：构建器装配、跨文件互斥锁、请求与登录辅助。
 //!
-//! **形态对齐票 17**：`TestAppBuilder` 的各域开关方法（`with_wallet` 等）
-//! 对应票 17 目标形态「按域分组的最小句柄组」——票 17 落地 `AppState`
-//! 时，本模块仅替换 `build` 内部的装配实现（可选字段清零、FromRef 子状态），
-//! 构建器 API 与各测试文件的开关组合保持不变，测试文件不二次改动。
+//! **构建器形态**：`TestAppBuilder` 各域开关（`with_wallet` 等）与生产 `ApiDeps`
+//! 按域装配一致；`build` 内只做可选字段与 FromRef 子状态替换，各测试文件的
+//! 开关组合保持不变。
 //!
 //! **并发互斥与种子隔离边界**：全部 flow 测试共享一个开发库（无独立
 //! schema），种子数据（用户/订单/卡号）一律以 `rand_suffix()` 派生的随机
@@ -52,8 +51,7 @@ impl TestApp {
     }
 }
 
-/// 构建器：按需开启各域句柄组（票 17 的按域形态预知——开关语义在
-/// AppState 化后保持）。
+/// 构建器：按需开启各域句柄组（与 `build_router` 装配开关语义一致）。
 pub struct TestAppBuilder {
     wallet: bool,
     payment: bool,
@@ -75,7 +73,7 @@ impl TestAppBuilder {
         self
     }
 
-    /// 支付域句柄组（simulation 语义，旧版 PAYMENT_MODE=simulation）：
+    /// 支付域句柄组（simulation 语义，PAYMENT_MODE=simulation）：
     /// CheckoutService + 钱包充值桥 + 模拟确认路由一并开启。
     #[must_use]
     pub fn with_simulation_payment(mut self) -> Self {
@@ -127,7 +125,7 @@ impl TestAppBuilder {
 
     /// 装配并返回测试应用。任何一步失败（环境缺失、连接失败、预热失败）
     /// 都 `panic!`——集成轮判失败，不静默跳过。
-    #[allow(clippy::disallowed_methods)] // 票 16 豁免：测试模块的连接变量
+    #[allow(clippy::disallowed_methods)] // 测试模块豁免：直读环境变量拼连接串
     pub async fn build(self) -> TestApp {
         let _ = tracing_subscriber::fmt()
             .with_test_writer()
@@ -144,14 +142,14 @@ impl TestAppBuilder {
             Err(e) => panic!("数据库连接失败：{e}"),
         };
         // 号段大小全文件统一 60：号段只影响分配批大小，测试断言以返回值
-        // 比较 ID，与段宽无关（旧文件 20/50/70 的差异为复制残留）。
+        // 比较 ID，与 snowflake 段宽配置无关。
         let allocator = Arc::new(SegmentAllocator::new((*db).clone(), 60));
         allocator
             .warm_up()
             .await
             .unwrap_or_else(|e| panic!("号段预热失败：{e}"));
 
-        // 支付域按 simulation 装配（旧版 PAYMENT_MODE=simulation 语义）。
+        // 支付域按 simulation 装配。
         let (checkout, wallet_recharge) = if self.payment {
             let provider: Arc<dyn chargepilot_mod_payment::PayProvider> =
                 Arc::new(chargepilot_mod_payment::channel::SimulationProvider);
@@ -223,7 +221,7 @@ impl TestAppBuilder {
 }
 
 /// 环境变量读取（panic 版）：种子直连库的文件用（不走 TestApp 装配）。
-#[allow(clippy::disallowed_methods)] // 票 16 豁免：测试模块的连接变量
+#[allow(clippy::disallowed_methods)] // 测试模块豁免：直读环境变量拼连接串
 pub fn mysql_url() -> String {
     std::env::var("TEST_MYSQL_URL").unwrap_or_else(|_| {
         panic!("集成测试需要 TEST_MYSQL_URL（node tasks.mjs test-integration）")
@@ -282,8 +280,8 @@ pub async fn req(
     req_str(router, method, path, literal.as_deref(), token).await
 }
 
-/// 请求辅助（字面量形态）：请求体逐字节发送（4 个旧文件的调用形态；
-/// 序列化差异为零——不经 Value 往返）。
+/// 请求辅助（字面量形态）：请求体以原始字符串发送，不经 `serde_json::Value`
+/// 往返，避免与集成测试断言之间的序列化差异。
 pub async fn req_str(
     router: &axum::Router,
     method: &str,

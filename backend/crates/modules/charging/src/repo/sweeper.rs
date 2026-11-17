@@ -40,7 +40,7 @@ pub async fn order_status_by_no_tx(
         .await
 }
 
-/// 条件更新 paid → refunding（updated != 1 跳过该行，与旧版静默 0 行一致）。
+/// 条件更新 paid → refunding。
 pub async fn mark_refunding_tx(
     c: &mut MySqlConnection,
     order_id: u64,

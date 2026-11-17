@@ -1,15 +1,13 @@
-//! 后台订单与支付单只读查询（对齐旧版 internal/order/order_view_repo.go、
-//! admin_query_repo.go、order_package_repo.go 与 internal/payment/payment_view_repo.go）。
+//! 后台订单与支付单只读查询：列表、详情、时间线、过程采样与支付单视图。
 //!
 //! 契约要点：
-//! - 响应 JSON 字段名、可空性与单位与旧版 OrderView / PaymentOrderView 逐字段一致
-//!   （金额单位分、meter_kwh 保持 DECIMAL 文本、user_id 十进制字符串）。
-//! - 时间输出统一 `DATE_FORMAT(col, '%Y-%m-%dT%H:%i:%s.%f+00:00')`（新仓库既定约定）。
+//! - 响应 JSON 字段名、可空性与单位与对外契约一致
+//! （金额单位分、meter_kwh 保持 DECIMAL 文本、user_id 十进制字符串）。
+//! - 时间输出统一 `DATE_FORMAT(col, '%Y-%m-%dT%H:%i:%s.%f+00:00')`（UTC ISO 微秒格式）。
 //! - 读侧对 DECIMAL / ENUM / BINARY / ascii_bin 列一律 `CAST(col AS CHAR)`；
-//!   BIGINT UNSIGNED 读 u64，金额 i64 分，可空 Option。
+//! BIGINT UNSIGNED 读 u64，金额 i64 分，可空 Option。
 //! - 固定 SQL + `(? IS NULL OR col = ?)` 双绑定守卫（与 station.rs 同款），无动态拼接。
-//! - 实时计量估算（旧版 LiveService.Fill）未在新仓库接线：充电中订单按旧版
-//!   「依赖缺失」分支输出 live_unavailable 提示，不产生估算费用。
+//! - 实时计量估算尚未接线：充电中订单输出 live_unavailable 提示，不产生估算费用。
 
 use chargepilot_domain::money::ChargePaymentStatus;
 use chargepilot_domain::money::PaymentOrderStatus;
@@ -18,7 +16,7 @@ use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::{MySqlPool, query_as, query_scalar};
 
-/// datetime(3) 列统一输出的 UTC 文本格式（新仓库 alert.rs 约定）。
+/// datetime(3) 列统一输出的 UTC 文本格式。
 const TS_FORMAT: &str = "%Y-%m-%dT%H:%i:%s.%f+00:00";
 
 /// 按列名生成 DATE_FORMAT 表达式。
@@ -27,24 +25,24 @@ fn df(col: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// 共享 SQL 片段（旧版字面量，别名固定为 c / p；CASE 分支值属 SQL 语法不绑定）
+// 共享 SQL 片段
 // ---------------------------------------------------------------------------
 
-/// 启动来源派生列（旧版 orderStartSourceSQL）：卡记录优先，其次余额、扫码支付。
+/// 启动来源派生列：卡记录优先，其次余额、扫码支付。
 const START_SOURCE_EXPR: &str = "(CASE WHEN EXISTS (SELECT 1 FROM `card_charge` `cc` WHERE `cc`.`charge_order_id` = `c`.`id`) THEN 'card' WHEN `p`.`pay_method` = 'balance' THEN 'balance' WHEN `p`.`pay_method` = 'wechat' THEN 'payment' ELSE NULL END)";
 
-/// 退款进度派生列（旧版 orderColumns.refund_status）：在途退款优先，非空保证。
+/// 退款进度派生列：在途退款优先，非空保证。
 const REFUND_STATUS_EXPR: &str = "(CASE WHEN EXISTS (SELECT 1 FROM `refund_record` `r` WHERE `r`.`payment_order_id` = `p`.`id` AND `r`.`status` IN ('pending','processing') AND `r`.`deleted_at` IS NULL) THEN 'processing' WHEN `c`.`payment_status` = 'refunded' THEN 'refunded' WHEN `c`.`status` = 'refunding' THEN 'processing' WHEN `p`.`refunded_cents` > 0 THEN 'partial_refunded' ELSE 'none' END)";
 
-/// 支付单金额确认状态派生列（旧版 order.PaymentStatusSQL，别名固定为 p）。
+/// 支付单金额确认状态派生列。
 const PAYMENT_STATUS_EXPR: &str = "(CASE WHEN `p`.`paid_cents` > 0 AND `p`.`refunded_cents` >= `p`.`paid_cents` THEN 'refunded' WHEN `p`.`refunded_cents` > 0 THEN 'partial_refunded' WHEN `p`.`paid_cents` > 0 OR `p`.`status` IN ('paid','partial_refunded','refunded') THEN 'paid' ELSE 'pending' END)";
 
-/// 订单、支付与支付意图的联表基础（旧版 orderBaseQuery）：排除软删除订单与支付。
+/// 订单、支付与支付意图的联表基础：排除软删除订单与支付。
 const ORDER_BASE_FROM: &str = "FROM `charge_order` AS `c` \
          LEFT JOIN `payment_order` AS `p` ON `p`.`id` = `c`.`payment_order_id` AND `p`.`user_id` = `c`.`user_id` AND `p`.`deleted_at` IS NULL \
          LEFT JOIN `charge_payment_intent` AS `i` ON `i`.`charge_order_id` = `c`.`id`";
 
-/// 后台订单视图列（旧版 orderColumns；列表与详情共用同一列集）。
+/// 后台订单视图列。
 fn order_select() -> String {
     format!(
         "`c`.`id` AS `order_id`, `c`.`order_no`, CAST(`c`.`user_id` AS CHAR) AS `user_id`, \
@@ -63,8 +61,8 @@ fn order_select() -> String {
     )
 }
 
-/// 时间区间守卫（旧版 orderTimeRange 语义）：启动优先、未启动回退创建时间的闭区间。
-/// 无界时绑定为 NULL 使该侧恒真，整体退化为全量，等价于旧版不拼接条件。
+/// 时间区间守卫：启动优先、未启动回退创建时间的闭区间。
+/// 无界时绑定为 NULL 使该侧恒真，整体退化为全量，等价于。
 const ORDER_TIME_GUARD: &str = " AND ((`c`.`started_at` IS NOT NULL \
          AND (? IS NULL OR `c`.`started_at` >= ?) AND (? IS NULL OR `c`.`started_at` <= ?)) \
          OR (`c`.`started_at` IS NULL \
@@ -74,14 +72,14 @@ const ORDER_TIME_GUARD: &str = " AND ((`c`.`started_at` IS NOT NULL \
 // 行模型
 // ---------------------------------------------------------------------------
 
-/// 后台订单列表与详情行（旧版 OrderView；live/live_unavailable 正常缺省省略）。
+/// 后台订单列表与详情行。
 #[derive(Debug, sqlx::FromRow, serde::Serialize)]
 pub struct OrderViewRow {
     /// 充电订单主键。
     pub order_id: u64,
     /// 业务订单号，对外展示和排障都用它。
     pub order_no: String,
-    /// 下单用户 ID（旧版 json:",string"，十进制字符串）。
+    /// 下单用户 ID。
     pub user_id: String,
     /// 设备 ID。
     pub device_id: String,
@@ -145,13 +143,13 @@ pub struct OrderViewRow {
     /// 下单时冻结的套餐及规则；列表恒 null，详情按快照解析。
     #[sqlx(skip)]
     pub selected_package: Option<Value>,
-    /// 实时读取失败的公开提示（旧版 live_unavailable，omitempty）。
+    /// 实时读取失败的公开提示。
     #[sqlx(skip)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub live_unavailable: Option<String>,
 }
 
-/// 订单事件时间线行（旧版 OrderTimelineRow，按发生时间与 ID 排序）。
+/// 订单事件时间线行。
 #[derive(Debug, sqlx::FromRow, serde::Serialize)]
 pub struct TimelineRow {
     /// 事件唯一标识。
@@ -166,7 +164,7 @@ pub struct TimelineRow {
     pub detail: String,
 }
 
-/// 充电过程采样点（旧版 ProcessPoint；功率 W、电量 kWh，未上报扩展字段为 null）。
+/// 充电过程采样点。
 #[derive(Debug, sqlx::FromRow, serde::Serialize)]
 pub struct ProcessPointRow {
     /// 过程行主键，游标。
@@ -195,14 +193,14 @@ pub struct ProcessPointRow {
     pub device_status: Option<u8>,
 }
 
-/// 后台支付单行（旧版 PaymentOrderView；充值单不关联充电单）。
+/// 后台支付单行。
 #[derive(Debug, sqlx::FromRow, serde::Serialize)]
 pub struct PaymentOrderRow {
     /// 支付主键。
     pub payment_order_id: u64,
     /// 商户支付单号。
     pub order_no: String,
-    /// 付款人（旧版 json:",string"，十进制字符串）。
+    /// 付款人。
     pub user_id: String,
     /// charge 充电支付，wallet_recharge 余额充值。
     pub biz_type: String,
@@ -228,7 +226,7 @@ pub struct PaymentOrderRow {
     pub charge_order_no: Option<String>,
 }
 
-/// 订单关联退款行（本端点为新仓库新增，字段取自 refund_record 与 refund_review）。
+/// 订单关联退款行（字段取自 refund_record 与 refund_review，按支付单过滤倒序）。
 #[derive(Debug, sqlx::FromRow, serde::Serialize)]
 pub struct OrderRefundRow {
     /// 退款记录主键。
@@ -263,7 +261,7 @@ pub struct OrderRefundRow {
     pub review_approved_at: Option<String>,
 }
 
-/// 过程查询的订单身份（旧版 ProcessIdentity；调用前须已校验订单存在）。
+/// 过程查询的订单身份。
 #[derive(Debug, Clone)]
 pub struct ProcessIdentity {
     /// 中央订单主键。
@@ -280,7 +278,7 @@ pub struct ProcessIdentity {
 // 订单列表 / 详情
 // ---------------------------------------------------------------------------
 
-/// 后台订单列表查询条件（旧版 OrderQuery；None 表示不过滤）。
+/// 后台订单列表查询条件。
 #[derive(Debug, Clone, Default)]
 pub struct AdminOrderListQuery {
     /// 页码，从 1 开始（调用方已 sanitize）。
@@ -307,7 +305,7 @@ pub struct AdminOrderListQuery {
     pub to: Option<DateTime<Utc>>,
 }
 
-/// 批量回填站点名称（旧版 FillOrderStations）：缺失、已删除站点保留 null。
+/// 批量回填站点名称：缺失、已删除站点保留 null。
 async fn fill_order_stations(
     pool: &MySqlPool,
     rows: &mut [OrderViewRow],
@@ -334,7 +332,7 @@ async fn fill_order_stations(
     Ok(())
 }
 
-/// 从冻结快照解析旧版 OrderPackage 形态（旧版 PackageFromSnapshot）：
+/// 从冻结快照解析
 /// 读取 rule.spec 的方案与计费模式、rule.version 与冻结套餐；
 /// 套餐缺失或未通过校验返回 None，不能用当前模板补齐。
 pub fn package_from_snapshot(raw: &str) -> Option<Value> {
@@ -373,7 +371,7 @@ pub fn package_from_snapshot(raw: &str) -> Option<Value> {
     Some(Value::Object(pkg))
 }
 
-/// 冻结名称（旧版 SelectedSchemeName / SelectedPackageName）：空白名视为缺失。
+/// 冻结名称：空白名视为缺失。
 fn trimmed_name(value: Option<&Value>) -> Option<String> {
     let name = value?.as_str()?.trim();
     if name.is_empty() {
@@ -383,7 +381,7 @@ fn trimmed_name(value: Option<&Value>) -> Option<String> {
     }
 }
 
-/// 从已解析的 selected_package 提取冻结方案名称（scheme.name，旧版 SelectedSchemeName）。
+/// 从已解析的 selected_package 提取冻结方案名称。
 pub fn selected_scheme_name(selected: Option<&Value>) -> Option<String> {
     trimmed_name(
         selected
@@ -401,7 +399,7 @@ pub fn selected_package_name(selected: Option<&Value>) -> Option<String> {
     )
 }
 
-/// 按订单主键解析冻结套餐（旧版 OrderPackageSnapshot 的套餐部分，不含刷卡累计）。
+/// 按订单主键解析冻结套餐。
 /// 快照缺失或无效返回 None。
 pub async fn order_package_snapshot(
     pool: &MySqlPool,
@@ -417,7 +415,7 @@ pub async fn order_package_snapshot(
     Ok(raw.as_deref().and_then(package_from_snapshot))
 }
 
-/// 读取订单冻结套餐并补充累计刷卡购买（旧版 OrderPackageSnapshot 完整语义）。
+/// 读取订单冻结套餐并补充累计刷卡购买。
 pub async fn order_selection(
     pool: &MySqlPool,
     order_id: u64,
@@ -441,7 +439,7 @@ pub async fn order_selection(
     Ok(Some(pkg))
 }
 
-/// 批量回填当页订单的冻结方案与套餐名称（旧版 OrderSchemeNames）。
+/// 批量回填当页订单的冻结方案与套餐名称。
 /// 缺失或无效快照保持 null，不读取当前发布规则补造。
 async fn fill_scheme_names(pool: &MySqlPool, rows: &mut [OrderViewRow]) -> Result<(), sqlx::Error> {
     let ids: Vec<u64> = rows.iter().map(|r| r.order_id).collect();
@@ -477,7 +475,7 @@ async fn fill_scheme_names(pool: &MySqlPool, rows: &mut [OrderViewRow]) -> Resul
     Ok(())
 }
 
-/// 实时计量回填的降级分支（旧版 LiveService.Fill 依赖缺失时的行为）：
+/// 实时计量回填的降级分支：
 /// 充电中且已开始的订单输出 live_unavailable 提示，其余行不动。
 pub fn apply_live_fallback(rows: &mut [OrderViewRow]) {
     for row in rows.iter_mut() {
@@ -487,7 +485,7 @@ pub fn apply_live_fallback(rows: &mut [OrderViewRow]) {
     }
 }
 
-/// 后台订单分页列表（旧版 ListOrders）：先计总数，再按创建时间与主键倒序取当页，
+/// 后台订单分页列表：先计总数，再按创建时间与主键倒序取当页，
 /// 最后回填站点名称与冻结套餐名称。
 pub async fn list_orders(
     pool: &MySqlPool,
@@ -579,7 +577,7 @@ pub async fn list_orders(
     Ok((rows, total))
 }
 
-/// 按主键取一条订单视图（旧版 FindOrderView；站点与套餐名称由调用方回填）。
+/// 按主键取一条订单视图。
 pub async fn find_order_view(
     pool: &MySqlPool,
     order_id: u64,
@@ -591,7 +589,7 @@ pub async fn find_order_view(
     query_as(&sql).bind(order_id).fetch_optional(pool).await
 }
 
-/// 读取订单的计费单号（旧版 OrderBilling.CalculationNo；未完成计费为 None）。
+/// 读取订单的计费单号。
 pub async fn order_calculation_no(
     pool: &MySqlPool,
     order_id: u64,
@@ -609,7 +607,7 @@ pub async fn order_calculation_no(
 // 时间线 / 过程 / 退款
 // ---------------------------------------------------------------------------
 
-/// 确认订单存在且未软删除（旧版 OrderExists）。
+/// 确认订单存在且未软删除。
 pub async fn order_exists(pool: &MySqlPool, order_id: u64) -> Result<bool, sqlx::Error> {
     let id: Option<u64> = query_scalar(
         "SELECT `id` FROM `charge_order` WHERE `id` = ? AND `deleted_at` IS NULL LIMIT 1",
@@ -621,7 +619,7 @@ pub async fn order_exists(pool: &MySqlPool, order_id: u64) -> Result<bool, sqlx:
     Ok(id.is_some())
 }
 
-/// 返回订单的事件时间线（旧版 ListOrderEvents）：按发生时间与 ID 排序，无事件为空数组。
+/// 返回订单的事件时间线：按发生时间与 ID 排序，无事件为空数组。
 pub async fn list_order_events(
     pool: &MySqlPool,
     order_id: u64,
@@ -634,7 +632,7 @@ pub async fn list_order_events(
     query_as(&sql).bind(order_id as i64).fetch_all(pool).await
 }
 
-/// 读取未删除订单的 ID、单号、设备编号与端口号（旧版 findProcessIdentity）。
+/// 读取未删除订单的 ID、单号、设备编号与端口号。
 pub async fn find_process_identity(
     pool: &MySqlPool,
     order_id: u64,
@@ -656,7 +654,7 @@ pub async fn find_process_identity(
     })
 }
 
-/// 按订单身份分页读取充电过程采样（旧版 ListChargeProcessPoints）：
+/// 按订单身份分页读取充电过程采样：
 /// 按 ID 升序多取一条判断是否有下一页；功率换算为 W、电量换算为 kWh。
 pub async fn list_process_points(
     pool: &MySqlPool,
@@ -694,8 +692,8 @@ pub async fn list_process_points(
     }
 }
 
-/// 订单关联的退款单（按订单支付单过滤，倒序；旧版无此端点，字段取自
-/// refund_record 与 refund_review，语义对齐旧版 GET /admin/billing/refunds）。
+/// 订单关联的退款单（按订单支付单过滤，按 id 倒序；字段取自
+/// refund_record 与 refund_review，语义与后台订单详情 API 一致）。
 pub async fn list_order_refunds(
     pool: &MySqlPool,
     order_id: u64,
@@ -725,7 +723,7 @@ pub async fn list_order_refunds(
 // 支付单列表
 // ---------------------------------------------------------------------------
 
-/// 后台支付单列表查询条件（旧版 PaymentOrderQuery 的对外子集；None 不过滤）。
+/// 后台支付单列表查询条件。
 #[derive(Debug, Clone, Default)]
 pub struct PaymentOrderListQuery {
     /// 页码，从 1 开始。
@@ -736,7 +734,7 @@ pub struct PaymentOrderListQuery {
     pub order_no: Option<String>,
     /// charge / wallet_recharge。
     pub biz_type: Option<String>,
-    /// payment_order.pay_method 的取值（旧版入口仅开放 wechat / balance）。
+    /// payment_order.pay_method 的取值。
     pub pay_method: Option<String>,
     /// 金额确认状态筛选（按派生表达式过滤）。
     pub payment_status: Option<String>,
@@ -746,7 +744,7 @@ pub struct PaymentOrderListQuery {
     pub to: Option<DateTime<Utc>>,
 }
 
-/// 当前有效关联充电单的标量子查询（旧版 linked；仅一条，不放大分页）。
+/// 当前有效关联充电单的标量子查询。
 fn linked_charge_order(column: &str) -> String {
     format!(
         "(SELECT `c`.`{column}` FROM `charge_order` `c` WHERE `p`.`biz_type` = 'charge' \
@@ -755,7 +753,7 @@ fn linked_charge_order(column: &str) -> String {
     )
 }
 
-/// 后台支付单分页列表（旧版 PaymentOrders）：创建时间与主键倒序分页，
+/// 后台支付单分页列表：创建时间与主键倒序分页，
 /// 金额确认状态按派生表达式过滤，充值单始终不关联充电单。
 pub async fn list_payment_orders(
     pool: &MySqlPool,

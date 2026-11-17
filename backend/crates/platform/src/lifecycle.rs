@@ -1,6 +1,6 @@
 //! 受管理后台任务框架：统一取消与等待，保证「先任务后连接池」的停机顺序。
 //!
-//! 对应旧版规则：所有受管理请求和后台任务退出后才能关闭数据库、Redis 与客户端连接池。
+//! 停机顺序：先等受管后台任务全部退出，再关闭数据库、Redis 与连接池。
 
 use std::time::Duration;
 use tokio::sync::watch;
@@ -18,6 +18,7 @@ impl CancelToken {
         Self { rx }
     }
 
+    /// 是否已收到停机取消信号。
     pub fn is_cancelled(&self) -> bool {
         *self.rx.borrow()
     }
@@ -49,6 +50,7 @@ pub struct TaskManager {
 }
 
 impl TaskManager {
+    /// 创建任务管理器（初始未取消）。
     pub fn new() -> Self {
         let (tx, _) = watch::channel(false);
         Self {

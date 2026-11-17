@@ -1,6 +1,6 @@
 //! marketing 域错误类型（蓝图第五章：域内错误词表集中收口）。
 
-/// 券视图错误：输入不合法或存储不可用（旧版 InputError）。
+/// 券视图错误：输入不合法或存储不可用。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CouponQueryError {
     /// 请求内容不合法（400/1005，文案透出）。
@@ -23,8 +23,7 @@ impl From<sqlx::Error> for CouponQueryError {
     }
 }
 
-/// 券域错误（旧版 InputError / ErrCouponGrant / operations.ErrForbidden /
-/// gorm.ErrRecordNotFound 的映射源；HTTP 层按变体转码值）。
+/// 券域错误（记录缺失、权限与并发冲突等；HTTP 层按变体转码值）。
 #[derive(Debug, thiserror::Error)]
 pub enum CouponError {
     /// 请求内容不合法（400/1005，文案透出）。
@@ -54,7 +53,7 @@ impl From<anyhow::Error> for CouponError {
     }
 }
 
-/// 券域错误的营销专用变体：HTTP 下单链路按旧版码值映射
+/// 券域错误的营销专用变体：HTTP 下单链路按
 /// （NotFound→400、Exhausted→409/2001、Threshold→400），与通用 Conflict 区分。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CouponRedeemError {

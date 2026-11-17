@@ -1,4 +1,4 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 集成测试在持锁场景下跨 await；已配置 clippy 豁免。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
@@ -6,7 +6,7 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 阶段 03 批 2 主缝集成测试：设备导入→台账、故障工单全流转、告警认领、C 端站点。
+//! 主缝集成测试：设备导入→台账、故障工单全流转、告警认领、C 端站点。
 
 mod support;
 
@@ -124,7 +124,7 @@ async fn import_devices_and_fault_flow() {
     );
 
     // 运行态合并契约（回归防护）：列表行带站点/厂商名、心跳/信号/端口与
-    // runtime_available（device 行存在即可读），对齐旧版 Management.Enrich。
+    // runtime_available（device 行存在即可读），与对外 API 契约一致。
     let row = body["data"]["items"]
         .as_array()
         .unwrap()

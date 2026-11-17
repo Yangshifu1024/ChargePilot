@@ -1,6 +1,6 @@
-//! 超时兜底扫描（旧版 worker 定时循环的状态机出口对应物）。
+//! 超时兜底扫描。
 //! 启动超时：paid 订单的 pending/sent 命令超期未 ack → 订单 refunding
-//! （旧版 MarkStartRejectedInTx 同款路径，ADR 002 补充的超时出口）+
+//! +
 //! 登记退款；由定时任务驱动，注入时钟推进可测。SQL 在 repo/sweeper.rs。
 
 use crate::repo::{insert_charge_refund_tx, intent_payment_id_tx, mark_intent_refund_required_tx};
@@ -10,7 +10,7 @@ use sqlx::{Acquire, MySqlPool};
 /// 兜底扫描器。
 pub struct StartTimeoutSweeper {
     pub pool: MySqlPool,
-    /// 启动超时阈值（分钟；旧版 paid 未起充的兜底出口）。
+    /// 启动超时阈值。
     pub timeout_minutes: i64,
 }
 
@@ -25,9 +25,9 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
         let mut conn = pool.acquire().await?;
         set_read_committed(&mut conn).await?;
         let mut tx = conn.begin().await?;
-        // 证据链（票 14）：事务内读取行内状态分派证据，paid → refunding
+        // 证据链：事务内读取行内状态分派证据，paid → refunding
         // （超时出口与设备拒绝启动同款路径，state-machine.md 迁移 2；failed
-        // 保持死值）。行不存在或状态已非 paid 时不迁移不更新——与旧版条件
+        // 保持死值）。行不存在或状态已非 paid 时不迁移不更新——与
         // UPDATE 静默 0 行语义一致（updated != 1 跳过该行）。
         let order_status = sweeper::order_status_by_no_tx(&mut tx, id, &order_no).await?;
         let paid = order_status
@@ -46,7 +46,7 @@ pub async fn sweep_once(pool: &MySqlPool, timeout_minutes: i64) -> anyhow::Resul
         };
         if updated == 1 {
             let payment_order_id = intent_payment_id_tx(&mut tx, id).await?;
-            // 旧版 Go 切片自动截断，Rust 越界 panic：按实际长度截断。
+            // 退款单号取自 command_id，按实际长度截断至 32 字符。
             let cleaned = command_id.replace('-', "");
             let refund_no = format!("WR{}", &cleaned[..cleaned.len().min(32)]);
             insert_charge_refund_tx(&mut tx, &refund_no, payment_order_id, id, reason).await?;

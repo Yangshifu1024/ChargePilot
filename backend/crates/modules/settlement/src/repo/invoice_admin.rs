@@ -3,12 +3,12 @@
 use chargepilot_domain::settlement::{InvoiceAdminReviewStatus, InvoiceRequestReviewStatus};
 use sqlx::{MySqlConnection, MySqlPool};
 
-/// 后台发票队列行（旧版 map 投影定形；JSON 字段名与旧版一致）。
+/// 后台发票队列行。
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct InvoiceAdminRow {
     pub invoice_request_id: u64,
     pub invoice_no: String,
-    /// 用户 ID 转字符串（旧版 DecimalizeRowIDs）。
+    /// 用户 ID 转字符串。
     pub user_id: String,
     pub biz_type: String,
     pub biz_id: u64,
@@ -19,19 +19,19 @@ pub struct InvoiceAdminRow {
     pub email: Option<String>,
     /// 申请单当前审核状态（pending/approved/rejected/issued）。
     pub review_status: String,
-    /// 审核队形的当前状态：优先取审核表，无记录回退申请单（旧版 COALESCE）。
+    /// 审核队形的当前状态：优先取审核表，无记录回退申请单。
     pub queue_review_status: String,
     pub queue_reject_reason: Option<String>,
     pub first_reviewer_id: Option<String>,
     pub second_reviewer_id: Option<String>,
-    /// 申请单上登记的拒绝原因（旧版 i.reject_reason）。
+    /// 申请单上登记的拒绝原因。
     pub reject_reason: Option<String>,
     /// 发票链接：优先取审核表（二审登记的生效链接）。
     pub invoice_url: Option<String>,
     pub created_at: String,
 }
 
-/// 全量倒序读取未删除发票申请及人工队列结论（旧版 ListInvoiceRequests）。
+/// 全量倒序读取未删除发票申请及人工队列结论。
 /// queue_ 前缀字段是审核进度汇总：优先取审核表，没有再回退申请单本身。
 pub async fn list_invoice_requests(db: &MySqlPool) -> Result<Vec<InvoiceAdminRow>, sqlx::Error> {
     sqlx::query_as::<_, InvoiceAdminRow>(

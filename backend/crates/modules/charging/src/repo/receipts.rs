@@ -22,7 +22,7 @@ pub async fn lock_receipt_order_tx(
     .await
 }
 
-/// 幂等：同命令已登记的启动回执（旧版逐列核对由调用方完成）。
+/// 幂等：同命令已登记的启动回执。
 pub async fn find_start_receipt_tx(
     c: &mut MySqlConnection,
     command_id: &str,
@@ -81,7 +81,7 @@ pub async fn insert_start_receipt_tx(
     Ok(())
 }
 
-/// 启动成功：命令 acked（消费目标状态证据，票 14）。
+/// 启动成功：命令 acked（消费目标状态证据，）。
 pub async fn ack_command_tx(
     c: &mut MySqlConnection,
     order_id: u64,
@@ -127,7 +127,7 @@ pub async fn find_end_receipt_tx(
     Ok(row.map(|(json,)| json))
 }
 
-/// 成功启动凭据（旧版 start.PortID 匹配）。
+/// 成功启动凭据。
 pub async fn find_start_credential_tx(
     c: &mut MySqlConnection,
     order_id: u64,
@@ -160,7 +160,7 @@ pub async fn insert_end_receipt_tx(
     Ok(())
 }
 
-/// 计费任务登记（批 5 的结算批次消费；重复订单幂等跳过）。
+/// 登记计费任务（重复订单幂等跳过；供结算批次后续领取）。
 pub async fn insert_billing_job_tx(
     c: &mut MySqlConnection,
     order_id: u64,

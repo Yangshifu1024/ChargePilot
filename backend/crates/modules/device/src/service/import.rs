@@ -40,7 +40,7 @@ fn default_port_count() -> u32 {
 /// 1. 输入校验（批量 ≤100、device_id 8–32 位、批内忽略大小写判重）
 /// 2. 厂商须 enabled 且 dc589+tcp，port_count ≤20
 /// 3. 按忽略大小写 device_id 排序锁定（防死锁）；导入身份 INSERT IGNORE
-///    首次登记 + 锁读比对（同号不同配置 → 409）
+/// 首次登记 + 锁读比对（同号不同配置 → 409）
 /// 4. provision 幂等写入（INSERT IGNORE + 比对）+ device/device_port 台账
 /// 5. device_meta 台账创建（status=enabled）+ 导入任务完成 + 审计
 pub async fn import_devices(

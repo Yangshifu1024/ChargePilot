@@ -28,7 +28,7 @@ impl Exchanger {
 }
 
 /// development 模式：code 必须形如 `dev:<account>`（account 为 1–64 位字母数字下划线连字符），
-/// 返回独立命名空间 openid（旧版语义）。
+/// 返回独立命名空间 openid。
 fn exchange_development(code: &str) -> Result<WeChatIdentity, String> {
     let Some(account) = code.strip_prefix("dev:") else {
         return Err("invalid development account".into());
@@ -49,9 +49,9 @@ fn exchange_development(code: &str) -> Result<WeChatIdentity, String> {
 
 /// wechat 模式：调用 jscode2session。网络/协议失败返回可记录的错误串。
 async fn exchange_wechat(appid: &str, secret: &str, code: &str) -> Result<WeChatIdentity, String> {
-    // 阶段 04 引入 reqwest 后替换为真实调用；当前显式未实现，避免假装已接入
+    // 待接入 HTTP 客户端后实现真实调用；当前显式未实现，避免假装已接入。
     let _ = (appid, secret, code);
-    Err("wechat exchange requires network client (阶段 04 接入 reqwest)".into())
+    Err("wechat exchange requires network client (待接入 HTTP 客户端)".into())
 }
 
 #[cfg(test)]

@@ -1,8 +1,7 @@
 //! 号段模式 ID 分配器（ADR 003）：内存号段 + 水位 CAS 持久化 + 资金强一致选项。
 //!
-//! 复用 `snowflake_state` 表（id=1 行）：`last_millisecond` 列语义从旧版「毫秒时间戳」
-//! 变更为「已分配上界水位」（表结构不变；旧版雪花实现废弃，列 COMMENT 的历史语义
-//! 在下一次 DDL 修订时更新）。水位 CAS：`UPDATE ... WHERE last_millisecond = 旧值`，
+//! 复用 `snowflake_state` 表（id=1 行）：`last_millisecond` 列表示「已分配号段上界水位」
+//! （列名历史遗留，语义与 DDL COMMENT 可在后续迁移中统一）。水位 CAS：`UPDATE ... WHERE last_millisecond = 旧值`，
 //! 号段耗尽且水位未落库时阻塞等待，不静默重用。
 
 use sqlx::MySqlPool;
@@ -25,6 +24,7 @@ pub struct SegmentAllocator {
 }
 
 impl SegmentAllocator {
+    /// 绑定连接池与每段号数量（`segment_size` 为一次 CAS 预取的 ID 个数）。
     pub fn new(pool: MySqlPool, segment_size: i64) -> Self {
         Self {
             pool,
@@ -158,7 +158,7 @@ mod tests {
         LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
     }
 
-    #[allow(clippy::disallowed_methods)] // 票 16 豁免：测试模块的连接变量
+    #[allow(clippy::disallowed_methods)] // 集成测试：读取 TEST_MYSQL_URL 环境变量
     fn test_pool_url() -> String {
         std::env::var("TEST_MYSQL_URL").unwrap_or_default()
     }

@@ -1,15 +1,13 @@
-# 工作区 clippy 配置（二期票 03/16）。
-# 测试代码允许 unwrap/expect（生产代码由 workspace.lints 的 unwrap_used/expect_used=deny 把守）；
-# 票 16 将在此追加 disallowed-methods（std::env::var 直读禁令及两类登记豁免）。
+# 工作区 clippy 配置。
+# 测试代码允许 unwrap/expect（生产代码由 workspace.lints 的 unwrap_used/expect_used=deny 把守）。
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 
-# 票 16：环境变量直读禁令——全部读取收编进 platform::config 的统一入口
-# （EnvSource/SystemEnv），装配根从 Config 结构消费。豁免（显式 allow 登记）：
-# 测试模块的连接变量、migrate/压测子命令的数据库地址。
+# 环境变量直读禁令：全部经 platform::config 的 EnvSource 统一读取，装配根从 Config 消费。
+# 豁免（源码处显式 allow）：测试模块连接变量、migrate/压测子命令的数据库地址。
 disallowed-methods = [
-  { path = "std::env::var", reason = "环境变量直读禁令（票 16）：经 platform::config::EnvSource 统一读取" },
-  { path = "std::env::var_os", reason = "环境变量直读禁令（票 16）：经 platform::config::EnvSource 统一读取" },
+  { path = "std::env::var", reason = "环境变量须经 platform::config::EnvSource 统一读取" },
+  { path = "std::env::var_os", reason = "环境变量须经 platform::config::EnvSource 统一读取" },
 ]
 
 # ApiError 按契约携带字段级错误数组与内部原因（code+message+fields+cause），

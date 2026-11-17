@@ -1,21 +1,20 @@
-//! 钱包退款所需的支付来源锁定（旧版 internal/payment/recharge_source_repo.go 对齐）。
+//! 钱包退款所需的支付来源锁定。
 //! 归属：payment_order 表读取归 payment；本实现是 wallet::RechargeSourceReader 的
 //! 唯一生产实现（cmd 装配注入）。
 //!
-//! 锁定策略（死锁防御，逐字对齐旧版）：先不加锁读取已支付候选 ID，再用主键
-//! 按 ID 锁定并复核状态。不能直接按支付状态扫描加锁，否则可能锁到待支付记录，
-//! 与到账事务形成死锁。
+//! 锁定策略（死锁防御）：先无锁列出已支付候选 ID，再按主键 FOR UPDATE 复核状态。
+//! 禁止按状态扫描加锁，以免锁住待支付行并与到账事务死锁。
 
 use chargepilot_domain::money::{BizType, PayMethod, PaymentOrderStatus};
 use chargepilot_mod_wallet::WalletError;
 use chargepilot_mod_wallet::refund::RechargeSource;
 use sqlx::MySqlConnection;
 
-/// 充值来源读取器（旧版 RechargeSources）。
+/// 充值来源读取器。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RechargeSources;
 
-/// 仍可发起渠道退款的支付单状态集合（旧版 refundablePaymentStatuses）。
+/// 仍可发起渠道退款的支付单状态集合。
 fn refundable_statuses() -> [PaymentOrderStatus; 2] {
     [
         PaymentOrderStatus::Paid,
@@ -61,7 +60,7 @@ impl RechargeSources {
         if ids.is_empty() {
             return Ok(out);
         }
-        // 主键逐个锁定并复核状态（与旧版 FORCE INDEX (PRIMARY) + IN 等价）。
+        // 主键逐个锁定并复核状态（与FORCE INDEX (PRIMARY) + IN 等价）。
         let placeholders = vec!["?"; ids.len()].join(",");
         let sql = format!(
             "SELECT `id`, `biz_id`, `paid_cents`, `total_cents`, `refunded_cents`, \

@@ -1,4 +1,4 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 集成测试在持锁场景下跨 await；已配置 clippy 豁免。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
@@ -6,7 +6,7 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 阶段 04 批 5 主缝集成测试：计费批次（费用回执幂等/金额封顶/余款退款登记）
+//! 主缝集成测试：计费批次（费用回执幂等/金额封顶/余款退款登记）
 //! 与退款执行器（支付单推进/订单 refunded/充值退款回账）。
 
 mod support;
@@ -361,7 +361,7 @@ async fn billing_batch_and_refund_executor() {
     assert_eq!(total_b, 100, "金额模式实费 400 分超出预付应封顶在预付");
     assert_eq!(
         shortfall_b, 0,
-        "回执缺口恒 0（旧版语义）：入账总额封顶后不超预付，账单缺口同样恒 0"
+        "回执缺口恒 0：入账封顶不超预付，账单缺口同样恒 0"
     );
     assert_eq!(
         (electric_b, service_b),

@@ -1,4 +1,4 @@
-//! 订单域后台门面（票 18：先归位反馈工单区块；admin_orders 热区批并入）。
+//! 订单域后台门面。
 use crate::errormap::ops_error;
 use crate::errormap::{feedback_error, order_storage_error, rid_of};
 use crate::guard::AdminGuard;
@@ -20,7 +20,7 @@ struct CasePaging {
     status: Option<String>,
 }
 
-/// 反馈状态白名单（旧版 ReadAdminPage(c, "pending processed closed")）。
+/// 反馈状态白名单。
 async fn list_feedback(
     State(deps): State<Arc<ApiDeps>>,
     guard: AdminGuard,
@@ -32,7 +32,7 @@ async fn list_feedback(
     if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::FEEDBACK_READ, &rid) {
         return resp;
     }
-    // 状态过滤白名单语义收编共享提取器（票 17）；错误文案逐字保留。
+    // 状态过滤白名单语义。
     if crate::params::StatusFilter::allowed(
         q.status.as_deref(),
         &["pending", "processed", "closed"],
@@ -93,7 +93,7 @@ async fn reply_feedback(
 // 审计日志
 // ---------------------------------------------------------------------------
 
-/// 反馈工单路由（票 18：原 admin_misc 区块归位）。
+/// 反馈工单路由。
 pub fn router() -> axum::Router<Arc<ApiDeps>> {
     axum::Router::new()
         .route("/api/v1/admin/feedback", axum::routing::get(list_feedback))
@@ -115,14 +115,14 @@ fn real_ip(headers: &HeaderMap) -> String {
 // 反馈工单
 // ---------------------------------------------------------------------------
 
-// ---- 订单管理（票 19：原 admin_orders.rs 整体并入）----
+// ---- 订单管理----
 
-// 订单域后台门面（票 19 热区批：原 admin_orders.rs 整体并入；feedback 见本目录 admin.rs）。
+// 订单域后台门面。
 
 use chargepilot_mod_order::admin_query::{self, AdminOrderListQuery, PaymentOrderListQuery};
 use chrono::Datelike;
 
-/// 订单内部状态全量词表（旧版 orderdomain.AllStatuses）。
+/// 订单内部状态全量词表。
 const ORDER_STATUSES: [&str; 8] = [
     "pending_payment",
     "paid",
@@ -134,19 +134,19 @@ const ORDER_STATUSES: [&str; 8] = [
     "refunded",
 ];
 
-/// 业务状态词表（旧版 AllBusinessStatuses）。
+/// 业务状态词表。
 const BUSINESS_STATUSES: [&str; 3] = ["pending_start", "charging", "completed"];
 
-/// 订单支付状态词表（旧版 AllPaymentStatuses）。
+/// 订单支付状态词表。
 const PAYMENT_STATUSES: [&str; 4] = ["pending", "paid", "refunded", "partial_refunded"];
 
-/// 启动来源词表（旧版 AllStartSources）。
+/// 启动来源词表。
 const START_SOURCES: [&str; 3] = ["payment", "balance", "card"];
 
-/// 支付单用途词表（旧版 money.AllPaymentBizTypes）。
+/// 支付单用途词表。
 const PAYMENT_BIZ_TYPES: [&str; 2] = ["charge", "wallet_recharge"];
 
-/// 支付单入口开放的支付方式（旧版 AdminOneOf 白名单 "wechat balance"）。
+/// 支付单入口开放的支付方式。
 const PAY_METHODS: [&str; 2] = ["wechat", "balance"];
 
 pub fn admin_router() -> axum::Router<Arc<ApiDeps>> {
@@ -174,8 +174,8 @@ pub fn admin_router() -> axum::Router<Arc<ApiDeps>> {
         )
 }
 
-/// 存储层错误统一映射（旧版 AdminResourceFailure 的 503 分支文案）。
-/// 路径参数 :id 解析（旧版 AdminPathID）：非负整数或零均拒绝。
+/// 存储层错误统一映射。
+/// 路径参数 :id 解析：非负整数或零均拒绝。
 fn parse_path_id(raw: &str, rid: &str) -> Result<u64, Response> {
     match raw.parse::<u64>() {
         Ok(id) if id > 0 => Ok(id),
@@ -188,7 +188,7 @@ fn parse_path_id(raw: &str, rid: &str) -> Result<u64, Response> {
     }
 }
 
-/// 关键词与状态校验（旧版 ReadAdminPage：关键词 ≤128 字，状态落白名单）。
+/// 关键词与状态校验。
 fn validate_keyword_status(
     keyword: Option<&str>,
     status: Option<&str>,
@@ -208,7 +208,7 @@ fn validate_keyword_status(
     Ok(())
 }
 
-/// RFC3339 时间参数解析（旧版 time.Parse(RFC3339Nano)）。
+/// RFC3339 时间参数解析。
 fn parse_time(
     raw: Option<&str>,
     message: &str,
@@ -378,7 +378,7 @@ async fn order_detail(
         }
         Err(e) => return order_storage_error(e, &rid),
     }
-    // 仅对实时持有退款创建权限的操作人回填申请人，供界面显示退款入口（旧版语义）。
+    // 仅对实时持有退款创建权限的操作人回填申请人，供界面显示退款入口（契约约定）。
     if guard.has("order.refund.create") {
         row.refund_applicant_id = Some(guard.profile.id.to_string());
     }
@@ -409,7 +409,7 @@ async fn order_timeline(
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    // 先确认订单存在，避免对缺失订单返回一份空时间线（旧版语义）。
+    // 先确认订单存在，避免对缺失订单返回一份空时间线（契约约定）。
     match admin_query::order_exists(&deps.db, order_id).await {
         Ok(true) => {}
         Ok(false) => {
@@ -433,9 +433,9 @@ struct ProcessParams {
     limit: Option<String>,
 }
 
-/// 游标与页长解析（旧版 parseOrderProcessQuery + ProcessService.Read 校验）。
+/// 游标与页长解析。
 fn parse_process_params(q: &ProcessParams, rid: &str) -> Result<(u64, u32), Response> {
-    // 游标分页校验收编共享提取器（票 17）；错误文案逐字保留旧契约。
+    // 游标分页校验。
     let parsed = crate::params::CursorParams::parse(
         q.after_id.as_deref(),
         q.limit.as_deref(),
@@ -474,7 +474,7 @@ async fn order_process(
         }
         Err(e) => return order_storage_error(e, &rid),
     };
-    // 读取失败统一为过程暂不可用（旧版 ErrProcessUnavailable 语义），不泄露底层错误。
+    // 读取失败统一为过程暂不可用，不泄露底层错误。
     match admin_query::list_process_points(&deps.db, &identity, after_id, limit).await {
         Ok((items, next)) => httpx::ok(json!({"items": items, "next_after_id": next}), &rid),
         Err(e) => {
@@ -550,7 +550,7 @@ async fn payment_orders(
     if let Some(resp) = deny(&guard, chargepilot_mod_ops::perms::ORDER_READ, &rid) {
         return resp;
     }
-    // 旧版：状态白名单为空（任何非空 status 拒绝），关键词 ≤128 字。
+    // ：状态白名单为空（任何非空 status 拒绝），关键词 ≤128 字。
     if let Err(resp) = validate_keyword_status(q.keyword.as_deref(), q.status.as_deref(), &[], &rid)
     {
         return resp;
@@ -585,7 +585,7 @@ async fn payment_orders(
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    // 旧版 paymentTimeRange：MySQL 可表示的年份范围（1000–9999）。
+    // paymentTimeRange：MySQL 可表示的年份范围（1000–9999）。
     for t in [from, to].into_iter().flatten() {
         let year = t.year();
         if !(1000..=9999).contains(&year) {

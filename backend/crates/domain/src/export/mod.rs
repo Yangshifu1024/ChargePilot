@@ -1,4 +1,4 @@
-//! 导出域共享词表（票 12，自 operations 迁出）。
+//! 导出域共享词表。
 
 use crate::wordlist::wordlist_enum;
 
@@ -30,7 +30,7 @@ pub const LEGACY_PDF: &str = "pdf";
 mod wordlist_tests {
     use super::*;
 
-    /// 字面量对照（票 12 硬规则）：serde 输出与 DB ENUM 字面量逐字节一致。
+    /// 字面量对照：serde 输出与 DB ENUM 字面量逐字节一致。
     #[test]
     fn db_literals_match_serde() {
         use serde_json::to_string as json;

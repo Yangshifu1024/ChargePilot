@@ -144,7 +144,7 @@ pub async fn find_card_charge(
     ))
 }
 
-/// 统计端口当前占用的刷卡会话数（旧版 ActiveSessionCount）。
+/// 统计端口当前占用的刷卡会话数。
 pub async fn active_session_count(pool: &MySqlPool, port_code: &str) -> Result<i64, sqlx::Error> {
     let count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM `card_charge` WHERE `active_port` = ?")

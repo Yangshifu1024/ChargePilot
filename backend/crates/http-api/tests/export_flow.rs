@@ -1,4 +1,4 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 集成测试在持锁场景下跨 await；已配置 clippy 豁免。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
@@ -6,10 +6,10 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 阶段 05 批 5 主缝集成测试：导出受理（同步生成）→ 列表/详情 → CSV/XLSX
+//! 主缝集成测试：导出受理（同步生成）→ 列表/详情 → CSV/XLSX
 //! 下载（表头与行数，不逐字节比对）→ 同请求号重放不换任务号 → 换参数冲突
 //! → 受限范围拒绝账单导出、订单经设备表过滤 → 到期后下载 410 并即时清理
-//! → 定时清理回收文件。管理端走 HTTP，到期清理直调模块函数（旧版定时循环
+//! → 定时清理回收文件。管理端走 HTTP，到期清理直调模块函数（定时循环
 //! 调用缝）。EXPORT_DIR 是进程级环境变量，全部场景必须在同一测试内串行完成。
 
 mod support;
@@ -219,7 +219,7 @@ async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
         .join(format!("chargepilot-export-test-{}", rand_suffix()))
         .to_string_lossy()
         .into_owned();
-    // 导出目录经统一配置注入 ApiDeps（票 16：HTTP 层不再直读环境变量）。
+    // 导出目录经统一配置注入 ApiDeps。
     let app = TestApp::builder().with_export(&export_dir, 0).build().await;
     let router = app.router;
     let db = app.db;
@@ -478,7 +478,7 @@ async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
         "到期文件应已删除"
     );
 
-    // 定时清理（旧版循环调用缝）：XLSX 任务到期后清理返回 1 并删文件。
+    // 定时清理：XLSX 任务到期后清理返回 1 并删文件。
     sqlx::query(
         "UPDATE `export_task` SET `expires_at` = NOW(3) - INTERVAL 1 HOUR WHERE `task_no` = ?",
     )
@@ -507,7 +507,7 @@ async fn export_lifecycle_csv_xlsx_replay_and_expiry() {
     assert_eq!(removed, 0, "重复清理不得重复计数");
 
     // 受限数据范围：账单只允许全局范围（403）；订单经 device_meta 子查询
-    // 过滤为空集——修正旧版直接拼 charge_order.station_id 报未知列的缺陷。
+    // 过滤为空集——修正直接拼 charge_order.station_id 报未知列的缺陷。
     let (token_b, admin_b, role_b) = login_export_admin(
         &router,
         &db,

@@ -1,7 +1,5 @@
-//! 退款执行器（旧版 worker/refund/dispatch.go 的 simulation 通道对应物）。
-//! 领取 pending/automatic 到期退款 → 渠道执行（simulation 直接成功）→
-//! 支付单 refunded_cents 推进（CHECK 约束保护）→ 订单 refunding→refunded。
-//! 真实渠道执行随批 6 微信封装接入；claimed 领取防并发重复执行。SQL 在 repo/。
+//! 退款执行器：领取到期自动退款 → 渠道执行 → 支付单与订单状态推进。
+//! simulation 通道直接成功；claimed 条件更新防并发重复执行。SQL 在 repo/。
 
 use crate::repo::{refund_executor as repo, set_read_committed};
 use chargepilot_domain::money::{BizType, PaymentOrderStatus};
@@ -77,7 +75,7 @@ async fn execute_one(
         repo::fail_refund(pool, refund_id, "退款超出可退余额").await?;
         return Ok(true);
     }
-    // 渠道执行：simulation 直接成功（真实渠道随批 6；未知结果走 retry_later）。
+    // 渠道执行：simulation 直接成功；未知结果走 retry_later。
     let new_refunded = refunded_cents + refund_cents;
     let new_status = if new_refunded >= paid_cents {
         PaymentOrderStatus::Refunded
@@ -113,13 +111,9 @@ async fn execute_one(
         )
         .await?;
     }
-    // 充电订单：refunding → refunded（余款退清；旧版 SetStatusRefunded 语义）。
-    // 证据链（票 14）：读取行内状态分派证据，refunding → refunded（迁移 5）；
-    // 行不存在或状态非 refunding 时不迁移不更新——保留旧版条件 UPDATE 静默
-    // 0 行语义（后续事件照常登记，与原行为一致）。
+    // 充电订单：余款退清后 refunding → refunded；条件 UPDATE 不满足时静默 0 行。
     if biz_type == BizType::Charge {
-        // 订单 refunding → refunded：证据链归 order 域原语（证据缺失或条件
-        // 0 行静默返回，保留旧版语义）。
+        // order 域原语：证据缺失或状态非 refunding 时不更新、不报错（静默 0 行）。
         chargepilot_mod_order::advance_refunded_tx(&mut *c, biz_id, payment_order_id).await?;
         let event_id = format!("RF{refund_id:020}");
         chargepilot_mod_order::append_event_in_tx(

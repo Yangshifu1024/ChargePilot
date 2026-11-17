@@ -1,4 +1,4 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 集成测试在持锁场景下跨 await；已配置 clippy 豁免。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
@@ -6,7 +6,7 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 阶段 04 批 2 主缝集成测试：钱包退款申请（预占拆单）、频次冻结、风控审核/解冻全链。
+//! 主缝集成测试：钱包退款申请（预占拆单）、频次冻结、风控审核/解冻全链。
 //! 数据准备用 SQL 直插 + 服务级入账函数（credit_recharge_in_tx，真库事务）；
 //! 断言 HTTP 响应与库中资金行（spec 测试决策）。
 
@@ -48,7 +48,7 @@ async fn login_user(router: &axum::Router, tag: &str) -> (String, u64) {
     .await;
     assert_eq!(status, StatusCode::OK, "用户登录失败: {body}");
     let token = body["data"]["jwt"].as_str().unwrap().to_string();
-    // user_id 是精确十进制字符串（旧版语义，避免 JS 精度丢失）
+    // user_id 是精确十进制字符串（契约约定，避免 JS 精度丢失）
     let uid: u64 = body["data"]["user_id"]
         .as_str()
         .expect("user_id 字符串")
@@ -468,7 +468,7 @@ async fn wallet_refund_flow() {
         .iter()
         .find(|v| v["request_id"] == freeze_request.as_str())
         .expect("申请应在列表");
-    // 旧版语义：分笔为 pending（执行器未领取）时展示态保持 pending，processing 只在渠道受理后出现。
+    // 契约约定：分笔为 pending（执行器未领取）时展示态保持 pending，processing 只在渠道受理后出现。
     assert_eq!(
         view["status"], "pending",
         "已批准在途（分笔 pending）应显示 pending"

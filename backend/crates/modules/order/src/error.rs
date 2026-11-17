@@ -30,7 +30,7 @@ impl From<OrderError> for FeedbackError {
     }
 }
 
-/// 用户提交反馈错误（HTTP 映射沿用旧版字面量契约）。
+/// 用户提交反馈错误。
 #[derive(Debug, thiserror::Error)]
 pub enum FeedbackSubmitError {
     /// 订单引用或反馈字段校验失败（400/1005，文案透出）。

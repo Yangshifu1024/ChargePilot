@@ -1,7 +1,6 @@
-//! 营销词表与优惠券纯规则（旧版 marketing/status.go、rules_coupon.go、
-//! rules_coupon_discount.go 的单体对应物）。
-//! 语义基准：旧仓库逐行对齐；优惠计算以分单位精确（decimal 中间计算、
-//! 应付金额四舍五入到分），与旧版差分对照验收（tests/golden/discount.json）。
+//! 营销词表与优惠券、活动发放的纯规则（零 IO）。
+//! 优惠计算以分为单位：中间量用 decimal，应付金额四舍五入到分；
+//! 黄金样本见 `tests/golden/discount.json`。
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
@@ -40,8 +39,7 @@ wordlist_enum!(
 );
 
 wordlist_enum!(
-    /// coupon_activity_rule.trigger_type 列的活动触发类型（四值；
-    /// 对照表裁决由 TriggerType 更名，消除泛名歧义）。
+    /// coupon_activity_rule.trigger_type 列的活动触发类型（四值）。
     ActivityTriggerType: {
         FirstRecharge = "first_recharge",
         InviteReward = "invite_reward",
@@ -71,7 +69,7 @@ wordlist_enum!(
     }
 );
 
-/// 优惠计算输入：发放券关联的模板规则（旧版 CouponGrant 的优惠字段）。
+/// 优惠计算输入：发放券关联的模板规则。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GrantRule {
     /// 优惠类型（词表枚举，优惠计算 match 穷尽分派）。
@@ -86,7 +84,7 @@ pub struct GrantRule {
     pub free_minutes: u32,
 }
 
-/// 优惠计算错误（旧版 ErrCouponThreshold / ErrCouponNotFound 语义）。
+/// 优惠计算错误。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiscountError {
     /// 未达到使用门槛或订单金额非正。
@@ -106,10 +104,10 @@ impl std::fmt::Display for DiscountError {
 
 impl std::error::Error for DiscountError {}
 
-/// 时长券的固定服务费率（分/分钟）；旧版常量 0——时长券尚未按套餐服务费折算。
+/// 时长券的固定服务费率（分/分钟）；常量 0——时长券尚未按套餐服务费折算。
 const SERVICE_RATE_PER_MINUTE: i64 = 0;
 
-/// 按原价计算优惠（旧版 discountFor），单位分。
+/// 按原价计算优惠，单位分。
 /// 减免最多为原价；折扣先算应付额再相减；时长券优惠恒为零（固定零费率）。
 pub fn discount_for(grant: &GrantRule, total_cents: i64) -> Result<i64, DiscountError> {
     if total_cents <= 0 || grant.min_charge_cents > total_cents {
@@ -163,7 +161,7 @@ impl ToI64Round for Decimal {
     }
 }
 
-/// 发放准入需要的模板字段（旧版 CouponTemplate）。
+/// 发放准入需要的模板字段。
 #[derive(Debug, Clone, PartialEq)]
 pub struct CouponTemplate {
     pub template_id: u64,
@@ -181,14 +179,14 @@ pub struct CouponTemplate {
     pub end_at: Option<DateTime<Utc>>,
 }
 
-/// 某券模板当前的发放量（旧版 CouponUsage）。
+/// 某券模板当前的发放量。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CouponUsage {
     pub total_granted: i64,
     pub user_granted: i64,
 }
 
-/// 检查模板启用、时间有效且总量/单人份数未达上限（旧版 CheckGrantable）。
+/// 检查模板启用、时间有效且总量/单人份数未达上限。
 pub fn check_grantable(
     now: DateTime<Utc>,
     coupon: &CouponTemplate,
@@ -212,7 +210,7 @@ pub fn check_grantable(
     Ok(())
 }
 
-/// 从发券时间起计算有效小时；模板结束更早时以模板结束为上限（旧版 GrantExpiry）。
+/// 从发券时间起计算有效小时；模板结束更早时以模板结束为上限。
 pub fn grant_expiry(now: DateTime<Utc>, coupon: &CouponTemplate) -> DateTime<Utc> {
     let expires = now + chrono::Duration::hours(coupon.valid_hours as i64);
     match coupon.end_at {
@@ -221,7 +219,7 @@ pub fn grant_expiry(now: DateTime<Utc>, coupon: &CouponTemplate) -> DateTime<Utc
     }
 }
 
-/// 发放重放回执（旧版 CouponGrantReceipt）。
+/// 发放重放回执。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrantReceipt {
     pub request_id: String,
@@ -230,7 +228,7 @@ pub struct GrantReceipt {
     pub coupon_grant_id: u64,
 }
 
-/// 同请求号且券、用户一致返回首次发放 ID；不一致返回冲突（旧版 ReplayGrant）。
+/// 同请求号且券、用户一致返回首次发放 ID；不一致返回冲突。
 pub fn replay_grant(
     receipt: &GrantReceipt,
     request_id: &str,
@@ -340,7 +338,7 @@ mod tests {
             0
         );
         assert!(discount_for(&rule(DiscountType::TimeFree, 10, None, None, 0), 100).is_err());
-        // 旧版「未知类型返回 NotFound」由词表穷尽承接：match 无兜底分支，
+        // 「未知类型返回 NotFound」由词表穷尽承接：match 无兜底分支，
         // 未知字面量在 DB 解码（parse）即被拒绝，编译器保证新增类型必处理。
         assert_eq!(
             discount_for(&rule(DiscountType::TimeFree, 10, None, None, 30), 9),
@@ -436,15 +434,15 @@ mod tests {
     }
 }
 
-// ---------- 活动规则纯规则（旧版 rules_coupon_activity.go + activity_grant.go 纯部分） ----------
+// ---------- 活动规则纯规则 ----------
 
-/// 活动结束时间距今的上限（旧版 MaxActivityHorizon：365 天）。
+/// 活动结束时间距今的上限。
 pub const MAX_ACTIVITY_HORIZON: chrono::Duration = chrono::Duration::hours(365 * 24);
 
 /// 活动名称字数上限。
 pub const MAX_ACTIVITY_NAME_LENGTH: usize = 128;
 
-/// 活动规则待校验参数（旧版 ActivityRule）：时间为 RFC3339 文本，由 normalize 统一解析。
+/// 活动规则待校验参数：时间为 RFC3339 文本，由 normalize 统一解析。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActivityRuleInput {
     pub name: String,
@@ -468,10 +466,10 @@ pub struct ActivityRuleInput {
     pub end_at: String,
 }
 
-/// 校验活动并将时间统一为 UTC，空状态默认 active（旧版 NormalizeActivity）。
+/// 校验活动并将时间统一为 UTC，空状态默认 active。
 /// 满减门槛须为正，首充和节日门槛须为零；邀请奖励须配置邀请人券，金额门槛只要求非负。
 /// 结束时间不得超过当前时间 365 天后。
-/// 活动规则校验未通过（错误载荷无信息，调用方只区分成败；旧版语义）。
+/// 活动规则校验未通过（错误载荷无信息，调用方只区分成败；语义）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActivityRejected;
 
@@ -512,7 +510,7 @@ pub fn normalize_activity(
             Some(id) if id != 0 => {}
             _ => return Err(ActivityRejected),
         },
-        // 首充与节假日活动不设置门槛（旧版兜底语义，枚举穷尽后显式列出）。
+        // 首充与节假日活动不设置门槛。
         ActivityTriggerType::FirstRecharge | ActivityTriggerType::Holiday => {
             if rule.threshold_cents != 0 {
                 return Err(ActivityRejected);
@@ -528,7 +526,7 @@ pub fn normalize_activity(
 }
 
 /// 活动发券有效期：取发券起算 valid_hours 小时、券模板结束、活动结束三者最早
-/// （旧版 ActivityGrantExpiry）。
+/// 。
 pub fn activity_grant_expiry(
     now: DateTime<Utc>,
     valid_hours: i32,
@@ -548,7 +546,7 @@ pub fn activity_grant_expiry(
 }
 
 /// 单人份数归一：零或负数按一份处理，不表示不限量；总量不限由总份数字段控制
-/// （旧版 PerUserAllowance）。
+/// 。
 pub fn per_user_allowance(per_user_limit: i32) -> i64 {
     if per_user_limit <= 0 {
         1
@@ -558,7 +556,7 @@ pub fn per_user_allowance(per_user_limit: i32) -> i64 {
 }
 
 /// 邀请资格：仅对邀请奖励检查非空邀请人和禁止自邀，其他触发不受限制
-/// （旧版 InviteEligible）。
+/// 。
 pub fn invite_eligible(trigger_type: &str, inviter_id: u64, user_id: u64) -> bool {
     if ActivityTriggerType::parse(trigger_type) != Ok(ActivityTriggerType::InviteReward) {
         return true;
@@ -567,7 +565,7 @@ pub fn invite_eligible(trigger_type: &str, inviter_id: u64, user_id: u64) -> boo
 }
 
 /// 由规则、用户、事件键和奖励方生成稳定的 32 字符发放号，不使用重试时间
-/// （旧版 activityEventID：sha256(规则 ID + scope + 用户 + 事件键) 前 16 字节 hex）。
+/// 。
 pub fn activity_event_id(rule_id: u64, user_id: u64, event_key: &str, scope: &[&str]) -> String {
     use sha2::{Digest, Sha256};
     let mut key = String::new();
@@ -585,7 +583,7 @@ pub fn activity_event_id(rule_id: u64, user_id: u64, event_key: &str, scope: &[&
 }
 
 /// 触发类型到发放来源：邀请奖励归 invite_reward，其余活动归 activity
-/// （旧版 grantSourceFor；触发类型与发放来源同值不同义，经此函数转换）。
+/// 。
 pub fn grant_source_for(trigger_type: &str) -> &'static str {
     if ActivityTriggerType::parse(trigger_type) == Ok(ActivityTriggerType::InviteReward) {
         GrantSource::InviteReward.as_str()
@@ -594,12 +592,12 @@ pub fn grant_source_for(trigger_type: &str) -> &'static str {
     }
 }
 
-/// 充值请求号生成稳定事件键（旧版 ActivityEventKeyForRecharge）。
+/// 充值请求号生成稳定事件键。
 pub fn activity_event_key_for_recharge(request_id: &str) -> String {
     format!("recharge:{request_id}")
 }
 
-/// 充电订单号生成稳定事件键（旧版 ActivityEventKeyForOrder）。
+/// 充电订单号生成稳定事件键。
 pub fn activity_event_key_for_order(order_no: &str) -> String {
     format!("order:{order_no}")
 }
@@ -714,7 +712,7 @@ mod activity_tests {
 mod wordlist_tests {
     use super::*;
 
-    /// 字面量对照（票 12 硬规则）：serde 输出与 DB ENUM 字面量逐字节一致。
+    /// 字面量对照：serde 输出与 DB ENUM 字面量逐字节一致。
     #[test]
     fn db_literals_match_serde() {
         use serde_json::to_string as json;

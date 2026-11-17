@@ -1,15 +1,15 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 单台设备主链闭环集成测试（TEST_MYSQL_URL 门控）：
+//! 设备 TCP 注册 → 支付订单 → 启动命令经会话下发（B7 帧核对）→
+//! B8 启动应答推进订单 charging → BB 结束上报推进 completed + 计费任务 →
+//! 停机信号收尾。管理面走真库，设备面走真实 TCP。
+//! 测试在持锁状态下 await；进程内互斥锁尚未统一为跨进程端口锁，故豁免
+//! `clippy::await_holding_lock`。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::wildcard_enum_match_arm
 )]
-
-//! 阶段 06 批 5 主缝闭环测试（spec：模拟器单台闭环）：
-//! 设备 TCP 注册 → 支付订单 → 启动命令经会话下发（B7 帧核对）→
-//! B8 回执推进订单 charging → BB 结束回执推进 completed + 计费任务 →
-//! 停机信号收尾。管理面走真库，设备面走真实 TCP。
 
 use std::sync::Arc;
 
@@ -25,7 +25,7 @@ use chargepilot_protocol_dc589::{commands as cmd, device};
 use serde_json::json;
 use tokio::io::AsyncWriteExt as _;
 
-#[allow(clippy::disallowed_methods)] // 票 16 豁免：测试模块的连接变量
+#[allow(clippy::disallowed_methods)] // 集成测试门控：通过 std::env::var 读取数据库 URL
 fn env_or_skip(name: &str) -> Option<String> {
     match std::env::var(name) {
         Ok(v) if !v.is_empty() => Some(v),
@@ -182,7 +182,7 @@ async fn single_device_closed_loop() {
         .await
         .unwrap();
 
-    // 支付链（阶段04 入口）：模拟确认 → paid 订单 + 快照冻结。
+    // 支付确认入口：模拟回调 → paid 订单 + 计费快照冻结。
     let user_id = alloc.next_id().await.unwrap();
     let payment_id = alloc.next_id().await.unwrap();
     let merchant_order_no = format!("P{payment_id}");

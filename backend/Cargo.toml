@@ -69,7 +69,7 @@ metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.17", default-features = false }
 # CLI 与配置
 clap = { version = "4", features = ["derive"] }
-# 定点十进制（计费域：语义对齐旧版 shopspring/decimal）
+# 定点十进制（计费域金额/电量运算，避免浮点误差）
 rust_decimal = { version = "1", features = ["maths"] }
 rust_xlsxwriter = "0.79"
 # 时间
@@ -101,8 +101,8 @@ chargepilot-mod-wallet = { path = "crates/modules/wallet" }
 lto = "thin"
 strip = "debuginfo"
 
-# 工作区门禁（二期票 03）：rustc 警告即错误；clippy 失败级三组 + 解包禁令 +
-# 通配枚举分支（护住 S3 枚举化的穷尽收益）。渐进路线（vector 式）：pedantic 不启用。
+# 工作区门禁：rustc 警告即错误；clippy 失败级三组 + 解包禁令 +
+# 通配枚举分支（护住枚举穷尽匹配收益）。不启用 pedantic。
 [workspace.lints.rust]
 warnings = "deny"
 

@@ -1,10 +1,10 @@
-//! 扫码解析端口（旧版 gatewaycontract.ResolveScan 的窄接口与直查桩）。
+//! 扫码解析端口。
 //! checkout 只依赖本 trait，不感知数据来源；直查桩的 SQL 在 repo/scan.rs。
 
 use super::channel::futures_bounds::BoxFuture;
 use crate::error::ScanError;
 
-/// 扫码解析出的端口事实（旧版 money.ScanResult 的端口部分）。
+/// 扫码解析出的端口事实。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScanPort {
     /// 端口二维码唯一编码（业务对外 ID）。
@@ -17,10 +17,10 @@ pub struct ScanPort {
     pub available: bool,
 }
 
-/// 扫码解析结果（旧版 money.ScanResult）。
+/// 扫码解析结果。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScanResult {
-    /// 解析种类：port / device / unknown（旧版字面量）。
+    /// 解析种类：port / device / unknown。
     pub kind: String,
     pub device_id: String,
     /// 设备业务状态：enabled / disabled / retired。

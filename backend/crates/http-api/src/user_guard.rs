@@ -1,4 +1,4 @@
-//! 用户端会话提取横切（票 17）：从业务文件归入鉴权模块。
+//! 用户端会话提取横切：从业务文件归入鉴权模块。
 //!
 //! [`UserGuard`] 与 AdminGuard 同构的鉴权提取器：JWT → 会话存在 → user_id，
 //! 失败即 401 信封直映契约（401/1001 系）。处理器签名里一个参数完成鉴权，
@@ -13,7 +13,7 @@ use crate::errormap::{bearer, respond};
 use crate::state::{ApiDeps, UserSessionBase};
 
 /// 已通过用户端会话鉴权的用户 ID：Bearer 令牌 → user_id；失败即 401 信封。
-/// 会话基础件经 FromRef 自装配根派生（票 17：处理器单 State 提取自足）。
+/// 会话基础件经 FromRef 自装配根派生。
 pub struct UserGuard(pub u64);
 
 impl axum::extract::FromRequestParts<Arc<ApiDeps>> for UserGuard {

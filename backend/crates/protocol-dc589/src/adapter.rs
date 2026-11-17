@@ -332,7 +332,7 @@ async fn serve(
         .write_frame(&build_register_reply(server_session, chrono::Utc::now()))
         .await?;
     // 注册后下发心跳周期并启用端口遥测，避免依赖设备出厂配置；
-    // 存在充电端口的设备直接进入 15 秒节奏（旧版 HasChargingPorts 查询）。
+    // 存在充电端口的设备直接进入 15 秒心跳节奏（经 sink 查询当前是否在充）。
     let initial = match sink_has_charging(&sink, &device_id).await {
         Ok(true) => u32::from(CHARGING_HEARTBEAT_SECONDS),
         Ok(false) | Err(_) => u32::from(DEFAULT_HEARTBEAT_SECONDS),
@@ -436,7 +436,7 @@ fn audit_inbound(session: &DcSession, f: &Frame) {
     session.audit.inbound(f.data.len());
 }
 
-/// 逐帧分派：事件落库成功后才应答设备（旧版语义）。
+/// 逐帧分派：事件落库成功后才向设备发送应答帧。
 async fn dispatch(
     session: &Arc<DcSession>,
     sink: &Arc<dyn Sink>,

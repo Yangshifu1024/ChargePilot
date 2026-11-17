@@ -1,4 +1,4 @@
-//! 运营仪表盘：多只读查询的日界投影（北京时间日界，多查询不共享事务快照——旧版语义）。
+//! 运营仪表盘：多只读查询的日界投影。
 
 use serde::Serialize;
 use sqlx::MySqlPool;
@@ -29,7 +29,7 @@ pub struct TrendPoint {
 
 /// 汇总仪表盘。任一查询失败整体失败（503 由上层映射）。
 pub async fn load(pool: &MySqlPool) -> anyhow::Result<Dashboard> {
-    // 北京时间自然日 0 点（固定 +8 偏移，旧版语义）
+    // 北京时间自然日 0 点
     let now_bj = chrono::Utc::now() + chrono::Duration::hours(8);
     let today_bj = now_bj.date_naive();
     let today_start_utc = match today_bj.and_hms_opt(0, 0, 0) {

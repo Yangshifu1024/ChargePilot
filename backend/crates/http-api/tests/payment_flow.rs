@@ -1,4 +1,4 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 集成测试在持锁场景下跨 await；已配置 clippy 豁免。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
@@ -6,9 +6,9 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 阶段 04 批 3 主缝集成测试：下单冻结（意图+快照+端口预占）、模拟确认
-//! （支付成功事务：订单 paid + 快照冻结 + 事件出站）、迟到支付退款与
-//! 钱包充值全链（批 2 缝合）。断言 HTTP 响应与库中资金行。
+//! 支付主路径集成测试：下单冻结（意图+快照+端口预占）、模拟确认
+//! （支付成功：订单 paid + 快照冻结 + 事件出站）、迟到支付退款与
+//! 钱包充值全链。断言 HTTP 响应与库中资金行。
 
 mod support;
 
@@ -193,7 +193,7 @@ async fn checkout_confirm_and_late_refund_flow() {
         "重放返回同一支付单"
     );
 
-    // 4. 同请求不同套餐：409（旧版 existingIntent 逐项核对）。
+    // 4. 同请求不同套餐：409。
     let (status, body) = req(&router,
         "POST",
         "/api/v1/user/scan/start",
@@ -369,7 +369,7 @@ async fn wallet_recharge_full_chain() {
         merchant_order_no
     );
 
-    // 3. 模拟确认 → 余额到账（批 2 缝合：支付成功事务 → 钱包入账）。
+    // 3. 模拟确认 → 支付成功事务入账到钱包。
     let (status, body) = req(
         &router,
         "POST",
@@ -415,7 +415,7 @@ async fn wallet_recharge_full_chain() {
             .unwrap();
     assert_eq!(balance2, 500, "重放不得重复入账");
 
-    // 5. C 端余额接口可见（批 2 路由缝合）。
+    // 5. C 端余额接口应能读到到账金额。
     let (status, body) = req(
         &router,
         "GET",
@@ -428,8 +428,7 @@ async fn wallet_recharge_full_chain() {
     assert_eq!(body["data"]["balance_cents"], 500);
 }
 
-/// 批 4 互斥约束：套餐下单带券返回冲突（旧版 Reserve 的
-/// "当前套餐不允许使用优惠券"）；无券字段正常下单不受影响。
+/// 套餐下单不允许带券：带券应冲突；不传券字段则正常下单。
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn checkout_rejects_coupon_with_offer() {

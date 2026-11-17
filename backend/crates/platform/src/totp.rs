@@ -1,4 +1,4 @@
-//! RFC 6238 TOTP：SHA1、6 位、30 秒步长、±1 步时钟偏移（语义对齐旧版手写实现）。
+//! RFC 6238 TOTP：SHA1、6 位、30 秒步长，校验时允许当前步 ±1 的时钟偏移。
 
 use base32::Alphabet;
 use hmac::{Hmac, Mac};
@@ -56,7 +56,7 @@ pub fn random_secret() -> String {
     base32::encode(Alphabet::Rfc4648Lower { padding: false }, &b)
 }
 
-/// otpauth:// URI（绑定二维码内容，格式对齐旧版）。
+/// 生成 otpauth:// URI（供绑定二维码扫描，算法/位数/周期固定）。
 pub fn otpauth_uri(issuer: &str, account: &str, secret: &str) -> String {
     format!(
         "otpauth://totp/{issuer}:{account}?secret={secret}&issuer={issuer}&algorithm=SHA1&digits=6&period=30"

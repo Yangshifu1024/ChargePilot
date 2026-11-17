@@ -1,4 +1,4 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 集成测试在持锁场景下跨 await；已配置 clippy 豁免。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
@@ -6,10 +6,10 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 阶段 05 主缝集成测试：C 端手机号绑定/解绑、在线卡列表/状态变更、
+//! 主缝集成测试：C 端手机号绑定/解绑、在线卡列表/状态变更、
 //! 订单反馈提交（真 MySQL + 真 Redis）。
 //! 断言只看 HTTP 响应（信封、码值、形状与文案），不看内部实现；
-//! development 模式明文绑定与 wechat 模式准入语义对齐旧版 phone.go。
+//! development 模式明文绑定与 wechat 模式准入语义与对外 API 契约一致。
 
 mod support;
 
@@ -182,7 +182,7 @@ async fn phone_bind_unbind_flow() {
     assert_eq!(status, StatusCode::OK, "profile 应成功: {body}");
     assert_eq!(body["data"]["phone_bound"], true);
 
-    // 3. 无效号码：400/1005 固定文案（旧版 ErrPhoneInput 映射）。
+    // 3. 无效号码：400/1005 固定文案。
     let (status, body) = post_json(
         &router,
         "/api/v1/user/phone/bind",
@@ -209,7 +209,7 @@ async fn phone_bind_unbind_flow() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["phone_bound"], false);
 
-    // 5. 重复解绑幂等成功（旧版 UPDATE 零行不视为错误）。
+    // 5. 重复解绑幂等成功。
     let (status, _) = post_json(&router, "/api/v1/user/phone/unbind", "null", Some(&jwt)).await;
     assert_eq!(status, StatusCode::OK);
 
@@ -234,7 +234,7 @@ async fn phone_bind_wechat_mode_admission() {
     let account = format!("it-wx-{}", rand_suffix());
     let (jwt, _) = dev_login(&dev_router, &account).await;
 
-    // 仅明文：正式路径不得提交明文（旧版 ErrPhoneAuthorization）。
+    // 仅明文：正式路径不得提交明文。
     let (status, body) = post_json(
         &router,
         "/api/v1/user/phone/bind",
@@ -257,7 +257,7 @@ async fn phone_bind_wechat_mode_admission() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["message"], "请使用微信手机号授权凭证");
 
-    // 仅 code：交换能力未接入，统一暂不可用（旧版 ErrPhoneUnavailable）。
+    // 仅 code：交换能力未接入，统一暂不可用。
     let (status, body) = post_json(
         &router,
         "/api/v1/user/phone/bind",
@@ -270,7 +270,7 @@ async fn phone_bind_wechat_mode_admission() {
     assert_eq!(body["message"], "手机号授权暂不可用");
 }
 
-/// 场景 2：直插在线卡 → 列表可见、字段对齐旧版（id 数字、user_id 字符串）。
+/// 场景 2：直插在线卡 → 列表可见、字段与对外 API 契约一致（id 数字、user_id 字符串）。
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
 async fn cards_list_flow() {
@@ -283,14 +283,14 @@ async fn cards_list_flow() {
     let uid: u64 = user_id.parse().unwrap();
     let card_no = seed_card(&db, &alloc, uid).await;
 
-    // 列表：items 单元素，字段形状对齐旧版 OnlineCard JSON。
+    // 列表：items 单元素，字段形状与对外 API 契约 JSON 一致。
     let (status, body) = get_with_bearer(&router, "/api/v1/user/cards", &jwt).await;
     assert_eq!(status, StatusCode::OK, "列表应成功: {body}");
     assert_eq!(body["code"], 0);
     let items = body["data"]["items"].as_array().unwrap();
     assert_eq!(items.len(), 1, "应只含本人未解绑卡");
     let row = &items[0];
-    assert!(row["id"].is_u64(), "id 为数字（旧版无 string 标签）");
+    assert!(row["id"].is_u64(), "id 为数字");
     assert_eq!(row["card_no"], card_no.as_str());
     assert_eq!(row["user_id"], user_id.as_str(), "user_id 为十进制字符串");
     assert_eq!(row["status"], "active");
@@ -517,7 +517,7 @@ async fn feedback_submit_flow() {
     assert_eq!(row.3, "pending", "初始状态 pending");
     assert!(row.4.is_some(), "images 序列化后入库");
 
-    // 7. 重复提交：409/2009 固定文案（旧版 ErrFeedbackExists）。
+    // 7. 重复提交：409/2009 固定文案。
     let (status, body) = post_json(
         &router,
         &format!("/api/v1/user/charge/{order_id}/feedback"),
@@ -540,7 +540,7 @@ async fn feedback_submit_flow() {
     .await;
     assert_eq!(status, StatusCode::OK, "业务单号提交应成功: {body}");
     assert_eq!(body["data"]["submitted"], true);
-    // 缺省 images 保存 JSON null（旧版 json.Marshal(nil slice)）。
+    // 缺省 images 保存 JSON null。
     let images: Option<String> = sqlx::query_scalar(
         "SELECT CAST(`images_json` AS CHAR) FROM `feedback` WHERE `order_id` = ?",
     )

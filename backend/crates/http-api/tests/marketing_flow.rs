@@ -1,4 +1,4 @@
-//! // 票 04 将把进程内互斥锁统一为跨进程端口锁；此前豁免持锁跨 await 检查。
+//! 集成测试在持锁场景下跨 await；已配置 clippy 豁免。
 #![allow(clippy::await_holding_lock)]
 #![allow(
     clippy::unwrap_used,
@@ -6,7 +6,7 @@
     clippy::wildcard_enum_match_arm
 )]
 
-//! 阶段 05 批 2 主缝集成测试：优惠券建券 → 人工发放（幂等）→ 持券视图 →
+//! 主缝集成测试：优惠券建券 → 人工发放（幂等）→ 持券视图 →
 //! 过期/停用不参与 → 发放统计。发放条件与请求重放断言走 HTTP（spec 测试决策）。
 
 mod support;
@@ -309,7 +309,7 @@ async fn coupon_create_grant_query_stats() {
     assert_eq!(status, StatusCode::CONFLICT, "停用模板发放应 409");
 
     // 3. 持券视图：种一条过期券 + 一条已用券后核对派生与筛选。
-    //    过期种子（source_event_id 唯一）。
+    // 过期种子（source_event_id 唯一）。
     let seed_event = format!("mk-seed-{tag}-expired");
     sqlx::query(
         "INSERT INTO `coupon_grant` (`coupon_id`, `user_id`, `grant_source`, `status`, \
@@ -322,7 +322,7 @@ async fn coupon_create_grant_query_stats() {
     .execute(db.as_ref())
     .await
     .unwrap();
-    // 恢复模板启用后再种一条已用券（人工模拟终态；核销事务属批 4）。
+    // 恢复模板启用后再种一条已用券（人工模拟终态）。
     let (status, _) = req(
         &router,
         "PUT",
@@ -346,7 +346,7 @@ async fn coupon_create_grant_query_stats() {
     .unwrap();
     let used_id = used_result.last_insert_id();
 
-    // coupon/my：排序按 status 字典序（expired < unused < used，与旧版一致），
+    // coupon/my：排序按 status 字典序（expired < unused < used，与一致），
     // 过期由内存派生，usable 标记正确。
     let (status, body) = req(
         &router,
@@ -507,8 +507,8 @@ async fn coupon_create_grant_query_stats() {
     let _ = used_id;
 }
 
-/// 批 4 主缝：券的报价（quote）与到账核销（redeem_in_tx 随支付事务）。
-/// 套餐下单带券返回冲突（旧版互斥约束）；带券意图走 apply_payment 直调
+/// 券报价（quote）与到账核销（redeem_in_tx 随支付事务）。
+/// 套餐下单带券应冲突；带券意图走 apply_payment 直调，
 /// 验证核销、幂等重放与订单冻结优惠。
 #[ignore = "真库集成：node tasks.mjs test-integration"]
 #[tokio::test]
@@ -533,14 +533,14 @@ async fn coupon_quote_and_redeem() {
     let (user_token, uid) = login_user(&router, &format!("mk-{tag}")).await;
 
     // 建券 + 发放。
-    // 时长券：核销分支的可达场景（旧版固定零服务费率 → 冻结优惠恒 0，
+    // 时长券：核销分支的可达场景（固定零服务费率 → 冻结优惠恒 0，
     // 意图总额与应付额一致，能通过到账核对）。金额型券的报价路径另行断言。
     let (status, body) = req(
         &router,
         "POST",
         "/api/v1/admin/coupons",
         Some(json!({
-            "name": "批4核销时长券", "discount_type": "time_free",
+            "name": "核销时长券", "discount_type": "time_free",
             "free_minutes": 30, "min_charge_cents": 1000,
             "valid_hours": 24, "total_quota": 0, "per_user_quota": 1
         })),
@@ -561,7 +561,7 @@ async fn coupon_quote_and_redeem() {
     let grant_id = body["data"]["coupon_grant_id"].as_u64().unwrap();
 
     // 1. 报价：时长券固定零费率 → 优惠 0（过门槛后）；金额型报价语义由
-    //    domain 差分样本与 coupon 单测覆盖，此处验证服务路径。
+    // domain 差分样本与 coupon 单测覆盖，此处验证服务路径。
     let discount = chargepilot_mod_marketing::coupon::quote(db.as_ref(), uid, grant_id, 2000)
         .await
         .expect("报价应成功");
@@ -584,8 +584,8 @@ async fn coupon_quote_and_redeem() {
     ));
 
     // 2. 套餐下单带券的互斥冲突断言在 payment_flow（checkout 已装配）。
-    //    此处以库态模拟非套餐路径：payment_order(total=1500, initiated)
-    //    + intent(total=2000, discount=500, coupon)。
+    // 此处以库态模拟非套餐路径：payment_order(total=1500, initiated)
+    // + intent(total=2000, discount=500, coupon)。
     let payment_id = alloc.next_id().await.unwrap();
     let month = chrono::Utc::now().date_naive().with_day(1).unwrap();
     let order_no = format!("PMK{tag}");

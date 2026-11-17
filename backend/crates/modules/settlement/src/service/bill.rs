@@ -1,5 +1,5 @@
-//! 账单签发、用户已读与用户端读取（旧版 settlement/bill_repo.go + user_bill.go
-//! 的单体对应物）。账单从计费回执与支付事实推导：缺口 = 回执缺口为 0 且实费
+//! 账单签发、用户已读与用户端读取。
+//! 账单从计费回执与支付事实推导：缺口 = 回执缺口为 0 且实费
 //! 超预付时的差额；签发幂等（订单唯一键 uk_order 复用），账单日期取充电开始
 //! 时间而非计费执行时间。SQL 在 repo/bill.rs。
 //!
@@ -25,7 +25,7 @@ pub struct BillRow {
     pub issued: bool,
 }
 
-/// 为已计费订单签发账单；计费未完成或实费为零返回 Ok(None)（旧版 Missing 语义）。
+/// 为已计费订单签发账单；计费未完成或实费为零返回 Ok(None)。
 /// 幂等：同一订单重复签发复用既有账单。
 pub async fn issue_bill(pool: &MySqlPool, charge_order_id: u64) -> anyhow::Result<Option<BillRow>> {
     // 项目事务惯例：先 SET 隔离级别再 begin（事务中 SET 会报错）。
@@ -79,14 +79,14 @@ pub async fn issue_bill_in_tx(
             .format("%Y-%m-%d %H:%i:%s.%f")
             .to_string(),
     };
-    // 分区月份跟随账单日期（旧版 issuedAt 月首语义）：跨月重放命中同一唯一键，
+    // 分区月份跟随账单日期：跨月重放命中同一唯一键，
     // 幂等复用而非重复签发。
     let issued_ts = chrono::NaiveDateTime::parse_from_str(&issued_at, "%Y-%m-%d %H:%i:%s.%f")
         .map(|naive| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc))
         .unwrap_or_else(|_| chrono::Utc::now());
     let month = chargepilot_mod_order::month_start_of(issued_ts);
 
-    // 幂等插入：先按 uk_order 查既有账单复用（旧版 Count + Pluck 语义）；
+    // 幂等插入：先按 uk_order 查既有账单复用；
     // 查无再纯 INSERT，并发撞唯一键时回读复用。事件只在真正新插入后追加
     // （event_id 由账单号派生，重放不重复）。
     let existing = bill::find_bill_id_tx(c, charge_order_id, month).await?;
@@ -163,10 +163,10 @@ pub async fn issue_bill_in_tx(
 }
 
 // ---------------------------------------------------------------------------
-// 用户端读取（旧版 BillRepo.LoadByID / ListBills + UserBillService 编排）。
-// 响应字段对齐旧版 Bill 结构的 JSON 形状：id/user_id 为十进制字符串，
+// 用户端读取。
+// 响应字段：id/user_id 为十进制字符串，
 // charge_order_id 与 payment_order_id 为数字（payment 可空），
-// 时间统一 `+00:00` 后缀，列表补查已读、详情不补（旧版 LoadByID 无已读补查）。
+// 时间统一 `+00:00` 后缀，列表补查已读、详情不补。
 // ---------------------------------------------------------------------------
 
 /// 按用户和账单 ID 查询详情。
@@ -180,8 +180,8 @@ pub async fn load_user_bill(
         .map(|r| bill::bill_row_value(&r, false)))
 }
 
-/// 按用户分页倒序读取账单并补充已读状态（旧版 ListBills：issued_at DESC, id DESC；
-/// 已读查询失败时按未读展示——此处失败即整体失败，由 HTTP 503 兜底）。
+/// 按用户分页倒序读取账单并补充已读状态（issued_at DESC, id DESC）；
+/// 已读批量查询失败则整体失败，由 HTTP 503 兜底。
 pub async fn list_user_bills(
     pool: &MySqlPool,
     user_id: u64,
@@ -199,11 +199,7 @@ pub async fn list_user_bills(
     if rows.is_empty() {
         return Ok((Vec::new(), total));
     }
-    // 已读状态批量补查（旧版按用户 + 账单 ID 集合查 charge_bill_read；本页
-    // 逐行点查的取舍在页容量 ≤100 的前提下成立，收敛为一条 IN 单次往返，
-    // 语义不变）：一行查询失败整体返回，由 HTTP 层按 503 兜底（旧版「已读
-    // 查询失败按未读展示」的容错在用户可见语义上等价于未读，此处选择显式
-    // 失败以暴露存储异常）。
+    // 本页账单 ID 批量查 charge_bill_read（单条 IN 查询）；失败整体返回 503。
     let bill_ids: Vec<u64> = rows
         .iter()
         .map(|row| {
@@ -230,7 +226,7 @@ pub async fn list_user_bills(
     Ok((items, total))
 }
 
-/// 用户已读账单（旧版 user_bill.go 已读编排）：归属校验后幂等记录已读时刻。
+/// 用户已读账单：归属校验后幂等记录已读时刻。
 /// 返回 Ok(false) 表示账单不存在或不属于该用户（HTTP 统一 404，不暴露存在性）。
 pub async fn mark_bill_read(pool: &MySqlPool, user_id: u64, bill_id: u64) -> anyhow::Result<bool> {
     let Some(month) = bill::bill_month(pool, user_id, bill_id).await? else {
