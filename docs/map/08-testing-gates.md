@@ -15,8 +15,9 @@
 | `node tasks.mjs fmt` / `fmt-check` | rustfmt 全仓 |
 | `node tasks.mjs clippy` | workspace lints 警告即错误 + unwrap/expect 禁令 |
 | `node tasks.mjs api-contract` | 前后端调用点↔路由↔必填字段三段对账(scripts/ops/check-api-contract.py) |
+| `node tasks.mjs debug` | 一键开发环境:dev 容器 + 后端 `serve` + admin/H5 Vite;Ctrl-C 统一停止(`--no-admin`/`--no-h5`/`--no-infra`/`--fresh`/`--clean`) |
 
-dev 容器:`chargepilot-dev-mysql`(127.0.0.1:3307)、`chargepilot-dev-redis`(127.0.0.1:6380),TEST_MYSQL_URL 门控集成轮。
+dev 容器:`chargepilot-dev-mysql`(127.0.0.1:3307)、`chargepilot-dev-redis`(127.0.0.1:6380),TEST_MYSQL_URL 门控集成轮。`debug` 会复用已存在的同名容器,缺省拉起后端 8080/9100、后台 5173、H5 5174,注入随机 JWT 与引导账号 `admin`/`admin-dev-pass-1234`(均可用环境变量覆盖);容器默认保留,`--clean` 退出时移除。
 
 ## 2. 三层测试(各有职责,不互相替代)
 
@@ -61,9 +62,19 @@ http-api/tests/
 - 黄金样本:抓包帧字节硬编码对照(尤其偏移易错帧),补齐是纯增益;
 - closed_loop / device_chains:真库 + 真实 TCP 会话,打通注册→支付→B7→B8→BB→计费与刷卡/告警/补单链路。
 
-## 5. simulator-batch(容量验收加载源)
+## 5. 设备模拟器
 
-`cargo run --bin ... simulator-batch` 或 app 子命令:headless 拉起 N 台虚拟设备跑真实协议交互。
+模拟器是独立 crate/二进制 `chargepilot-simulator`,不随主应用构建,也不进入 `chargepilot serve`。
+
+### 5.1 single(单连接手工联调)
+
+`chargepilot-simulator single --device-id <16 位板号> --target-addr 127.0.0.1:9100`,或 `node tasks.mjs simulator --device-id ...`。
+
+指定一台设备接入:注册 → 空闲心跳 → 收到 B7 转充电遥测并回 B8 → 收到 B9 回 BA 并补 BB 结束帧(BB 回显 B7 订单号)。断线自动重连,`--duration 0`(默认)运行到 Ctrl-C;`--provision` 幂等写入 device_meta,`--speedup` 缩放心跳节拍。板号必须是 DC589 的 16 位十进制,业务侧 8 位设备号不能直接接入。
+
+### 5.2 batch(容量验收加载源)
+
+`chargepilot-simulator batch` 或 `node tasks.mjs simulator-batch`:headless 拉起 N 台虚拟设备跑真实协议交互。
 
 | 参数 | 默认 | 说明 |
 |---|---|---|

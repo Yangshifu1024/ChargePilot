@@ -1,5 +1,5 @@
-//! headless 批量模拟器（`simulator-batch` 子命令）：一条命令拉起 N 台虚拟
-//! 设备跑完整协议交互，作为容量验收与压测的加载源。
+//! 批量模拟器（`chargepilot-simulator batch`）：一条命令拉起 N 台虚拟设备跑
+//! 完整协议交互，作为容量验收与压测的加载源。
 //!
 //! 与网关共用 `protocol-dc589` 帧层（同一实现即契约，互逆免费获得协议覆盖）。
 //! 充电负载表现为心跳携带的充电端口遥测（网关侧缓冲/落库/解析负载真实发生）；
@@ -119,7 +119,7 @@ pub struct Stats {
 }
 
 impl Stats {
-    fn snapshot(&self) -> String {
+    pub(crate) fn snapshot(&self) -> String {
         let g = |c: &AtomicU64| c.load(Ordering::Relaxed);
         let regs = g(&self.registrations_ok);
         let rejected = g(&self.registrations_rejected);
@@ -225,7 +225,16 @@ async fn device_task(
                 // 先关写半让服务端读到 EOF，短暂等待排空在途应答；
                 // 直接 drop 会因接收缓冲残留触发 RST（服务端记 read_error）。
                 if is_charging && !half_open {
-                    send_charge_end(&writer, session, charged_seconds, charged_mwh, &stats).await;
+                    send_charge_end(
+                        &writer,
+                        session,
+                        1,
+                        [0; 8],
+                        charged_seconds,
+                        charged_mwh,
+                        &stats,
+                    )
+                    .await;
                 }
                 let mut w = writer.lock().await;
                 let _ = w.shutdown().await;
@@ -258,6 +267,7 @@ async fn device_task(
                         &identity,
                         session,
                         is_charging,
+                        1,
                         charged_seconds,
                         charged_mwh,
                         &stats,
@@ -275,8 +285,16 @@ async fn device_task(
                     {
                         // B9 停止：应答后补结束帧并转空闲（半开路径除外）。
                         if cmd == 0xB9 && !half_open {
-                            send_charge_end(&writer, session, charged_seconds, charged_mwh, &stats)
-                                .await;
+                            send_charge_end(
+                                &writer,
+                                session,
+                                1,
+                                [0; 8],
+                                charged_seconds,
+                                charged_mwh,
+                                &stats,
+                            )
+                            .await;
                             {
                                 let mut w = writer.lock().await;
                                 let _ = w.shutdown().await;
@@ -303,7 +321,7 @@ async fn device_task(
 }
 
 /// 写一帧（带长度头与校验由 encode 完成），失败返回连接错误。
-async fn write_frame(
+pub(crate) async fn write_frame(
     writer: &Arc<tokio::sync::Mutex<BufWriter<OwnedWriteHalf>>>,
     raw: &[u8],
 ) -> std::io::Result<()> {
@@ -314,7 +332,7 @@ async fn write_frame(
 
 /// 等注册应答：A1 成功回帧头会话号；拒绝、协议错误或超时返回 None。
 /// read_frame 流式解析，容忍 A1/A6 粘包与分段到达。
-async fn expect_register_ok(
+pub(crate) async fn expect_register_ok(
     reader: &mut (impl tokio::io::AsyncRead + Unpin),
     stats: &Stats,
     timeout: Duration,
@@ -340,24 +358,31 @@ async fn expect_register_ok(
     }
 }
 
-/// 发送心跳：充电台携带单端口遥测（时长/电量/功率递增），空闲台短格式。
-async fn send_heartbeat(
+/// 发送心跳：充电端口携带单端口遥测（时长/电量/功率递增），空闲时用短格式。
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn send_heartbeat(
     writer: &Arc<tokio::sync::Mutex<BufWriter<OwnedWriteHalf>>>,
     identity: &DeviceIdentity,
     session: [u8; 6],
     charging: bool,
+    port: u8,
     charged_seconds: u32,
     charged_mwh: u32,
     stats: &Stats,
 ) {
     let frame = if charging {
+        // 端口状态位按端口号置位，遥测只报当前充电端口。
+        let mut port_states = vec![0_u8; usize::from(port)];
+        if let Some(current) = port_states.last_mut() {
+            *current = 0x01;
+        }
         let status = PortStatus {
             device_status: 0,
             voltage_v: 220,
             temperature_c: 25,
-            port_states: vec![0x01],
+            port_states,
             charging: vec![PortTelemetry {
-                port: 1,
+                port,
                 remaining_secs: 36_000_u32.saturating_sub(charged_seconds),
                 charged_seconds,
                 remaining_mwh: 0,
@@ -378,30 +403,30 @@ async fn send_heartbeat(
         })
     };
     let Some(frame) = frame else { return };
-    if write_frame(
-        writer,
-        &frame::encode(&frame).unwrap_or_else(|e| panic!("帧编码失败: {e}")),
-    )
-    .await
-    .is_ok()
-    {
+    let Ok(raw) = frame::encode(&frame) else {
+        return;
+    };
+    if write_frame(writer, &raw).await.is_ok() {
         stats.frames_sent.fetch_add(1, Ordering::Relaxed);
     }
 }
 
 /// 发送 BB 结束帧（设备侧时间取当前时刻，电量/时长来自遥测累计）。
+/// `order_bcd` 回显 B7 启动命令中的订单号；批量模拟器无订单时传全零。
 #[allow(clippy::too_many_arguments)]
-async fn send_charge_end(
+pub(crate) async fn send_charge_end(
     writer: &Arc<tokio::sync::Mutex<BufWriter<OwnedWriteHalf>>>,
     session: [u8; 6],
+    port: u8,
+    order_bcd: [u8; 8],
     charged_seconds: u32,
     charged_mwh: u32,
     stats: &Stats,
 ) {
     let now = chrono::Utc::now();
     let report = ChargeEndReport {
-        port: 1,
-        order_bcd: [0; 8], // 无订单场景：全零订单号仅作设备事件审计
+        port,
+        order_bcd,
         started_at: now - chrono::Duration::seconds(i64::from(charged_seconds)),
         ended_at: now,
         charged_mwh,
@@ -413,15 +438,36 @@ async fn send_charge_end(
         return;
     };
     f.session = session;
-    if write_frame(
-        writer,
-        &frame::encode(&f).unwrap_or_else(|e| panic!("帧编码失败: {e}")),
-    )
-    .await
-    .is_ok()
-    {
+    let Ok(raw) = frame::encode(&f) else {
+        return;
+    };
+    if write_frame(writer, &raw).await.is_ok() {
         stats.end_frames_sent.fetch_add(1, Ordering::Relaxed);
         stats.frames_sent.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// 发送 B8/BA 命令应答（结果码固定 0，端口回显下发命令）。
+pub(crate) async fn send_command_result(
+    writer: &Arc<tokio::sync::Mutex<BufWriter<OwnedWriteHalf>>>,
+    session: [u8; 6],
+    command: u8,
+    port: u8,
+    stats: &Stats,
+) -> bool {
+    let Ok(mut reply) = device::build_command_result(command, 0, port) else {
+        return false;
+    };
+    reply.session = session;
+    let Ok(raw) = frame::encode(&reply) else {
+        return false;
+    };
+    if write_frame(writer, &raw).await.is_ok() {
+        stats.acks_sent.fetch_add(1, Ordering::Relaxed);
+        stats.frames_sent.fetch_add(1, Ordering::Relaxed);
+        true
+    } else {
+        false
     }
 }
 
@@ -447,18 +493,7 @@ async fn handle_inbound(
         ))
         .await;
     }
-    let mut reply = device::build_command_result(reply_command, 0, 1).ok()?;
-    reply.session = session;
-    if write_frame(
-        writer,
-        &frame::encode(&reply).unwrap_or_else(|e| panic!("回执帧编码失败: {e}")),
-    )
-    .await
-    .is_ok()
-    {
-        stats.acks_sent.fetch_add(1, Ordering::Relaxed);
-        stats.frames_sent.fetch_add(1, Ordering::Relaxed);
-    }
+    let _ = send_command_result(writer, session, reply_command, 1, stats).await;
     is_command.then_some(command)
 }
 

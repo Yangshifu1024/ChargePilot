@@ -11,6 +11,7 @@ members = [
     "crates/platform",
     "crates/protocol",
     "crates/protocol-dc589",
+    "crates/simulator",
     "crates/storage",
     "crates/modules/card",
     "crates/modules/charging",
@@ -82,6 +83,7 @@ chargepilot-http-api = { path = "crates/http-api" }
 chargepilot-platform = { path = "crates/platform" }
 chargepilot-protocol = { path = "crates/protocol" }
 chargepilot-protocol-dc589 = { path = "crates/protocol-dc589" }
+chargepilot-simulator = { path = "crates/simulator" }
 chargepilot-storage = { path = "crates/storage" }
 # 内部 crate
 chargepilot-mod-card = { path = "crates/modules/card" }

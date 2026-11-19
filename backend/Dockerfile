@@ -1,4 +1,4 @@
-# ChargePilot 单镜像（票 22）：前端产物编译期嵌入 + Rust 单二进制（冒烟自检版本号）。
+# ChargePilot 单镜像（票 22）：前端产物编译期嵌入 + 服务/模拟器两个独立 Rust 二进制。
 # 构建上下文 = 仓库根（backend/ + frontend/）。
 # 镜像拉取一律走 gh-proxy.org/docker/ 前缀（用户约定 2026-11-14）。
 
@@ -35,10 +35,12 @@ COPY backend .
 # 票 22：前端产物预置进叶子 crate 的嵌入目录（build.rs 检测 dist 缺失时保留预置）。
 COPY --from=frontend /fe/admin-web/dist crates/assets-admin/assets/
 COPY --from=frontend /fe/miniprogram/dist/h5 crates/assets-h5/assets/
-RUN cargo build --release -p chargepilot-app
+# 服务与模拟器分属两个 crate/二进制：模拟器独立构建，不进入主应用。
+RUN cargo build --release -p chargepilot-app -p chargepilot-simulator
 # 镜像冒烟自检层（票 22）：入口命令先声明版本号，产物可用即构建失败回退。
 # release 产物不在 PATH，用相对路径直呼（首次构建曾以 127 抓出此错）。
-RUN ./target/release/chargepilot --version
+RUN ./target/release/chargepilot --version \
+ && ./target/release/chargepilot-simulator --version
 
 # ---------- 运行时：非 root + 健康检查 ----------
 FROM gh-proxy.org/docker/debian:bookworm-slim AS runtime
@@ -47,6 +49,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --create-home --uid 10001 chargepilot
 COPY --from=backend-build /build/target/release/chargepilot /usr/local/bin/chargepilot
+# 现场排障工具：独立二进制，不参与 serve 进程。
+COPY --from=backend-build /build/target/release/chargepilot-simulator /usr/local/bin/chargepilot-simulator
 USER chargepilot
 WORKDIR /home/chargepilot
 # 票 22：前端产物编译期嵌入，/opt 产物目录与静态目录 ENV 退役。

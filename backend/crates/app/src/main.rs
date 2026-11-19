@@ -1,13 +1,12 @@
 //! ChargePilot 单体服务入口。
 //!
 //! 本进程做两件事：装配并跑起来（`serve`），以及单独升级数据库（`migrate`）。
+//! 设备模拟器已拆为独立二进制 `chargepilot-simulator`，不进入本组合根。
 //! 停机顺序固定为：先让 HTTP 不再接新请求 → 再取消并等待后台任务结束 → 最后关闭连接池。
 
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use std::sync::Arc;
-
-mod simulator_batch;
 
 #[derive(Parser)]
 #[command(
@@ -26,8 +25,6 @@ enum Cmd {
     Serve,
     /// 只跑数据库迁移，升到最新 schema，不启动业务服务
     Migrate,
-    /// 批量虚拟设备压测（非正式服务路径，给容量验收用）
-    SimulatorBatch(simulator_batch::BatchArgs),
 }
 
 #[tokio::main]
@@ -41,7 +38,6 @@ async fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
         Cmd::Serve => serve().await,
         Cmd::Migrate => migrate().await,
-        Cmd::SimulatorBatch(args) => simulator_batch::run(args).await,
     }
 }
 

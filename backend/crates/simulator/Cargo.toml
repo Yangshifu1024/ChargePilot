@@ -1,0 +1,22 @@
+[package]
+name = "chargepilot-simulator"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "chargepilot-simulator"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+rand.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+chargepilot-protocol.workspace = true
+chargepilot-protocol-dc589.workspace = true
+chargepilot-storage.workspace = true
+
+[lints]
+workspace = true

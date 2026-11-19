@@ -12,7 +12,7 @@ docker compose -f compose.prod.yaml --env-file .env up -d --build
 - 应用：`http://<主机>:8080`（后台 `/admin/`，H5 `/h5/`，探活 `/health/live|ready`，指标 `/metrics`）
 - 设备接入：`<主机>:9100`（TCP，DC589）
 - 迁移：`serve` 启动时自动执行（幂等）；单独升级用 `docker compose ... run --rm app chargepilot migrate`
-- 模拟器随镜像交付（现场排障）：`docker compose ... run --rm app chargepilot simulator-batch --target-addr app:9100 --devices 10 ...`
+- 模拟器为独立二进制，随镜像交付（现场排障）：`docker compose ... run --rm app chargepilot-simulator batch --target-addr app:9100 --devices 10 ...`
 
 ## 环境变量冻结清单（22 个，超出清单启动时 WARN）
 
@@ -42,5 +42,5 @@ docker compose -f compose.prod.yaml --env-file .env up -d --build
 ## 镜像说明
 
 - 多阶段：node:24-alpine 构建两套前端 → rust:1-slim（cargo-chef 缓存）→ debian:bookworm-slim 运行时
-- 镜像内仅：一个二进制（`chargepilot`，含 serve/migrate/simulator-batch 子命令）、两套静态产物；非 root（uid 10001）
+- 镜像内：两个二进制（`chargepilot` 服务入口，仅 serve/migrate；`chargepilot-simulator` 独立模拟器）、两套静态产物；非 root（uid 10001）
 - 镜像拉取一律走 `gh-proxy.org/docker/` 前缀（2026-11-14 约定）

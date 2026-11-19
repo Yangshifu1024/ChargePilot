@@ -146,4 +146,4 @@ TCP :9100 → listener.rs(DeviceListener,accept 限速削峰)
 2. **协议翻译归实现层**:应答码 → success 中性判定、故障码 → 中性指标名,都在 protocol-dc589 完成;运行时与业务不出现协议字面量。
 3. **确认帧前先持久化**:adapter 的「持久化成功才 ACK」顺序不能反,否则崩溃窗口丢事件。
 4. **遥测分级丢弃是有意设计**(ADR 005):缓冲满丢最旧明细,不为遥测牺牲业务事件。
-5. 测试:黄金样本帧与 closed_loop 集成见 [08-testing-gates.md](08-testing-gates.md);容量加载用 `app` 的 simulator-batch 子命令。
+5. 测试:黄金样本帧与 closed_loop 集成见 [08-testing-gates.md](08-testing-gates.md);容量加载用独立二进制 `chargepilot-simulator batch`。

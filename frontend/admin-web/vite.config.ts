@@ -24,6 +24,8 @@ export default defineConfig({
     },
   },
   server: {
+    // 显式绑 IPv4：Vite 默认 localhost 在 macOS 可能只监听 ::1，127.0.0.1 无法访问。
+    host: '127.0.0.1',
     port: 5173,
     strictPort: true,
     watch: process.env.DEV_USE_POLLING === 'true'
@@ -32,7 +34,7 @@ export default defineConfig({
     // 后台只代理 /api/v1/admin/*，服务间接口不对浏览器开放。
     proxy: {
       '/api/v1/admin': {
-        target: process.env.DEV_API_PROXY_TARGET || process.env.VITE_API_BASE || 'http://localhost:8081',
+        target: process.env.DEV_API_PROXY_TARGET || process.env.VITE_API_BASE || 'http://127.0.0.1:8080',
         changeOrigin: true,
       },
     },

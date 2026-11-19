@@ -56,7 +56,7 @@ events/src/
 
 ## 4. app —— 组合根
 
-子命令(clap):`serve`(完整服务)/ `migrate`(只跑迁移)/ `simulator-batch`(headless 压测模拟器,见 08)。
+子命令(clap):`serve`(完整服务)/ `migrate`(只跑迁移)。设备模拟器已拆为独立 crate `chargepilot-simulator`(`single`/`batch`,见 08),不进入组合根。
 
 **serve 装配顺序**(main.rs,改装配时保持顺序语义):
 

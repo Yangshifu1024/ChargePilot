@@ -32,7 +32,8 @@ backend/crates/
 ├── modules/<12 域>/       # 业务域 crate(lib/error/service/repo)  → 02 04 05
 ├── http-api/              # 聚合 API 薄层(views/<域>/ 双门面)     → 01
 ├── assets-admin/ h5/      # rust-embed 前端叶子 crate             → 07
-└── app/                   # 组合根(装配 + serve/migrate/simulator)→ 07
+├── app/                   # 组合根(装配 + serve/migrate)          → 07
+└── simulator/             # 独立设备模拟器(single/batch)          → 08
 ```
 
 ```mermaid

@@ -357,14 +357,10 @@ dependencies = [
  "chargepilot-mod-ops",
  "chargepilot-mod-settlement",
  "chargepilot-platform",
- "chargepilot-protocol",
  "chargepilot-protocol-dc589",
  "chargepilot-storage",
- "chrono",
  "clap",
- "rand 0.9.5",
  "redis",
- "sqlx",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -752,6 +748,21 @@ dependencies = [
  "rand 0.9.5",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "chargepilot-simulator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chargepilot-protocol",
+ "chargepilot-protocol-dc589",
+ "chargepilot-storage",
+ "chrono",
+ "clap",
+ "rand 0.9.5",
+ "sqlx",
+ "tokio",
 ]
 
 [[package]]

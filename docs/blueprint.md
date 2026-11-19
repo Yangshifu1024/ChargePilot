@@ -60,9 +60,10 @@ backend/crates/
 │   ├── params.rs                # 分页/时间/状态过滤参数提取器（双轨参数化）
 │   └── views/<域>/              # 12 域 × {admin.rs, user.rs, mod.rs}：每域两个薄门面
 ├── assets-admin/  assets-h5/    # rust-embed 叶子 crate（F8）
-└── app/                         # 组合根：Config 全量加载 → 装配 → 路由汇总 → 生命周期
-    ├── main.rs                  #   serve / migrate / seed 子命令
-    └── simulator_batch.rs       #   headless 批量模拟器（压测与现场排障）
+├── app/                         # 组合根：Config 全量加载 → 装配 → 路由汇总 → 生命周期
+│   └── main.rs                  #   serve / migrate 子命令
+└── simulator/                   # 独立设备模拟器（非服务路径，单独构建）
+    └── src/{main,single,batch}.rs #  single 单台板号联调 / batch 容量压测
 ```
 
 ## 四、crate 依赖规则（编译器强制）
@@ -78,6 +79,7 @@ modules/<域>          → domain + platform + events（后两者按需）+ 显�
 gateway-runtime       → protocol* + events + domain + platform + storage + 其用到的 modules
 http-api              → 其实际用到的 modules + platform
                         + gateway-runtime（仅 SnapshotStore 快照读取，登记例 #1）
+simulator             → protocol* + storage（独立模拟器；不依赖业务 modules，不读服务配置）
 app                   → 一切（组合根，唯一读 env 的地方经由 platform::Config）
 ```
 
@@ -151,3 +153,4 @@ modules/<域>/src/
 |---|---|---|---|---|
 | 1 | （原计划）http-api 对 gateway-runtime 的依赖判冗余、应删除 | **保留**，收窄为「仅 SnapshotStore 快照读取」 | C 端充电页需要实时快照；http-api 已定为聚合薄层，聚合层读聚合所需的运行时状态符合 D1 语义。若将来快照查询需跨进程/多协议，再抽桥 | 2026-11-15 |
 | 2 | （原计划）gateway-runtime 对 order/payment 等 modules 仅 dev-deps | **按第四章生产依赖执行** | 充电链路直调域服务面 + 事件层并存是已实施形态；dev-deps 设想的前提（状态推进全走事件层）未成立 | 2026-11-15 |
+| 3 | 原目录树把 `simulator_batch.rs` 放在 `app/`，作为 app 子命令 | **抽为独立 `crates/simulator` crate 与 `chargepilot-simulator` 二进制**，app 只保留 serve/migrate | 模拟器是测试/压测工具链，不属于生产组合根；独立二进制可单独构建与分发，避免服务进程携带模拟设备代码 | 2026-11-19 |
