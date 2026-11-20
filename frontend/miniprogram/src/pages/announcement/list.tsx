@@ -1,20 +1,20 @@
-import { PageHeader } from "../../runtime/ui";
-import { Fragment } from "react";
-import { Button, View } from "@tarojs/components";
-import { useController } from "../../runtime";
-import { inlineStyle, StationMap } from "../../runtime/components";
-import controller from "./list.controller";
-import "./list.css";
+import { useController } from '../../runtime'
+import { Empty, Notice, PageHeader } from '../../runtime/ui'
+import { Text, View } from '@tarojs/components'
+import controller from './list.controller'
 
 export default function PageView() {
-const { data, event } = useController(controller);
-const { items, loading, error, needsLogin } = data;
-return (<><View className="container"><PageHeader title="公告" />{(items || []).map((item: any, index: number) => (<View className="card" key={String(item?.id ?? index)}><View className="title">{item?.title}</View>
-<View className="text-secondary">{item?.timeText}</View>
-<View className="content">{item?.content}</View></View>))}
-{!!(loading) && (<View className="card">{"正在读取公告…"}</View>)}
-{!!(error) && (<View className="card error"><View>{error}</View>
-<Button onClick={event("load", {})} disabled={loading}>{"重试"}</Button></View>)}
-{!!(!loading && !error && !items?.length && !needsLogin) && (<View className="card">{"暂无生效公告"}</View>)}</View>
-</>);
+  const { data, event } = useController(controller)
+  const { items, loading, error, needsLogin } = data
+  return <View className='container'>
+    <PageHeader title='公告' subtitle='当前生效的站点与平台通知' />
+    {(items || []).map((item: any, index: number) => <View className='card' key={String(item?.id ?? index)}>
+      <Text className='entity-title'>{item?.title}</Text>
+      <Text className='text-secondary'>{item?.timeText}</Text>
+      <Text className='prose'>{item?.content}</Text>
+    </View>)}
+    {loading && <Notice>正在读取公告…</Notice>}
+    {error && <Notice tone='error' retry={event('load', {})} busy={loading}>{error}</Notice>}
+    {!loading && !error && !items?.length && !needsLogin && <Empty icon='notification'>暂无生效公告</Empty>}
+  </View>
 }

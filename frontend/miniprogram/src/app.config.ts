@@ -25,8 +25,9 @@ export default defineAppConfig({
     "pages/dev/fault"
   ],
   "window": {
-    "backgroundTextStyle": "light",
-    "navigationBarBackgroundColor": "#f5f7f6",
+    "backgroundTextStyle": "dark",
+    "backgroundColor": "#f3f6f2",
+    "navigationBarBackgroundColor": "#f3f6f2",
     "navigationBarTitleText": "ChargePilot 充电",
     "navigationBarTextStyle": "black"
   },

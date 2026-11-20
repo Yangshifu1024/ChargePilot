@@ -36,18 +36,18 @@ export function PowerCurve({ series, hideUnit = false }: { series: any[]; hideUn
     ctx.setFontSize(10)
     for (let i = 0; i < 3; i++) {
       const v = max * i / 2
-      ctx.setStrokeStyle('#e7eee9'); ctx.setLineWidth(1)
+      ctx.setStrokeStyle('#e1ebe6'); ctx.setLineWidth(1)
       ctx.beginPath(); ctx.moveTo(left, y(v)); ctx.lineTo(right, y(v)); ctx.stroke()
-      ctx.setFillStyle('#718078'); ctx.fillText(String(Math.round(v)), 0, y(v) + 3)
+      ctx.setFillStyle('#4a5e56'); ctx.fillText(String(Math.round(v)), 0, y(v) + 3)
     }
-    ctx.setStrokeStyle('#168665'); ctx.setLineWidth(2)
+    ctx.setStrokeStyle('#0e6b52'); ctx.setLineWidth(2)
     for (const group of groups) {
       ctx.beginPath()
       group.forEach((p: any, i: number) => i ? ctx.lineTo(x(p.at), y(p.value)) : ctx.moveTo(x(p.at), y(p.value)))
       ctx.stroke()
-      for (const p of group) { ctx.beginPath(); ctx.setFillStyle('#168665'); ctx.arc(x(p.at), y(p.value), 2, 0, Math.PI * 2); ctx.fill() }
+      for (const p of group) { ctx.beginPath(); ctx.setFillStyle('#0e6b52'); ctx.arc(x(p.at), y(p.value), 2, 0, Math.PI * 2); ctx.fill() }
     }
-    ctx.setFillStyle('#718078')
+    ctx.setFillStyle('#4a5e56')
     const time = (at: number) => new Date(at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
     ctx.fillText(time(first), left, height - 6)
     if (last !== first) ctx.fillText(time(last), Math.max(left + 46, right - 34), height - 6)

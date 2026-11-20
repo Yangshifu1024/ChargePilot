@@ -19,6 +19,7 @@ export function DevelopmentAccount() {
     } catch (error: any) { setNotice(error.message || '开发登录失败') }
   }
   return <View className='card development-panel'>
+    <Text className='eyebrow'>开发环境</Text>
     <Text className='heading'>本地测试账号</Text>
     <Text className='text-secondary'>不同账号的订单、钱包与卡片相互隔离。此环境使用模拟支付，不扣取真实资金。</Text>
     <Input aria-label='开发账号' value={account} onInput={e => setAccount(e.detail.value)} placeholder='例如 tester-1 / tester-2' />
