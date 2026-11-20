@@ -28,8 +28,8 @@ type DeviceForm = {
 
 const errorMessage = (cause: unknown, fallback: string) => cause instanceof Error ? cause.message : fallback;
 
-export default function DeviceEdit({ deviceID, onClose, onComplete }: {
-  deviceID: string;
+export default function DeviceEdit({ recordId, onClose, onComplete }: {
+  recordId: number;
   onClose: () => void;
   onComplete: () => void;
 }) {
@@ -52,7 +52,7 @@ export default function DeviceEdit({ deviceID, onClose, onComplete }: {
     setLoading(true); setLoadError(''); setSaveError(''); setConflict(false); setDevice(undefined);
     form.resetFields();
     try {
-      const details = await apiGet<DeviceDetails>('/api/v1/admin/devices/' + encodeURIComponent(deviceID));
+      const details = await apiGet<DeviceDetails>('/api/v1/admin/devices/' + recordId);
       if (current !== generation.current || requestSession !== adminSession.epoch()) return;
       if (!details.updated_at || !dayjs(details.updated_at).isValid() || !Array.isArray(details.tags)
         || details.tags.some(tag => typeof tag !== 'string')
@@ -87,7 +87,7 @@ export default function DeviceEdit({ deviceID, onClose, onComplete }: {
       generation.current++;
       window.removeEventListener('cp-session', closeExpiredEditor);
     };
-  }, [deviceID]);
+  }, [recordId]);
 
   const save = async () => {
     if (submitting.current || loading || !device || conflict) return;
@@ -98,7 +98,7 @@ export default function DeviceEdit({ deviceID, onClose, onComplete }: {
     try {
       const values = await form.validateFields();
       if (current !== generation.current || requestSession !== adminSession.epoch()) return;
-      await apiPut<DeviceDetails>('/api/v1/admin/devices/' + encodeURIComponent(deviceID), {
+      await apiPut<DeviceDetails>('/api/v1/admin/devices/' + recordId, {
         model: values.model?.trim() || null,
         serial_no: values.serial_no?.trim() || null,
         warranty_until: values.warranty_until?.toISOString() || null,
