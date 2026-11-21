@@ -3,6 +3,10 @@ import { Layout, Menu, Avatar, Button, Dropdown, Typography, type MenuProps } fr
 import {
   DashboardOutlined, AlertOutlined, GiftOutlined, AccountBookOutlined,
   SettingOutlined, UserOutlined, LogoutOutlined, ThunderboltOutlined, SafetyCertificateOutlined,
+  ShoppingCartOutlined, PayCircleOutlined, EnvironmentOutlined, ToolOutlined, LayoutOutlined,
+  TeamOutlined, CreditCardOutlined, TagOutlined, NotificationOutlined,
+  FundOutlined, DownloadOutlined, ShopOutlined, WarningOutlined, CustomerServiceOutlined,
+  UserSwitchOutlined, AuditOutlined,
 } from '@ant-design/icons';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { apiGet, apiPost, adminSession } from '../api/client';
@@ -17,30 +21,30 @@ type NavSection = { key: string; icon: ReactNode; label: string; children: NavLi
 const dashboard: NavLink = { key: '/', icon: <DashboardOutlined />, label: '仪表盘', permission: 'dashboard.read' };
 const sections: NavSection[] = [
   { key: 'charge', icon: <ThunderboltOutlined />, label: '充电运营', children: [
-    { key: '/orders', label: '充电订单', permission: 'order.read' },
-    { key: '/payment-orders', label: '支付订单', permission: 'order.read' },
-    { key: '/stations', label: '站点', permission: 'station.read' },
-    { key: '/devices', label: '设备', permission: 'device.read' },
-    { key: '/templates', label: '模板', permission: 'pricing.read' },
+    { key: '/orders', icon: <ShoppingCartOutlined />, label: '充电订单', permission: 'order.read' },
+    { key: '/payment-orders', icon: <PayCircleOutlined />, label: '支付订单', permission: 'order.read' },
+    { key: '/stations', icon: <EnvironmentOutlined />, label: '站点', permission: 'station.read' },
+    { key: '/devices', icon: <ToolOutlined />, label: '设备', permission: 'device.read' },
+    { key: '/templates', icon: <LayoutOutlined />, label: '模板', permission: 'pricing.read' },
   ] },
   { key: 'users', icon: <GiftOutlined />, label: '用户运营', children: [
-    { key: '/users', label: '充电用户', permission: 'user.read' },
-    { key: '/online-cards', label: '在线卡', permission: 'user.read' },
-    { key: '/coupons', label: '优惠券', permission: 'coupon.read' },
-    { key: '/announcements', label: '公告', permission: 'announcement.read' },
+    { key: '/users', icon: <TeamOutlined />, label: '充电用户', permission: 'user.read' },
+    { key: '/online-cards', icon: <CreditCardOutlined />, label: '在线卡', permission: 'user.read' },
+    { key: '/coupons', icon: <TagOutlined />, label: '优惠券', permission: 'coupon.read' },
+    { key: '/announcements', icon: <NotificationOutlined />, label: '公告', permission: 'announcement.read' },
   ] },
   { key: 'finance', icon: <AccountBookOutlined />, label: '财务管理', children: [
-    { key: '/billing', label: '财务', permission: 'finance.read' },
-    { key: '/exports', label: '数据导出', permission: 'finance.read' },
+    { key: '/billing', icon: <FundOutlined />, label: '财务', permission: 'finance.read' },
+    { key: '/exports', icon: <DownloadOutlined />, label: '数据导出', permission: 'finance.read' },
   ] },
   { key: 'device-ops', icon: <AlertOutlined />, label: '设备运维', children: [
-    { key: '/vendors', label: '厂商', permission: 'vendor.read' },
-    { key: '/alerts', label: '告警', permission: 'alert.read' },
-    { key: '/casework', label: '反馈报修', permission: 'feedback.read' },
+    { key: '/vendors', icon: <ShopOutlined />, label: '厂商', permission: 'vendor.read' },
+    { key: '/alerts', icon: <WarningOutlined />, label: '告警', permission: 'alert.read' },
+    { key: '/casework', icon: <CustomerServiceOutlined />, label: '反馈报修', permission: 'feedback.read' },
   ] },
   { key: 'system', icon: <SettingOutlined />, label: '系统管理', children: [
-    { key: '/admin-users', label: '管理员', permission: 'admin_user.read' },
-    { key: '/audit-logs', label: '审计日志', permission: 'audit.read' },
+    { key: '/admin-users', icon: <UserSwitchOutlined />, label: '管理员', permission: 'admin_user.read' },
+    { key: '/audit-logs', icon: <AuditOutlined />, label: '审计日志', permission: 'audit.read' },
   ] },
 ];
 const links = [dashboard, ...sections.flatMap(section => section.children)];
@@ -76,7 +80,7 @@ export default function MainLayout() {
     ...visibleSections.map(section => ({ key: section.key, icon: section.icon, label: section.label })),
   ];
   const primarySelected = activeSection?.key ?? (selectedLink?.key === dashboard.key && permissions.has(dashboard.permission) ? dashboard.key : '');
-  const secondaryItems: MenuProps['items'] = (activeSection?.children ?? []).map(link => ({ key: link.key, label: link.label }));
+  const secondaryItems: MenuProps['items'] = (activeSection?.children ?? []).map(link => ({ key: link.key, icon: link.icon, label: link.label }));
 
   const openPrimary = (key: string) => {
     if (key === dashboard.key) {
