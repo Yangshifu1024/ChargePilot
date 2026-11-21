@@ -146,6 +146,7 @@ export default function MainLayout() {
             <div className="layout-header-sub" ref={subRef}>
               <Menu
                 mode="horizontal"
+                disabledOverflow
                 className="layout-navigation layout-navigation-secondary"
                 aria-label={activeSection ? `${activeSection.label}子菜单` : '子菜单'}
                 selectedKeys={selectedLink && permissions.has(selectedLink.permission) ? [selectedLink.key] : []}
